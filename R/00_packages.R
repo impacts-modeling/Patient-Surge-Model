@@ -8,7 +8,9 @@
 # Library -----------------------------------------------------------------
 library(shiny)
 library(shinydashboard)
-#library(rintrojs)
+library(markdown)
+library(thematic)
+library(rintrojs)
 library(simmer)
 library(future.apply)
 library(dplyr)

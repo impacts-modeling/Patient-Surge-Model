@@ -1,0 +1,13 @@
+name: patient_surge_model
+title: patient_surge_model
+username: cricelio
+account: cricelio
+server: connect.posit.cloud
+hostUrl: https://api.connect.posit.cloud/v1
+appId: 01a05e22-0e52-2631-617e-ba37c5ae39e1
+bundleId:
+url: https://connect.posit.cloud/cricelio/content/01a05e22-0e52-2631-617e-ba37c5ae39e1
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .RData|AGENTS.md|README.md
