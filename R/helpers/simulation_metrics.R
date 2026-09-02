@@ -108,10 +108,13 @@ make_resource_plot <- function(data, var = "server") {
 }
 
 summary_utilization <- function(data) {
-  required_columns <- c("resource", "replication", "server", "capacity")
+  required_columns <- c("resource", "replication", "time", "server", "capacity")
   stopifnot(all(required_columns %in% names(data)))
 
   utilization_by_sim <- data |>
+    dplyr::group_by(replication) |>
+    dplyr::mutate(observation_end = safe_max(time)) |>
+    dplyr::ungroup() |>
     dplyr::mutate(
       utilization = dplyr::if_else(
         is.finite(capacity) & capacity > 0,
@@ -130,13 +133,26 @@ summary_utilization <- function(data) {
     # ) |>
     
     dplyr::group_by(resource, replication) |>
+    dplyr::arrange(time, .by_group = TRUE) |>
+    dplyr::mutate(
+      state_duration = pmax(
+        dplyr::lead(time, default = dplyr::first(observation_end)) - time,
+        0
+      )
+    ) |>
     dplyr::summarise(
       avg_utilization = safe_mean(utilization) * 100,
       peak_utilization = safe_max(utilization) * 100,
       avg_capacity = safe_mean(server),
       max_capacity = safe_max(server),
-      time_at_capacity = sum(server == capacity, na.rm = TRUE),
-      percent_at_capacity = safe_mean(as.numeric(server == capacity)) * 100,
+      time_at_capacity = sum(
+        state_duration[server == capacity],
+        na.rm = TRUE
+      ),
+      percent_at_capacity = safe_fraction(
+        time_at_capacity,
+        dplyr::first(observation_end)
+      ) * 100,
       .groups = "drop"
     )
 
@@ -147,12 +163,12 @@ summary_utilization <- function(data) {
       peak_utilization = safe_max(peak_utilization),
       avg_capacity = safe_mean(avg_capacity),
       max_capacity = safe_max(max_capacity),
-      avg_time_at_capacity = safe_mean(time_at_capacity),
-      avg_percent_at_capacity = safe_mean(percent_at_capacity),
+      time_at_capacity = safe_mean(time_at_capacity),
+      percent_at_capacity = safe_mean(percent_at_capacity),
       .groups = "drop"
     )
 
-  colnames(utilization_summary) <- c("Resource", "Average Bed Utilization (%)", "Peak Bed Utilization (%)", "Average Occupied Beds", "Maximum Occupied Beds", "Average Time at Full Capacity (days)", "Average Percent of Time at Full Capacity (%)")
+  colnames(utilization_summary) <- c("Resource", "Average Bed Utilization (%)", "Peak Bed Utilization (%)", "Average Occupied Beds", "Maximum Occupied Beds", "Time at Full Capacity (days)", "Percent of Time at Full Capacity (%)")
   utilization_summary[, -1] <- round(utilization_summary[, -1], 2)
   utilization_summary
 }

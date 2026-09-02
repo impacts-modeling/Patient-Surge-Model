@@ -324,7 +324,7 @@ app_server <- function(input, output, session) {
             verbose = TRUE
           )
           result$search_mode <- search_mode
-          result$search_mode_label <- "80% reliability efficient search"
+          result$search_mode_label <- "70% reliability efficient search"
           bed_result_signature(evaluation_signature)
           result
         }
