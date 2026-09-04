@@ -122,7 +122,7 @@ template** to obtain a blank workbook with the required sheets and column names.
 Complete that workbook without renaming the sheets or headers, then upload it
 through **Profile configuration (.xlsx)**.
 
-Use **Download profile configuration** to save a completed setup as an `.xlsx`
+Use **Download surge profile configuration** to save a completed setup as an `.xlsx`
 workbook for future simulations. Both files use four required sheets:
 
 | Sheet | Required columns | Purpose |
@@ -138,11 +138,59 @@ underscores, or hyphens.
 
 ## 3. Simulation parameters
 
+### Routine civilian operations
+
+The **Routine Civilian Flow** panel in Hospital Setup optionally adds continuous
+civilian demand. Save a separate list of civilian profiles with constant arrival
+rates in patients/day, ordered unit IDs separated by commas, and one positive
+mean stay per step. These profiles share hospital beds and fallback rules with
+surge patients. Fractional rates are supported. Profile lists are retained for
+each hospital source and unit selection during the current session.
+
+Before the surge, the model runs civilian arrivals alone. The default warm-up
+starts checking after 90 days and can extend to 365 days. It compares time-weighted
+mean occupancy and queue lengths across three consecutive 14-day windows. Every
+unit must have an occupancy range no greater than 5% of its capacity (minimum
+denominator one bed) and a queue range no greater than 0.5 patients. Checks repeat
+one window later until the screen passes or the maximum duration is reached.
+Settings are editable; they require sensitivity analysis for scientific use.
+Passing this screen does not establish statistical equilibrium.
+
+If warm-up fails, the run stops before the surge. Review civilian demand and
+capacity or increase the warm-up limit. Overloaded configurations may never
+stabilize. If warm-up passes, the same simulation continues: no beds, queues, or
+patients are reset, and civilian arrivals continue throughout the event and
+follow-up. Day 0 is surge onset; simulation duration excludes warm-up. With this
+option disabled, the original empty-hospital behavior is retained, including
+the first surge arrivals on day 1.
+
+Bed-expansion searches include the civilian flow and its warm-up. Added beds are
+available from warm-up onward, representing planned expansion rather than a
+delayed response. Queue criteria are evaluated after surge onset.
+
+### Reproducible outputs for analysis
+
+Use **Simulation seed** to repeat a scenario. **Download raw run data (.rds)**
+exports resource events, complete resource history including warm-up, patient
+records by population, per-resource patient activity, warm-up diagnostics,
+replication metadata, and the configuration. Civilian-enabled runs retain
+incomplete patients and civilians discharged before surge onset; select the
+appropriate cohort before analysis. Missing end times do not indicate discharge.
+Resource plots include both populations, while patient-time plots use completed
+surge patients when civilian flow is enabled.
+
+The same runs can be generated outside Shiny with `run_hospital_scenario()`;
+see the runnable example and output dictionary in `README.md`. A zero surge
+arrival rate permits civilian-only comparisons in R. Existing Excel templates
+store hospital and surge settings only; the RDS export includes civilian settings.
+
+### Event settings
+
 | Parameter | Meaning |
 |---|---|
-| **Patients per Day** | Number of new patient arrivals generated each day. |
+| **Patients per Day** | Number of surge patient arrivals generated each day. |
 | **Arrival Period (days)** | Number of consecutive days during which new patients arrive. |
-| **Simulation Duration (days)** | Total time horizon used to observe patient flow. |
+| **Simulation Duration (days)** | Observation horizon; excludes warm-up when civilian flow is enabled. |
 | **Number of simulations** | Number of independent replications used to summarize stochastic variation. |
 | **Med/Surg queue limit** | Maximum acceptable GenMed queue length used by the expansion optimizer. |
 | **ICU queue limit** | Maximum acceptable ICU queue length used by the expansion optimizer. |
@@ -217,8 +265,8 @@ The recommendation applies the reliability requirement independently to each
 target unit:
 
 - the maximum GenMed queue must be at or below the Med/Surg limit in at least
-  **80% of validation simulations**; and
-- the maximum ICU queue must be at or below the ICU limit in at least **80% of
+  **70% of validation simulations**; and
+- the maximum ICU queue must be at or below the ICU limit in at least **70% of
   validation simulations**.
 
 For example, with 20 validation simulations, GenMed must pass in at least 16 and
@@ -329,9 +377,9 @@ stable summaries:
 - focus on patterns across metrics rather than one isolated value; and
 - rerun important scenarios to assess sensitivity.
 
-An 80% reliability target means that, for each unit separately, up to 20% of
+An 70% reliability target means that, for each unit separately, up to 30% of
 validation simulations may exceed that unit's queue limit. Because failures can
-occur in different replications, the joint diagnostic can be below 80% even
+occur in different replications, the joint diagnostic can be below 70% even
 when the recommendation passes.
 
 ## 8. Assumptions and limitations
@@ -369,7 +417,7 @@ enabled automatically. Only one simulation or bed-expansion calculation can run
 at a time.
 
 **A queue still exceeds its limit in some simulations.**  
-The optimizer requires each unit to comply in at least 80% of validation
+The optimizer requires each unit to comply in at least 70% of validation
 simulations, not 100%. Increase the number of simulations for a more stable
 assessment or manually test a larger expansion if a more conservative scenario
 is required. The reported joint diagnostic can be lower because GenMed and ICU

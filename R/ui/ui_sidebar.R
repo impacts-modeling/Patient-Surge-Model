@@ -20,6 +20,13 @@ build_sidebar <- function() {
         data.position = "right"
       )
     ),
+    shiny::div(style = "padding: 0 10px;",
+      shiny::selectInput("scenario_mode", "Scenario to run",
+        choices = c("Surge event" = "surge", "Routine civilian operation only" = "civilian_only"),
+        selected = "surge"),
+      shiny::conditionalPanel("input.scenario_mode == 'civilian_only'",
+        shiny::helpText("Enable Routine Civilian Flow and save civilian profiles in Hospital Setup. Surge profiles are not required."))
+    ),
     sidebarMenu(
       id = "sidebarid",
       shinydashboard::menuItem("Hospital Setup", tabName = "HospitalSetup", icon = shiny::icon("hospital")),
@@ -33,15 +40,19 @@ build_sidebar <- function() {
             shiny::fluidRow(
               shiny::column(
                 width = col1,
-                shiny::numericInput("n_patients", "Patients per Day", min = 1, max = 100, value = 10),
-                shiny::numericInput("sim_days", "Simulation Duration (days)", min = 1, max = 100, value = 30)
+                shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
+                  shiny::numericInput("n_patients", "Surge Patients per Day", min = 1, max = 100, value = 10)),
+                shiny::numericInput("sim_days", "Observation Duration (days)", min = 1, max = 100, value = 30)
               ),
               shiny::column(
                 width = col1,
-                shiny::numericInput("duration", "Arrival Period (days)", min = 1, max = 100, value = 10),
-                shiny::numericInput("num_sims", "Number of simulations", min = 1, max = 100, value = 12)
+                shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
+                  shiny::numericInput("duration", "Surge Arrival Period (days)", min = 1, max = 100, value = 10)),
+                shiny::numericInput("num_sims", "Number of simulations", min = 1, max = 100, value = 10)
               )
-            )
+            ),
+            shiny::numericInput("simulation_seed", "Simulation seed", value = 2026, min = 1, step = 1),
+            shiny::helpText("With civilian flow enabled, day 0 starts observation after warm-up. Civilian-only mode generates no surge arrivals.")
           ),
           id = "tour_simulation_parameters",
           data.step = 7,
@@ -85,14 +96,16 @@ build_sidebar <- function() {
               "Current capacity is checked first."# An internal run with at least 500 beds",
               # "per unit measures unconstrained primary demand. Fallback demand can exceed",
               # "that reference, so failing units grow exponentially up to a fallback-safe",
-              # "ceiling. Each unit must independently meet its limit in 80% of validation simulations."
+              # "ceiling. Each unit must independently meet its limit in 70% of validation simulations."
             )),
-            shiny::actionButton("run_N", "Estimate Bed Expansion", class = "btn-primary"),
+            shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
+              shiny::actionButton("run_N", "Estimate Bed Expansion", class = "btn-primary")),
             shiny::h4("Additional Bed Capacity:"),
             shiny::fluidRow(
               shiny::column(width = 6, shiny::numericInput("genmed_msf", "HxS Med/Surg", min = 0, max = 100, value = 0)),
               shiny::column(width = 6, shiny::numericInput("icu_msf", "HxS ICU", min = 0, max = 100, value = 0))
-            )
+            ),
+            shiny::helpText("HxS additions apply to the selected scenario. Use zero additions to evaluate existing capacity.")
           ),
           id = "tour_bed_expansion",
           data.step = 9,
@@ -101,7 +114,7 @@ build_sidebar <- function() {
             "Enter acceptable GenMed and ICU queue limits. The optimizer first measures",
             "unconstrained primary demand with at least 500 beds in every unit.",
             "It then grows only failing resources exponentially; this can exceed primary",
-            "demand when fallbacks route patients into GenMed or ICU. The 80% target is",
+            "demand when fallbacks route patients into GenMed or ICU. The 70% target is",
             "validated independently for each unit. Confirm before starting; only one",
             "calculation can run at a time."
           ),

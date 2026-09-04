@@ -236,7 +236,17 @@ add_resource_plot_page <- function(resources, var = "server") {
   print(plot_obj)
 }
 
-make_patient_summary <- function(arrivals) {
+select_patient_time_cohort <- function(arrivals, scenario_mode = "surge") {
+  if ("population" %in% names(arrivals)) {
+    population <- if (identical(scenario_mode, "civilian_only")) "civilian" else "surge"
+    arrivals <- dplyr::filter(arrivals, .data$population == .env$population,
+                              .data$start_time >= 0, .data$finished %in% TRUE)
+  }
+  arrivals
+}
+
+make_patient_summary <- function(arrivals, scenario_mode = "surge") {
+  arrivals <- select_patient_time_cohort(arrivals, scenario_mode)
   arrivals |>
     dplyr::group_by(replication) |>
     dplyr::summarise(
@@ -249,8 +259,8 @@ make_patient_summary <- function(arrivals) {
     dplyr::filter(is.finite(avg_treatment_time), is.finite(avg_wait_time))
 }
 
-add_patient_time_plot_page <- function(arrivals) {
-  patient_summary <- make_patient_summary(arrivals)
+add_patient_time_plot_page <- function(arrivals, scenario_mode = "surge") {
+  patient_summary <- make_patient_summary(arrivals, scenario_mode)
   if (nrow(patient_summary) == 0) {
     add_report_text_page(
       "Distribution of Average Treatment/Wait Time",
@@ -299,15 +309,19 @@ add_patient_time_plot_page <- function(arrivals) {
 }
 
 build_report_params <- function(input, profile_config) {
+  civilian_only <- identical(input$scenario_mode, "civilian_only")
   capacity_params <- as.list(profile_config$capacities)
   names(capacity_params) <- paste(names(capacity_params), "Available Beds")
   c(
     list(
-      `Patients per Day` = input$n_patients,
-      `Arrival Period (days)` = input$duration,
+      `Scenario` = if (civilian_only) "Routine civilian operation only" else "Surge event",
+      `Surge Patients per Day` = if (civilian_only) 0 else input$n_patients,
+      `Surge Arrival Period (days)` = if (civilian_only) 0 else input$duration,
       `Simulation Duration (days)` = input$sim_days,
       `Number of simulations` = input$num_sims
     ),
+    list(`Routine civilian flow enabled` = isTRUE(profile_config$baseline$enabled),
+         `Simulation seed` = input$simulation_seed),
     capacity_params,
     list(
       `Maximum Allowed Med/Surg Queue Length` = input$congestion_index,
@@ -371,15 +385,40 @@ generate_simulation_pdf_report <- function(file, params, simulation_data, profil
   )
 
   add_report_table_page("Model Parameter Configuration", make_parameter_table(params))
-  add_report_table_page("Patient Profiles", make_profile_configuration_table(profile_config))
+  civilian_only <- identical(simulation_data$scenario_mode, "civilian_only")
+  if (!civilian_only) {
+    add_report_table_page("Surge Patient Profiles", make_profile_configuration_table(profile_config))
+  }
+  if (isTRUE(profile_config$baseline$enabled)) {
+    baseline <- profile_config$baseline
+    civilian_profiles <- dplyr::bind_rows(lapply(names(baseline$profiles), function(name) {
+      profile <- baseline$profiles[[name]]
+      data.frame(Profile = name, Patients_per_day = baseline$arrival_rates[[name]],
+                 Pathway = paste(profile$unit, collapse = " -> "),
+                 Mean_stays_days = paste(profile$los, collapse = " -> "))
+    }))
+    add_report_table_page("Routine Civilian Profiles", civilian_profiles)
+    add_report_table_page("Civilian Warm-up Settings", make_parameter_table(
+      baseline[setdiff(names(baseline), c("profiles", "arrival_rates"))]))
+    add_report_table_page("Warm-up Duration by Replication", simulation_data$runs)
+    add_report_text_page("Civilian Flow Interpretation", c(
+      if (civilian_only) "Civilian-only scenario: day 0 starts observation after warm-up; no surge patients arrive."
+      else "Resource results include both populations after surge onset (day 0).",
+      if (civilian_only) "Patient-time plots include completed civilians admitted from day 0 onward."
+      else "Patient-time plots include completed surge patients only.",
+      "Civilian arrivals continue throughout warm-up and follow-up without resetting beds or patients.",
+      "Three time-weighted windows passed the configured stability screen; this is not proof of equilibrium.",
+      "Expansion candidates include added beds during warm-up (planned expansion).",
+      "Raw RDS output retains civilian patient records, incomplete patients and warm-up diagnostics."))
+  }
   add_report_table_page("Fallback Configuration", make_fallback_configuration_table(profile_config))
-  add_report_table_page("Recommended Expansion", make_expansion_table(n_result))
+  if (!civilian_only) add_report_table_page("Recommended Expansion", make_expansion_table(n_result))
   add_report_table_page("Average Utilization of Hospital Resources", summary_utilization(simulation_data$resources))
   add_report_table_page("Bottlenecks in Hospital Resource Usage", summary_queue(simulation_data$resources))
 
   add_resource_plot_page(simulation_data$resources, var = "server")
   add_resource_plot_page(simulation_data$resources, var = "queue")
-  add_patient_time_plot_page(simulation_data$arrivals)
+  add_patient_time_plot_page(simulation_data$arrivals, simulation_data$scenario_mode)
 
   invisible(file)
 }

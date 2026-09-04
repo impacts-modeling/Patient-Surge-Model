@@ -147,7 +147,11 @@ sample_patient_profile <- function(profile_prob) {
 
 run_simulation <- function(capacities, duration, n_patients, sim_days,
                            patient_profiles, profile_prob, fallbacks = list(),
-                           recheck_interval_days = 1) {
+                           recheck_interval_days = 1, baseline = NULL) {
+  if (!is.null(baseline) && isTRUE(baseline$enabled)) {
+    return(run_baseline_simulation(capacities, duration, n_patients, sim_days,
+                                    patient_profiles, profile_prob, fallbacks, baseline))
+  }
   validate_patient_configuration(capacities, patient_profiles, profile_prob, fallbacks)
   stopifnot(
     length(recheck_interval_days) == 1,
@@ -218,7 +222,7 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
     simmer::wrap()
 }
 
-get_hospital_mon_resources <- function(simulation, include_resources = NULL) {
+collect_hospital_resources <- function(simulation, include_resources = NULL) {
   resources <- simmer::get_mon_resources(simulation)
   required_columns <- c(
     "resource", "time", "server", "queue", "capacity",
@@ -338,11 +342,26 @@ get_hospital_mon_resources <- function(simulation, include_resources = NULL) {
     dplyr::arrange(.data$time, .data$resource)
 }
 
+get_hospital_mon_resources <- function(simulation, include_resources = NULL,
+                                        include_warmup = FALSE) {
+  resources <- collect_hospital_resources(simulation, include_resources)
+  metadata <- attr(simulation, "civilian_metadata")
+  if (is.null(metadata)) return(resources)
+  capacities <- metadata$capacities
+  if (!is.null(include_resources)) capacities <- capacities[intersect(names(capacities), include_resources)]
+  resources <- initialize_resource_history(resources, capacities)
+  slice_resource_history(resources,
+                         start = if (include_warmup) 0 else metadata$surge_start,
+                         end = metadata$observation_end, shift = metadata$surge_start)
+}
+
 get_hospital_mon_arrivals <- function(simulation) {
-  arrivals <- simmer::get_mon_arrivals(simulation)
+  metadata <- attr(simulation, "civilian_metadata")
+  arrivals <- simmer::get_mon_arrivals(simulation, ongoing = !is.null(metadata)) |>
+    dplyr::filter(.data$start_time >= 0)
   arrivals_by_resource <- simmer::get_mon_arrivals(
     simulation,
-    per_resource = TRUE
+    per_resource = TRUE, ongoing = !is.null(metadata)
   )
   logical_wait <- arrivals_by_resource |>
     dplyr::filter(startsWith(.data$resource, logical_queue_prefix)) |>
@@ -351,15 +370,23 @@ get_hospital_mon_arrivals <- function(simulation) {
       logical_wait_days = sum(.data$activity_time, na.rm = TRUE),
       .groups = "drop"
     )
-  if (nrow(logical_wait) == 0) return(arrivals)
-
-  arrivals |>
+  arrivals <- arrivals |>
     dplyr::left_join(logical_wait, by = c("name", "replication")) |>
     dplyr::mutate(
       logical_wait_days = dplyr::coalesce(.data$logical_wait_days, 0),
       activity_time = pmax(0, .data$activity_time - .data$logical_wait_days)
     ) |>
     dplyr::select(-dplyr::all_of("logical_wait_days"))
+  if (is.null(metadata)) return(arrivals)
+  arrivals |>
+    dplyr::left_join(metadata$patients, by = "name") |>
+    dplyr::mutate(start_time = .data$start_time - metadata$surge_start,
+                  end_time = .data$end_time - metadata$surge_start,
+                  scheduled_arrival = .data$scheduled_arrival - metadata$surge_start,
+                  present_at_surge = .data$start_time < 0 &
+                    (is.na(.data$end_time) | .data$end_time >= 0),
+                  arrived_during_warmup = .data$start_time < 0) |>
+    dplyr::arrange(.data$start_time, .data$name)
 }
 
 estimate_peak_unit_demand <- function(patient_profiles, profile_prob, n_patients,
@@ -433,8 +460,12 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
                           search_queue_tolerance = 1,
                           reliability_level = 0.80,
                           congestion_index_opt = 5, congestion_index_opt_ICU = 5,
-                          workers = 1, search_seed = 2026, verbose = FALSE) {
+                          workers = 1, search_seed = 2026, verbose = FALSE,
+                          baseline = NULL) {
   validate_patient_configuration(capacities, patient_profiles, profile_prob, fallbacks)
+  if (!is.null(baseline) && isTRUE(baseline$enabled)) {
+    validate_baseline_config(baseline, capacities, fallbacks)
+  }
   stopifnot(
     all(c("GenMed", "ICU") %in% names(capacities)),
     num_sims >= 1,
@@ -512,7 +543,8 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
           sim_days = sim_days,
           patient_profiles = patient_profiles,
           profile_prob = profile_prob,
-          fallbacks = fallbacks
+          fallbacks = fallbacks,
+          baseline = baseline
         )
         monitored_resources <- get_hospital_mon_resources(
           simulation,
@@ -647,6 +679,11 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
 
   target_units <- c("GenMed", "ICU")
   total_generated_patients <- as.integer(ceiling(duration * n_patients))
+  if (!is.null(baseline) && isTRUE(baseline$enabled)) {
+    # A safe bound includes every civilian scheduled during warm-up and follow-up.
+    total_generated_patients <- total_generated_patients + sum(ceiling(
+      baseline$arrival_rates * (baseline$warmup_max_days + sim_days)))
+  }
   unlimited_capacity_value <- max(500L, total_generated_patients)
   unlimited_simulation_used <- FALSE
   unlimited_max_occupancy <- stats::setNames(
@@ -686,7 +723,8 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
           sim_days = sim_days,
           patient_profiles = patient_profiles,
           profile_prob = profile_prob,
-          fallbacks = fallbacks
+          fallbacks = fallbacks,
+          baseline = baseline
         )
         simmer::get_mon_resources(simulation) |>
           dplyr::filter(
@@ -1047,6 +1085,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     estimated_ICU_N = estimated_capacities[["ICU"]],
     expected_peak_GenMed = expected_peak[["GenMed"]],
     expected_peak_ICU = expected_peak[["ICU"]],
+    analytical_reference_scope = "surge_only; excludes routine civilian demand",
     estimated_additional_GenMed = estimated_additional_beds[["GenMed"]],
     estimated_additional_ICU = estimated_additional_beds[["ICU"]],
     unlimited_simulation_used = unlimited_simulation_used,

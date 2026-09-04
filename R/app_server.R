@@ -5,7 +5,16 @@ app_server <- function(input, output, session) {
     # output$auth_output <- shiny::renderPrint({ reactiveValuesToList(res_auth) })
     
     simulation_data <- shiny::reactiveVal(NULL)
-    profile_config <- hospital_profiles_server("profiles")
+    civilian_only <- shiny::reactive(identical(input$scenario_mode, "civilian_only"))
+    surge_config <- hospital_profiles_server("profiles",
+      require_surge_profiles = shiny::reactive(!civilian_only()))
+    baseline_config <- mod_baseline_server("baseline", surge_config)
+    profile_config <- shiny::reactive({
+      config <- surge_config()
+      if (is.null(config)) return(NULL)
+      config$baseline <- baseline_config()
+      config
+    })
   
     shiny::observeEvent(input$guided_tour, {
       return_to_simulation_results <- base::I(paste(
@@ -72,6 +81,7 @@ app_server <- function(input, output, session) {
         evaluated_capacities[["GenMed"]] <- evaluated_capacities[["GenMed"]] + input$genmed_msf
       }
       list(
+        scenario_mode = input$scenario_mode,
         profile_config = config,
         evaluated_capacities = evaluated_capacities,
         n_patients = input$n_patients,
@@ -115,7 +125,6 @@ app_server <- function(input, output, session) {
         !is.null(config),
         "Complete a valid Hospital Setup before running the simulation."
       ))
-      # Drop the previous simulation before allocating the next replication bank.
       simulation_data(NULL)
       invisible(base::gc(full = TRUE))
   
@@ -124,37 +133,32 @@ app_server <- function(input, output, session) {
       if ("ICU" %in% names(capacities)) capacities[["ICU"]] <- capacities[["ICU"]] + params$icu_msf
       if ("GenMed" %in% names(capacities)) capacities[["GenMed"]] <- capacities[["GenMed"]] + params$genmed_msf
   
-      shiny::withProgress(message = "Running simulations...", value = 0, {
-        results <- future_lapply(seq_len(params$num_sims), function(i) {
-          sim <- run_simulation(
-            capacities = capacities,
-            duration = params$duration,
-            n_patients = params$n_patients,
-            sim_days = params$sim_days,
-            patient_profiles = config$patient_profiles,
-            profile_prob = config$profile_prob,
-            fallbacks = config$fallbacks
-          )
-          list(
-            resources = dplyr::mutate(get_hospital_mon_resources(sim), replication = i),
-            arrivals = dplyr::mutate(get_hospital_mon_arrivals(sim), replication = i)
-          )
-        },
-          future.seed = TRUE,
-          future.chunk.size = max(1L, ceiling(params$num_sims / max(1L, workers)))
-        )
-  
-        simulation_data(list(
-          resources = dplyr::bind_rows(lapply(results, `[[`, "resources")),
-          arrivals = dplyr::bind_rows(lapply(results, `[[`, "arrivals")),
-          profile_config = config,
-          capacities = capacities
-        ))
+      tryCatch(shiny::withProgress(message = "Running simulations and civilian warm-up...", value = 0, {
+        run_config <- config
+        run_config$capacities <- capacities
+        mode <- if (civilian_only()) "civilian_only" else "surge"
+        scenario_id <- if (civilian_only()) "civilian_only" else if (params$icu_msf + params$genmed_msf > 0) {
+          "surge_expanded"
+        } else if (isTRUE(config$baseline$enabled)) "civilian_plus_surge" else "surge_only"
+        results <- run_hospital_scenario(run_config, params$duration, params$n_patients,
+                                         params$sim_days, params$num_sims, seed = params$simulation_seed,
+                                         scenario_id = scenario_id, scenario_mode = mode)
+        results$profile_config <- config
+        results$capacities <- capacities
+        results$report_params <- build_report_params(input, config)
+        results$scenario_id <- scenario_id
+        simulation_data(results)
+      }), error = function(error) {
+        shiny::showNotification(conditionMessage(error), type = "error", duration = NULL)
       })
     })
   
   
     shiny::observeEvent(input$run_N, {
+      if (civilian_only()) {
+        shiny::showNotification("Select Surge event to estimate surge bed expansion.", type = "message")
+        return(invisible(NULL))
+      }
       if (isTRUE(simulation_running())) {
         shiny::showNotification(
           "A simulation is already running. Wait for it to finish before estimating bed expansion.",
@@ -200,6 +204,13 @@ app_server <- function(input, output, session) {
   
     find_result <- shiny::reactiveVal(NULL)
     last_patient_profile_signature <- shiny::reactiveVal(NULL)
+
+    shiny::observeEvent(input$scenario_mode, {
+      simulation_data(NULL)
+      find_result(NULL)
+      bed_result_signature(NULL)
+      applied_recommendation(NULL)
+    }, ignoreInit = TRUE)
   
     shiny::observeEvent(profile_config(), {
       config <- profile_config()
@@ -209,7 +220,8 @@ app_server <- function(input, output, session) {
         list(
           patient_profiles = config$patient_profiles,
           profile_prob = config$profile_prob,
-          fallbacks = config$fallbacks
+          fallbacks = config$fallbacks,
+          baseline = config$baseline
         ),
         connection = NULL,
         version = 2
@@ -235,7 +247,7 @@ app_server <- function(input, output, session) {
   
       shiny::showNotification(
         paste(
-          "Patient profiles changed. Additional bed capacity was reset to zero",
+          "Patient profiles or civilian-flow settings changed. Additional bed capacity was reset to zero",
           "and previous simulation results were cleared from memory."
         ),
         type = "message",
@@ -244,6 +256,11 @@ app_server <- function(input, output, session) {
     }, ignoreInit = FALSE)
   
     shiny::observeEvent(input$confirm_run_N, {
+      if (civilian_only()) {
+        shiny::removeModal()
+        update_calculation_buttons()
+        return(invisible(NULL))
+      }
       if (isTRUE(simulation_running())) {
         shiny::removeModal()
         shiny::showNotification(
@@ -282,7 +299,7 @@ app_server <- function(input, output, session) {
       }, add = TRUE)
   
       applied_recommendation(NULL)
-      result <- shiny::withProgress(
+      result <- tryCatch(shiny::withProgress(
         message = "Calculation in progress",
         detail = "This may take a while...",
         value = 0,
@@ -309,6 +326,7 @@ app_server <- function(input, output, session) {
             patient_profiles = config$patient_profiles,
             profile_prob = config$profile_prob,
             fallbacks = config$fallbacks,
+            baseline = config$baseline,
             num_sims = evaluation_signature$num_sims,
             search_num_sims = min(bed_search_config$search_num_sims, evaluation_signature$num_sims),
             max_evaluations = bed_search_config$max_evaluations,
@@ -328,7 +346,11 @@ app_server <- function(input, output, session) {
           bed_result_signature(evaluation_signature)
           result
         }
-      )
+      ), error = function(error) {
+        shiny::showNotification(conditionMessage(error), type = "error", duration = NULL)
+        NULL
+      })
+      if (is.null(result)) return(invisible(NULL))
       find_result(result)
       shiny::showNotification(
         "Bed-expansion estimate completed.",
@@ -531,8 +553,9 @@ app_server <- function(input, output, session) {
       # patient_metrics  <- patient_metrics$arrivals
       shiny::req(simulation_data())
       patient_metrics <- simulation_data()$arrivals
+      patient_metrics <- select_patient_time_cohort(patient_metrics, simulation_data()$scenario_mode)
       shiny::validate(
-        shiny::need(nrow(patient_metrics) > 0, "No patient arrivals were recorded."),
+        shiny::need(nrow(patient_metrics) > 0, "No completed patients from the observation-period cohort are available yet."),
         shiny::need(any(patient_metrics$finished %in% TRUE), "No patients completed treatment.")
       )
       
@@ -595,6 +618,39 @@ app_server <- function(input, output, session) {
   
   
   
+    output$baseline_run_status <- shiny::renderUI({
+      data <- simulation_data()
+      shiny::req(data)
+      mode_description <- if (identical(data$scenario_mode, "civilian_only")) {
+        "Routine civilian operation only: no surge arrivals. Day 0 is the start of observation after warm-up. Patient-time plots use completed civilians admitted from day 0 onward."
+      } else {
+        "Surge event: patient-time plots use completed surge patients. Day 0 marks surge onset when civilian flow is enabled."
+      }
+      if (!isTRUE(data$profile_config$baseline$enabled)) {
+        return(shiny::div(class = "alert alert-info", "Surge-only run; routine civilian flow was disabled."))
+      }
+      shiny::div(class = "alert alert-info",
+        mode_description, shiny::tags$br(),
+        sprintf("Civilian warm-up passed the configured screen after %.0f to %.0f days across replications. Resource plots include every patient occupying beds; raw history includes warm-up. The screen does not prove equilibrium.",
+                min(data$runs$warmup_days), max(data$runs$warmup_days)))
+    })
+    output$patient_cohort_note <- shiny::renderText({
+      data <- simulation_data()
+      if (is.null(data)) return("Run the selected scenario to display its results.")
+      if (identical(data$scenario_mode, "civilian_only")) {
+        "Patient-time plots: completed civilian patients admitted after warm-up. Raw output also retains patients present at day 0 and unfinished patients."
+      } else "Patient-time plots: completed surge patients. Raw output identifies both populations when civilian flow is enabled."
+    })
+    output$download_run_data <- shiny::downloadHandler(
+      filename = function() {
+        shiny::req(simulation_data())
+        paste0("hospital_", simulation_data()$scenario_id, "_", Sys.Date(), ".rds")
+      },
+      content = function(file) {
+        shiny::req(simulation_data())
+        saveRDS(simulation_data(), file)
+      }
+    )
     output$download_report <- shiny::downloadHandler(
       filename = function() {
         paste0("patient_surge_model_report_", format(Sys.Date(), "%Y%m%d"), ".pdf")
@@ -605,9 +661,10 @@ app_server <- function(input, output, session) {
           current_find_result(),
           error = function(err) NULL
         )
+        if (identical(simulation_data()$scenario_mode, "civilian_only")) n_result <- NULL
         generate_simulation_pdf_report(
           file = file,
-          params = build_report_params(input, simulation_data()$profile_config),
+          params = simulation_data()$report_params,
           simulation_data = simulation_data(),
           profile_config = simulation_data()$profile_config,
           n_result = n_result

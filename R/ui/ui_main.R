@@ -111,13 +111,18 @@ build_body <- function() {
   shinydashboard::tabItems(
       shinydashboard::tabItem(
         tabName = "HospitalSetup",
-        hospital_profiles_ui("profiles")
+        hospital_profiles_ui("profiles"),
+        mod_baseline_ui("baseline")
       ),
       shinydashboard::tabItem(
         tabName = "InitCondition",
         shiny::tabsetPanel(
           shiny::tabPanel(
             "Simulation Results",
+            shiny::uiOutput("baseline_run_status"),
+            shiny::downloadButton("download_run_data", "Download raw run data (.rds)"),
+            shiny::helpText("Raw tables include scenario and population labels, resource history, warm-up diagnostics, configuration and seed."),
+            shiny::textOutput("patient_cohort_note"),
             shiny::fluidRow(
               shinydashboard::box(
                 title = "Average Resource Utilization Over Time", status = "success", solidHeader = TRUE, width = 6,
