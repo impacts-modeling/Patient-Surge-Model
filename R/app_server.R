@@ -48,6 +48,10 @@ app_server <- function(input, output, session) {
             "  var modelLink = document.querySelector(\"a[data-value='InitCondition']\");",
             "  if (modelLink) modelLink.click();",
             "}",
+            "if (targetElement && /tour_routine_flow$/.test(targetElement.id)) {",
+            "  var setupLink = document.querySelector(\"a[data-value='HospitalSetup']\");",
+            "  if (setupLink) setupLink.click();",
+            "}",
             "rintrojs.callback.switchTabs(targetElement);"
           )),
           oncomplete = return_to_simulation_results,

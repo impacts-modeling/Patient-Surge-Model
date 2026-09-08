@@ -63,19 +63,21 @@ read_baseline_profiles_csv <- function(file, hospital) {
 mod_baseline_ui <- function(id) {
   ns <- shiny::NS(id)
   defaults <- baseline_defaults()
-  shinydashboard::box(
+  rintrojs::introBox(shinydashboard::box(
     title = "Routine Civilian Flow", width = 12, status = "primary", solidHeader = TRUE,
     shiny::checkboxInput(ns("enabled"), "Enable routine civilian arrivals", FALSE),
     shiny::helpText("Civilian and surge patients share the selected hospital beds and fallback rules. Civilian profiles are stored separately for each hospital source and unit selection."),
     shiny::conditionalPanel(sprintf("input['%s']", ns("enabled")),
       shiny::actionButton(
         ns("use_predefined_profiles"),
-        "Use predefined baseline profiles",
+        "Use predefined baseline profiles (GenMed, Surge, ICU)",
         class = "btn-primary"
       ),
       shiny::helpText(paste(
         "Loads the profiles supplied with the app from",
-        "R/data/baseline_civilian_profiles.csv and replaces the currently saved civilian profiles."
+        "R/data/baseline_civilian_profiles.csv and replaces the currently saved civilian profiles.",
+        "These predefined pathways use only GenMed, Surge and ICU; select all three units first.",
+        "For other units, create or import civilian profiles. Review rates and stays for your hospital."
       )),
       shiny::tags$hr(),
       shiny::fileInput(ns("profile_csv"), "Civilian profiles CSV", accept = ".csv"),
@@ -121,7 +123,15 @@ mod_baseline_ui <- function(id) {
       shiny::tableOutput(ns("profiles")),
       shiny::uiOutput(ns("status"))
     )
-  )
+  ), id = ns("tour_routine_flow"), data.step = 7,
+    data.intro = paste(
+      "<strong>Routine civilian operation and warm-up.</strong><br>",
+      "Enable this flow for a populated hospital before the surge. Civilian arrivals continue during the event.",
+      "Predefined profiles require GenMed, Surge and ICU only; other units need manual or imported profiles.",
+      "Enter a rate and an ordered pathway with one mean stay per step, for example GenMed, ICU and 3, 3 days.",
+      "Choose evenly spaced or Poisson arrivals. Fixed warm-up continues even if its diagnostic fails; adaptive mode must pass.",
+      "Patients and queues remain at day zero. Additional beds activate then. Review baseline stability before comparing surge effects."
+    ), data.position = "top")
 }
 
 mod_baseline_server <- function(id, hospital_config) {

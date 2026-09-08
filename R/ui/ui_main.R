@@ -129,7 +129,7 @@ build_body <- function() {
                 collapsible = TRUE,
                 rintrojs::introBox(
                   plotly::plotlyOutput("resource_plot"),
-                  data.step = 10,
+                  data.step = 11,
                   data.intro = paste(
                     "<strong>Occupancy and queues over time</strong><br>",
                     "Use the interactive plots to compare occupied beds and",
@@ -150,7 +150,7 @@ build_body <- function() {
                 collapsible = TRUE,
                 rintrojs::introBox(
                   shiny::tableOutput("utilization_table"),
-                  data.step = 11,
+                  data.step = 12,
                   data.intro = paste(
                     "<strong>Interpret the summary tables.</strong><br>",
                     "Review utilization, occupied beds, time at full capacity,",
@@ -172,7 +172,7 @@ build_body <- function() {
                 title = "Bed Waiting Times", status = "success", solidHeader = TRUE, width = 12,
                 collapsible = TRUE,
                 collapsed = FALSE,
-                shiny::tableOutput("bed_wait_table"), shiny::helpText("Only patients who completed their hospital trajectory are included. Means include zero waits and average replication-specific bed-request means; 95% CIs require at least two contributing replications. Results exclude unfinished patients and may understate delays. Day-zero waits include waiting before observation."), style = "overflow-x: auto;"
+                rintrojs::introBox(shiny::tableOutput("bed_wait_table"), data.step = 13, data.intro = paste("<strong>Bed waiting times: completed patients only.</strong><br>", "Mean wait includes zero waits and is averaged across replications. The 95% CI describes uncertainty in that mean, not the range containing 95% of patient waits; at least two contributing replications are needed.", "Observed waiting (%) is the percentage of bed requests with a positive wait. Rows distinguish unit, population and cohort. Unfinished patients are excluded, so delays may be understated."), data.position = "top"), shiny::helpText("Only patients who completed their hospital trajectory are included. Means include zero waits and average replication-specific bed-request means; 95% CIs require at least two contributing replications. Results exclude unfinished patients and may understate delays. Day-zero waits include waiting before observation."), style = "overflow-x: auto;"
               )
             ),
             shiny::fluidRow(
@@ -181,10 +181,10 @@ build_body <- function() {
                 rintrojs::introBox(
                   shiny::downloadButton("download_report", "Download PDF Report", class = "btn-primary"),
                   shiny::helpText("Run the simulation first. If you also ran Estimate Bed Expansion, the recommendation will be included."),
-                  data.step = 12,
+                  data.step = 14,
                   data.intro = paste(
                     "<strong>Export the scenario.</strong><br>",
-                    "Download a PDF report after running the simulation. If bed",
+                    "Download raw RDS data for independent figures and analysis, including configuration, seeds and bed-wait summaries. A PDF report is also available. If bed",
                     "expansion was estimated, the recommendation is also included."
                   ),
                   data.position = "top"
@@ -200,7 +200,7 @@ build_body <- function() {
             "Documentation",
             rintrojs::introBox(
               shiny::includeMarkdown("description.md"),
-              data.step = 13,
+              data.step = 15,
               data.intro = paste(
                 "<strong>Detailed documentation</strong><br>",
                 "Return to this tab for definitions, model assumptions, the",

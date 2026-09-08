@@ -15,7 +15,7 @@ build_sidebar <- function() {
         data.intro = paste(
           "<strong>Welcome to the Patient Surge Model.</strong><br>",
           "This guided tour explains how to configure the hospital,",
-          "run a simulation, estimate bed expansion, and interpret the results."
+          "run a simulation, estimate bed expansion, and interpret the results. Choose routine civilian operation only for the baseline, or Surge event to add military arrivals. Keep the same observation horizon when comparing scenarios."
         ),
         data.position = "right"
       )
@@ -59,11 +59,11 @@ build_sidebar <- function() {
             shiny::helpText("Day 0 starts observation and surge arrivals. With civilian flow enabled, warm-up occurs before day 0. Bed search uses 14 replications per candidate in development mode, followed by an independent final evaluation.")
           ),
           id = "tour_simulation_parameters",
-          data.step = 7,
+          data.step = 8,
           data.intro = paste(
             "<strong>Simulation parameters</strong><br>",
-            "Set daily arrivals, the arrival period, the simulation horizon,",
-            "and the number of independent simulation replications."
+            "Choose evenly spaced or Poisson surge arrivals. For Poisson, patients/day is a mean rate and the total varies. Set the arrival period and a common observation horizon extending beyond it,",
+            "then set independent replications and a reproducible seed. Day zero follows warm-up; the hospital is not emptied."
           ),
           data.position = "right"
         ),
@@ -78,9 +78,9 @@ build_sidebar <- function() {
               "$('#run_N').text('Simulation is already running...');"
             )
           ),
-          data.step = 8,
+          data.step = 9,
           data.intro = paste(
-            "<strong>Run the baseline scenario.</strong><br>",
+            "<strong>Run the selected scenario.</strong><br>",
             "The current hospital configuration is simulated and the plots",
             "and tables are refreshed. While it runs, both calculation buttons",
             "are disabled so another calculation cannot start."
@@ -109,7 +109,7 @@ build_sidebar <- function() {
             shiny::helpText("HxS additions apply to the selected scenario. Use zero additions to evaluate existing capacity.")
           ),
           id = "tour_bed_expansion",
-          data.step = 9,
+          data.step = 10,
           data.intro = paste(
             "<strong>Estimate additional capacity.</strong><br>",
             "Enter acceptable GenMed and ICU queue limits. The optimizer first checks current capacity",
