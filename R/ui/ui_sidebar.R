@@ -1,6 +1,10 @@
 # Sidebar UI ------------------------------------------------------------
 build_sidebar <- function() {
   col1 <- 6
+  search_config <- bed_search_configs$development
+  compliance_note <- sprintf(
+    "In at least %.1f%% of replications, the maximum queues of GenMed and ICU must both stay within their limits during the full observation period.",
+    100 * search_config$reliability_level)
   sidebar <- dashboardSidebar(
     width = 305,
     shiny::div(
@@ -41,7 +45,7 @@ build_sidebar <- function() {
               shiny::column(
                 width = col1,
                 shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
-                  shiny::numericInput("n_patients", "Surge Patients per Day", min = 1, max = 100, value = 10)),
+                  shiny::numericInput("n_patients", "Surge Patients per Day", min = 1, max = 100, value = 10, step = "any")),
                 shiny::numericInput("sim_days", "Observation Duration (days)", min = 1, max = 365, value = app_development_config$sim_days)
               ),
               shiny::column(
@@ -56,7 +60,8 @@ build_sidebar <- function() {
                 choices = c("Evenly spaced" = "even", "Poisson (random arrivals)" = "poisson")),
               shiny::helpText("For Poisson arrivals, patients/day is the mean rate; the actual count varies. The observation duration must cover the full arrival period.")),
             shiny::numericInput("simulation_seed", "Simulation seed", value = app_development_config$simulation_seed, min = 1, step = 1),
-            shiny::helpText("Day 0 starts observation and surge arrivals. With civilian flow enabled, warm-up occurs before day 0. Bed search uses 14 replications per candidate in development mode, followed by an independent final evaluation.")
+            shiny::helpText(sprintf("Day 0 starts observation and surge arrivals. With civilian flow enabled, warm-up occurs before day 0. Bed search uses %d replications per candidate and %d independent final replications in development mode.",
+              search_config$num_sims, search_config$final_num_sims))
           ),
           id = "tour_simulation_parameters",
           data.step = 8,
@@ -97,7 +102,7 @@ build_sidebar <- function() {
               shiny::column(width = 6, shiny::numericInput("congestion_index_icu", "ICU", min = 1, max = 100, value = 10, step = 5))
             ),
             shiny::helpText(paste(
-              "In at least 70% of replications, the maximum queues of GenMed and ICU must both stay within their limits during the full observation period."
+              compliance_note
             )),
             shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
               shiny::actionButton("run_N", "Estimate Bed Expansion", class = "btn-primary")),
@@ -115,8 +120,8 @@ build_sidebar <- function() {
             "Enter acceptable GenMed and ICU queue limits. The optimizer first checks current capacity",
             "and, if needed, estimates demand with at least 500 beds in every unit.",
             "It then grows only failing resources exponentially; this can exceed primary",
-            "demand when fallbacks route patients into GenMed or ICU. Both units must meet",
-            "their maximum queue limits simultaneously in at least 70% of replications. Confirm before starting; only one",
+            "demand when fallbacks route patients into GenMed or ICU.", compliance_note,
+            "Confirm before starting; only one",
             "calculation can run at a time."
           ),
           data.position = "right"

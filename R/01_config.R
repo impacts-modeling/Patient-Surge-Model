@@ -5,7 +5,7 @@ options(shiny.maxRequestSize = 50 * 1024^2)
 options(dplyr.summarise.inform = FALSE)
 
 available_cores <- future::availableCores() - 1L
-workers <- max(1L, min(4L, available_cores))
+workers <- max(1L, min(2L, available_cores))
 
 if (workers > 1L) {
   future::plan(future::multisession, workers = workers)
@@ -20,11 +20,11 @@ bed_search_configs <- list(
   development = list(
     num_sims = 15L, max_evaluations = 45L, final_num_sims = 20L,
     minimum_step = 1L, demand_safety_factor = 1.1,
-    reliability_level = 0.3, search_seed = 2026L
+    reliability_level = 0.5, search_seed = 2026L
   ),
   paper = list(
     num_sims = 15L, max_evaluations = 40L, final_num_sims = 20L,
     minimum_step = 1L, demand_safety_factor = 1,
-    reliability_level = 0.3, search_seed = 2026L
+    reliability_level = 0.5, search_seed = 2026L
   )
 )

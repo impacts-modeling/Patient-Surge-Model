@@ -223,7 +223,10 @@ sample_patient_profile <- function(profile_prob) {
 run_simulation <- function(capacities, duration, n_patients, sim_days,
                            patient_profiles, profile_prob, fallbacks = list(),
                            recheck_interval_days = 1, baseline = NULL,
-                           warmup_capacities = capacities, arrival_process = "even") {
+                           warmup_capacities = capacities, arrival_process = "even",
+                           monitor_patients = TRUE) {
+  stopifnot(is.logical(monitor_patients), length(monitor_patients) == 1L,
+            !is.na(monitor_patients))
   arrival_process <- match.arg(arrival_process, c("even", "poisson"))
   stopifnot(length(duration) == 1L, is.finite(duration), duration >= 0,
             duration == floor(duration), length(n_patients) == 1L,
@@ -234,7 +237,7 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
   if (!is.null(baseline) && isTRUE(baseline$enabled)) {
     return(run_baseline_simulation(capacities, duration, n_patients, sim_days,
                                     patient_profiles, profile_prob, fallbacks, baseline,
-                                    warmup_capacities, arrival_process))
+                                    warmup_capacities, arrival_process, monitor_patients))
   }
   validate_patient_configuration(capacities, patient_profiles, profile_prob, fallbacks)
   stopifnot(
@@ -290,7 +293,7 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
       hospital_sim,
       name_prefix = paste0("patient_", profile_name, "_"),
       trajectory = trajectories[[profile_name]],
-      distribution = simmer::at(arrival_times)
+      distribution = simmer::at(arrival_times), mon = monitor_patients
     )
   }
 
@@ -543,6 +546,8 @@ estimate_peak_unit_demand <- function(patient_profiles, profile_prob, n_patients
 # Top-level worker avoids exporting the optimizer's cache and nested closures.
 capacity_replication <- function(replication_id, simulation_args, units) {
   replication_rng_state <- get(".Random.seed", envir = .GlobalEnv)
+  # Capacity selection uses resource histories, not individual arrival records.
+  simulation_args$monitor_patients <- FALSE
   simulation <- do.call(run_simulation, simulation_args)
   resources <- get_hospital_mon_resources(simulation, include_resources = units)
   summary <- resource_state_intervals(resources) |>
@@ -556,6 +561,19 @@ capacity_replication <- function(replication_id, simulation_args, units) {
   if (any(!is.finite(summary$mean_queue))) stop("A positive observation duration is required for mean queues.")
   dplyr::mutate(summary, replication = replication_id,
     rng_state = rep(list(replication_rng_state), nrow(summary)))
+}
+
+# Explicit arguments keep the optimizer cache and history out of worker exports.
+unlimited_demand_replication <- function(replication_id, simulation_args, units) {
+  simulation_args$monitor_patients <- FALSE
+  simulation <- do.call(run_simulation, simulation_args)
+  simmer::get_mon_resources(simulation) |>
+    dplyr::filter(!startsWith(.data$resource, logical_queue_prefix),
+                  .data$resource %in% units) |>
+    dplyr::group_by(.data$resource) |>
+    dplyr::summarise(
+      maximum_occupied = as.integer(ceiling(safe_max(.data$server))),
+      .groups = "drop")
 }
 
 # Independent replication means; the t interval measures Monte Carlo error.
@@ -612,6 +630,11 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     reliability_level <= 1
   )
 
+  # Profiling found repeated dependency discovery dominated short evaluations.
+  # Resolve once per search; candidate inputs still travel as explicit arguments.
+  worker_dependencies <- future::getGlobalsAndPackages(
+    quote(list(capacity_replication, unlimited_demand_replication)),
+    envir = environment(find_n_needed))
   configured_capacities <- capacities
   initial_capacities <- as.integer(ceiling(capacities[c("GenMed", "ICU")]))
   names(initial_capacities) <- c("GenMed", "ICU")
@@ -691,6 +714,8 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     resources <- future.apply::future_lapply(
       seq_len(replications), capacity_replication,
       simulation_args = simulation_args, units = c("GenMed", "ICU"),
+      future.globals = worker_dependencies$globals,
+      future.packages = worker_dependencies$packages,
       future.seed = evaluation_seed,
       future.chunk.size = replication_chunk_size(replications)
     ) |>
@@ -854,36 +879,20 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
 
   estimate_unlimited_demand <- function(replications = num_sims) {
     auxiliary_started <- proc.time()[["elapsed"]]
+    simulation_args <- list(
+      capacities = stats::setNames(
+        rep(unlimited_capacity_value, length(configured_capacities)),
+        names(configured_capacities)),
+      duration = duration, n_patients = n_patients, sim_days = sim_days,
+      patient_profiles = patient_profiles, profile_prob = profile_prob,
+      fallbacks = fallbacks, baseline = baseline,
+      warmup_capacities = warmup_capacities, arrival_process = arrival_process)
     observed <- future.apply::future_lapply(
       seq_len(replications),
-      function(replication_id) {
-        simulation_capacities <- stats::setNames(
-          rep(unlimited_capacity_value, length(configured_capacities)),
-          names(configured_capacities)
-        )
-        simulation <- run_simulation(
-          capacities = simulation_capacities,
-          duration = duration,
-          n_patients = n_patients,
-          sim_days = sim_days,
-          patient_profiles = patient_profiles,
-          profile_prob = profile_prob,
-          fallbacks = fallbacks,
-          baseline = baseline,
-          warmup_capacities = warmup_capacities,
-          arrival_process = arrival_process
-        )
-        simmer::get_mon_resources(simulation) |>
-          dplyr::filter(
-            !startsWith(.data$resource, logical_queue_prefix),
-            .data$resource %in% names(configured_capacities)
-          ) |>
-          dplyr::group_by(.data$resource) |>
-          dplyr::summarise(
-            maximum_occupied = as.integer(ceiling(safe_max(.data$server))),
-            .groups = "drop"
-          )
-      },
+      unlimited_demand_replication,
+      simulation_args = simulation_args, units = names(configured_capacities),
+      future.globals = worker_dependencies$globals,
+      future.packages = worker_dependencies$packages,
       future.seed = search_seed + 100000L,
       future.chunk.size = replication_chunk_size(replications)
     ) |>

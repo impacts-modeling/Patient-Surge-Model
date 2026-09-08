@@ -106,7 +106,10 @@ baseline_warmup_diagnostic <- function(resources, capacities, time, config) {
 
 run_baseline_simulation <- function(capacities, duration, n_patients, sim_days,
                                     patient_profiles, profile_prob, fallbacks, baseline,
-                                    warmup_capacities = capacities, arrival_process = "even") {
+                                    warmup_capacities = capacities, arrival_process = "even",
+                                    monitor_patients = TRUE) {
+  stopifnot(is.logical(monitor_patients), length(monitor_patients) == 1L,
+            !is.na(monitor_patients))
   stopifnot(
     is.numeric(warmup_capacities),
     setequal(names(warmup_capacities), names(capacities)),
@@ -148,7 +151,8 @@ run_baseline_simulation <- function(capacities, duration, n_patients, sim_days,
                                         baseline$recheck_interval_days,
                                         make_service_times(length(times), profiles[[profile]], service_seeds[[index]]))
       # simmer::at supplies delays relative to generator creation, not absolute time.
-      env <<- simmer::add_generator(env, prefix, trajectory, simmer::at(times - simmer::now(env)))
+      env <<- simmer::add_generator(env, prefix, trajectory,
+        simmer::at(times - simmer::now(env)), mon = monitor_patients)
       registry[[length(registry) + 1L]] <<- data.frame(
         name = paste0(prefix, seq_along(times) - 1L), profile = profile,
         population = population, scheduled_arrival = times)

@@ -457,7 +457,7 @@ app_server <- function(input, output, session) {
   
         Recommended Expansion:<br>
         <span style='font-size:14px; font-weight:normal;'>Mode: %s. Recommendation is additional beds beyond current capacity and HxS inputs.</span><br>
-        <span style='font-size:14px; font-weight:normal;'>Evaluated scenario: GenMed %d beds; ICU %d beds; queue limits %.2f and %.2f; %d patients/day; %d simulations.</span><br>
+        <span style='font-size:14px; font-weight:normal;'>Evaluated scenario: GenMed %d beds; ICU %d beds; queue limits %.2f and %.2f; %.6g patients/day; %d scenario simulations.</span><br>
         <span style='font-size:14px; font-weight:normal;'>Both maximum queue limits met simultaneously in %.1f%% of final replications; target %.1f%%.</span><br>
         <span style='font-size:14px; font-weight:normal;'>%s</span><br>
   
