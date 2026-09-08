@@ -1,13 +1,16 @@
 # Civilian flow functions have no Shiny dependency. Rates are patients/day.
 baseline_defaults <- function() {
   list(enabled = FALSE, profiles = list(), arrival_rates = numeric(),
-       warmup_min_days = 110, warmup_max_days = 365, window_days = 14,
-       occupancy_tolerance = 0.2, queue_tolerance = 0.5,
+       arrival_process = "even", warmup_mode = "fixed",
+       warmup_min_days = 110, warmup_max_days = 360, window_days = 14,
+       occupancy_tolerance = 0.10, queue_tolerance = 0.5,
        recheck_interval_days = 1)
 }
 
 validate_baseline_config <- function(config, capacities, fallbacks = list()) {
   if (is.null(config) || !isTRUE(config$enabled)) return(invisible(TRUE))
+  if (!is.null(config$arrival_process)) match.arg(config$arrival_process, c("even", "poisson"))
+  if (!is.null(config$warmup_mode)) match.arg(config$warmup_mode, c("fixed", "adaptive"))
   rates <- config$arrival_rates
   if (!is.numeric(rates) || length(rates) == 0 || any(!is.finite(rates)) ||
       any(rates <= 0) || is.null(names(rates)) || any(!nzchar(names(rates))) ||
@@ -36,10 +39,14 @@ make_baseline_arrivals <- function(config, until) {
   if (!isTRUE(config$enabled)) {
     return(data.frame(profile = character(), arrival_time = numeric(), population = character()))
   }
-  dplyr::bind_rows(lapply(names(config$profiles), function(profile) {
+  process <- if (is.null(config$arrival_process)) "even" else config$arrival_process
+  seeds <- sample.int(.Machine$integer.max, length(config$profiles))
+  dplyr::bind_rows(lapply(seq_along(config$profiles), function(index) {
+    profile <- names(config$profiles)[[index]]
     rate <- config$arrival_rates[[profile]]
-    times <- (seq_len(ceiling(until * rate)) - 1) / rate
-    data.frame(profile = profile, arrival_time = times[times < until], population = "civilian")
+    times <- with_simulation_seed(seeds[[index]], make_arrival_times(rate, until, process))
+    data.frame(profile = rep(profile, length(times)), arrival_time = times,
+               population = rep("civilian", length(times)))
   })) |>
     dplyr::arrange(.data$arrival_time, .data$profile)
 }
@@ -98,28 +105,48 @@ baseline_warmup_diagnostic <- function(resources, capacities, time, config) {
 }
 
 run_baseline_simulation <- function(capacities, duration, n_patients, sim_days,
-                                    patient_profiles, profile_prob, fallbacks, baseline) {
-  validate_baseline_config(baseline, capacities, fallbacks)
+                                    patient_profiles, profile_prob, fallbacks, baseline,
+                                    warmup_capacities = capacities, arrival_process = "even") {
+  stopifnot(
+    is.numeric(warmup_capacities),
+    setequal(names(warmup_capacities), names(capacities)),
+    all(is.finite(warmup_capacities)),
+    all(warmup_capacities >= 0),
+    all(warmup_capacities == floor(warmup_capacities)),
+    all(capacities[names(warmup_capacities)] >= warmup_capacities)
+  )
+  validate_baseline_config(baseline, warmup_capacities, fallbacks)
   if (n_patients > 0 && duration > 0) {
     validate_patient_configuration(capacities, patient_profiles, profile_prob, fallbacks)
   }
   stopifnot(sim_days > 0, duration >= 0, duration == floor(duration),
-            n_patients >= 0, n_patients == floor(n_patients))
+            n_patients >= 0, arrival_process == "poisson" || n_patients == floor(n_patients))
   env <- simmer::simmer("civilian-and-surge")
-  for (unit in names(capacities)) {
-    env <- simmer::add_resource(env, unit, capacity = as.integer(capacities[[unit]]), queue_size = Inf)
+  dispatcher <- new_bed_dispatcher(env, names(capacities))
+  attr(env, "bed_dispatcher") <- dispatcher
+  for (unit in names(warmup_capacities)) {
+    env <- simmer::add_resource(env, unit, capacity = as.integer(warmup_capacities[[unit]]), queue_size = Inf)
     env <- simmer::add_resource(env, logical_queue_resource(unit), capacity = Inf, queue_size = 0)
   }
-  schedule <- make_baseline_arrivals(baseline, baseline$warmup_max_days + sim_days)
-  registry <- list()
-  add_population <- function(population, profiles, arrivals) {
+  seeds <- sample.int(.Machine$integer.max, 4L)
+  schedule <- with_simulation_seed(seeds[[1]],
+    make_baseline_arrivals(baseline, baseline$warmup_max_days + sim_days))
+  # Sample the event before warm-up; changing capacity cannot change its mix.
+  surge <- with_simulation_seed(seeds[[3]],
+    make_surge_arrivals(n_patients, duration, profile_prob, arrival_process))
+  registry <- list(data.frame(name = character(), profile = character(),
+                              population = character(), scheduled_arrival = numeric()))
+  add_population <- function(population, profiles, arrivals, service_seed) {
+    service_seeds <- with_simulation_seed(service_seed,
+      sample.int(.Machine$integer.max, length(profiles)))
     for (index in seq_along(profiles)) {
       profile <- names(profiles)[[index]]
       times <- sort(arrivals$arrival_time[arrivals$profile == profile])
       if (!length(times)) next
       prefix <- paste0(population, "_", index, "_")
       trajectory <- profile_trajectory(env, profile, profiles, fallbacks,
-                                        baseline$recheck_interval_days)
+                                        baseline$recheck_interval_days,
+                                        make_service_times(length(times), profiles[[profile]], service_seeds[[index]]))
       # simmer::at supplies delays relative to generator creation, not absolute time.
       env <<- simmer::add_generator(env, prefix, trajectory, simmer::at(times - simmer::now(env)))
       registry[[length(registry) + 1L]] <<- data.frame(
@@ -127,33 +154,61 @@ run_baseline_simulation <- function(capacities, duration, n_patients, sim_days,
         population = population, scheduled_arrival = times)
     }
   }
-  add_population("civilian", baseline$profiles, schedule)
+  add_population("civilian", baseline$profiles, schedule, seeds[[2]])
   diagnostics <- list()
   check_times <- unique(c(seq(baseline$warmup_min_days, baseline$warmup_max_days,
                               by = baseline$window_days), baseline$warmup_max_days))
+  fixed_warmup <- identical(baseline$warmup_mode, "fixed")
+  if (fixed_warmup) check_times <- baseline$warmup_min_days
   for (check_time in check_times) {
     env <- simmer::run(env, until = check_time)
-    diagnostic <- baseline_warmup_diagnostic(collect_hospital_resources(env), capacities,
+    diagnostic <- baseline_warmup_diagnostic(collect_hospital_resources(env), warmup_capacities,
                                              check_time, baseline)
     diagnostics[[length(diagnostics) + 1L]] <- diagnostic
     if (all(diagnostic$passed)) break
   }
-  if (!all(diagnostic$passed)) {
+  if (!fixed_warmup && !all(diagnostic$passed)) {
     stop("Civilian warm-up did not pass the stability screen before the maximum duration. ",
          "Review demand/capacity, lengthen warm-up, or revise the documented tolerances. ",
          "The observation period was not started.")
   }
   surge_start <- check_time
-  surge <- base::expand.grid(day = seq_len(duration), patient = seq_len(n_patients))
-  surge$arrival_time <- surge_start + surge$day - 1 + (surge$patient - 1) / max(1, n_patients)
-  surge$profile <- if (nrow(surge)) {
-    base::sample(names(profile_prob), nrow(surge), replace = TRUE, prob = profile_prob)
-  } else character()
-  add_population("surge", patient_profiles, surge)
+  # Capacity added for the event becomes available only after the civilian warm-up.
+  changed_units <- names(capacities)[capacities != warmup_capacities[names(capacities)]]
+  if (length(changed_units)) {
+    activation <- simmer::trajectory("activate_event_capacity")
+    for (unit in changed_units) {
+      activation <- simmer::set_capacity(
+        activation, unit, as.integer(capacities[[unit]])
+      )
+    }
+    activation <- simmer::send(activation, dispatcher$dispatch)
+    env <- simmer::add_generator(
+      env, ".activate_event_capacity_", activation,
+      simmer::at(surge_start - simmer::now(env)), mon = FALSE
+    )
+    # Process the zero-time activation before registering surge arrivals.
+    activation_steps <- 0L
+    while (any(vapply(changed_units, function(unit) {
+      simmer::get_capacity(env, unit) != as.integer(capacities[[unit]])
+    }, logical(1)))) {
+      env <- simmer::stepn(env, 1)
+      activation_steps <- activation_steps + 1L
+      if (activation_steps > 10000L || simmer::now(env) > surge_start) {
+        stop("Event capacity could not be activated at surge onset.", call. = FALSE)
+      }
+    }
+    if (simmer::now(env) != surge_start) {
+      stop("Event capacity was activated outside surge onset.", call. = FALSE)
+    }
+  }
+  surge$arrival_time <- surge$arrival_time + surge_start
+  add_population("surge", patient_profiles, surge, seeds[[4]])
   env <- simmer::run(env, until = surge_start + sim_days)
   result <- simmer::wrap(env)
   attr(result, "civilian_metadata") <- list(
     surge_start = surge_start, observation_end = surge_start + sim_days, capacities = capacities,
+    warmup_capacities = warmup_capacities,
     patients = dplyr::bind_rows(registry),
     warmup_diagnostics = dplyr::bind_rows(diagnostics), baseline = baseline)
   result

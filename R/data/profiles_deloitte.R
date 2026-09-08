@@ -1,11 +1,6 @@
 fallbacks_list_1 <- list(
-  BurnBed = c("ICU"),
-  CardiacICU = c("ICU"),
-  GenMed = c("PhysicalMed", "TransitionalCare"),
-  ICU = c("CardiacICU"),
-  PhysicalMed = c("GenMed", "TransitionalCare"),
-  Psychiatric = c("GenMed", "PhysicalMed", "TransitionalCare"),
-  TransitionalCare = c("GenMed", "PhysicalMed")
+  GenMed = c("Surge"),
+  Surge = c("GenMed")
 )
 
 deloitte_test_profile_config <- function() {
@@ -42,10 +37,10 @@ deloitte_test_profile_config <- function() {
   list(
     source = "deloitte_test",
     source_label = "Deloitte test profiles",
-    units = c("GenMed", "ICU"),
+    units = c("Surge","GenMed", "ICU"),
     patient_profiles = patient_profiles,
     profile_prob = profile_counts / sum(profile_counts),
-    fallbacks = list()
+    fallbacks = fallbacks_list_1
   )
 }
 

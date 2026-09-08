@@ -13,6 +13,7 @@ app_server <- function(input, output, session) {
       config <- surge_config()
       if (is.null(config)) return(NULL)
       config$baseline <- baseline_config()
+      config$arrival_process <- if (is.null(input$surge_arrival_process)) "even" else input$surge_arrival_process
       config
     })
   
@@ -136,6 +137,7 @@ app_server <- function(input, output, session) {
       tryCatch(shiny::withProgress(message = "Running simulations and civilian warm-up...", value = 0, {
         run_config <- config
         run_config$capacities <- capacities
+        run_config$warmup_capacities <- config$capacities
         mode <- if (civilian_only()) "civilian_only" else "surge"
         scenario_id <- if (civilian_only()) "civilian_only" else if (params$icu_msf + params$genmed_msf > 0) {
           "surge_expanded"
@@ -314,7 +316,7 @@ app_server <- function(input, output, session) {
             all(c("GenMed", "ICU") %in% names(config$capacities)),
             "Bed expansion requires both GenMed and ICU in Hospital Setup."
           ))
-          search_mode <- "precise"
+          search_mode <- "development"
           bed_search_config <- bed_search_configs[[search_mode]]
   
           capacities <- evaluation_signature$evaluated_capacities
@@ -327,12 +329,12 @@ app_server <- function(input, output, session) {
             profile_prob = config$profile_prob,
             fallbacks = config$fallbacks,
             baseline = config$baseline,
-            num_sims = evaluation_signature$num_sims,
-            search_num_sims = min(bed_search_config$search_num_sims, evaluation_signature$num_sims),
+            warmup_capacities = config$capacities,
+            arrival_process = config$arrival_process,
+            final_num_sims = bed_search_config$final_num_sims,
+            num_sims = bed_search_config$num_sims,
             max_evaluations = bed_search_config$max_evaluations,
-            max_validation_evaluations = bed_search_config$max_validation_evaluations,
             minimum_step = bed_search_config$minimum_step,
-            search_queue_tolerance = bed_search_config$search_queue_tolerance,
             demand_safety_factor = bed_search_config$demand_safety_factor,
             reliability_level = bed_search_config$reliability_level,
             search_seed = bed_search_config$search_seed,
@@ -342,7 +344,8 @@ app_server <- function(input, output, session) {
             verbose = TRUE
           )
           result$search_mode <- search_mode
-          result$search_mode_label <- "70% reliability efficient search"
+          result$search_mode_label <- sprintf("Unified search: %d replications per candidate; %d independent final replications",
+            bed_search_config$num_sims, bed_search_config$final_num_sims)
           bed_result_signature(evaluation_signature)
           result
         }
@@ -406,7 +409,10 @@ app_server <- function(input, output, session) {
       shiny::validate(
         shiny::need(
           isTRUE(n_opt$converged),
-          sprintf("The bed search did not find a validated capacity after %d evaluations.", n_opt$evaluations)
+          if (isTRUE(n_opt$selection_passed)) sprintf(
+            "The selected capacity failed joint maximum-queue compliance in %d independent final replications (joint compliance %.1f%%; target %.1f%%). It is not offered as a recommendation. Review demand, capacity limits or replication precision.",
+            n_opt$final_num_sims, 100 * n_opt$joint_reliability, 100 * n_opt$reliability_level)
+          else sprintf("The bed search did not find a passing capacity after %d evaluations.", n_opt$evaluations)
         )
       )
   
@@ -419,9 +425,9 @@ app_server <- function(input, output, session) {
         n_opt$search_mode_label
       }
       refinement_message <- if (isTRUE(n_opt$refinement_complete)) {
-        "Independent validation refinement completed."
+        "Selection refinement completed; final evaluation used a separate seed bank."
       } else {
-        "The independently validated recommendation may be conservative because the refinement budget was reached."
+        "Refinement budget reached. Final evaluation used a separate seed bank; minimum bed count is not established."
       }
   
       color_medsurg <- ifelse(N_added > 0, "#dc3545", "#28a745")
@@ -448,7 +454,7 @@ app_server <- function(input, output, session) {
         Recommended Expansion:<br>
         <span style='font-size:14px; font-weight:normal;'>Mode: %s. Recommendation is additional beds beyond current capacity and HxS inputs.</span><br>
         <span style='font-size:14px; font-weight:normal;'>Evaluated scenario: GenMed %d beds; ICU %d beds; queue limits %.2f and %.2f; %d patients/day; %d simulations.</span><br>
-        <span style='font-size:14px; font-weight:normal;'>Reliability target per unit: %.0f%%. Validated GenMed: %.0f%%; ICU: %.0f%%. Joint diagnostic: %.0f%%.</span><br>
+        <span style='font-size:14px; font-weight:normal;'>Both maximum queue limits met simultaneously in %.1f%% of final replications; target %.1f%%.</span><br>
         <span style='font-size:14px; font-weight:normal;'>%s</span><br>
   
         Add <span style='color:%s;'>%d</span> beds to <b>Med/Surg</b> and
@@ -464,16 +470,17 @@ app_server <- function(input, output, session) {
           evaluated$congestion_index_icu,
           evaluated$n_patients,
           evaluated$num_sims,
-          100 * n_opt$reliability_level,
-          100 * n_opt$reliability_GenMed,
-          100 * n_opt$reliability_ICU,
           100 * n_opt$joint_reliability,
+          100 * n_opt$reliability_level,
           refinement_message,
           color_medsurg,
           N_added,
           color_icu,
           N_added_ICU
         )),
+        shiny::helpText(sprintf("Joint maximum-queue compliance: 95%% binomial CI %.1f%% to %.1f%%. Acceptance uses the observed proportion, not the lower confidence bound.",
+          100 * n_opt$final_joint_interval$lower_95[[1]],
+          100 * n_opt$final_joint_interval$upper_95[[1]])),
         shiny::actionButton(
           "apply_recommended_expansion",
           "Apply Recommended Expansion",
@@ -548,98 +555,33 @@ app_server <- function(input, output, session) {
     ###################################################################################################
     ###################################################################################################
     
-    output$mean_stay <- plotly::renderPlotly({
-      # shiny::req(patient_metrics  <- simulation_result())
-      # patient_metrics  <- patient_metrics$arrivals
+    output$bed_wait_table <- shiny::renderTable({
       shiny::req(simulation_data())
-      patient_metrics <- simulation_data()$arrivals
-      patient_metrics <- select_patient_time_cohort(patient_metrics, simulation_data()$scenario_mode)
-      shiny::validate(
-        shiny::need(nrow(patient_metrics) > 0, "No completed patients from the observation-period cohort are available yet."),
-        shiny::need(any(patient_metrics$finished %in% TRUE), "No patients completed treatment.")
-      )
-      
-      patient_summary <- patient_metrics |>
-        dplyr::group_by(replication) |>
-        dplyr::summarise(
-          total_patients = dplyr::n(),
-          completion_rate = safe_mean(as.numeric(finished)),
-          avg_treatment_time = safe_mean(activity_time[finished], default = NA_real_),
-          avg_wait_time = safe_mean(end_time - start_time - activity_time, default = NA_real_),
-          .groups = "drop"
-        ) |>
-        dplyr::filter(is.finite(avg_treatment_time), is.finite(avg_wait_time))
-      
-      p <- ggplot2::ggplot(patient_summary, ggplot2::aes(x = avg_treatment_time)) +
-        ggplot2::geom_histogram(bins = 20, fill = "steelblue", alpha = 0.8) +
-        ggplot2::geom_vline(ggplot2::aes(xintercept = mean(avg_treatment_time)),
-                   color = "red", linetype = "dashed", linewidth = 1
-        ) + # Mean line
-        ggplot2::labs(
-          title = "Distribution of Average Treatment Time",
-          subtitle = paste("Across", nrow(patient_summary), "simulations"),
-          x = "Average Treatment Time (Days)",
-          y = "Number of Simulations"
-        ) +
-        ggplot2::theme_minimal() +
-        ggplot2::annotate("text",
-                 x = mean(patient_summary$avg_treatment_time), # Position text at mean
-                 y = 5, # Adjust y position to avoid overlapping with the histogram
-                 label = paste("Overall Mean:", round(mean(patient_summary$avg_treatment_time), 2), "days"),
-                 vjust = -1, color = "darkblue"
-        )
-      
-      p1 <- plotly::plot_ly(patient_summary,
-                    x = ~avg_wait_time, type = "histogram", nbinsx = 20,
-                    marker = list(color = "red", line = list(color = "black", width = 1))
-      ) %>%
-        plotly::layout(
-          title = "", # "Histogram of Average Wait Time",
-          xaxis = list(title = "Average Wait Time (Days)"),
-          yaxis = list(title = "Number of Simulations"),
-          shapes = list(list(
-            type = "line", x0 = mean(patient_summary$avg_wait_time),
-            x1 = mean(patient_summary$avg_wait_time), yref = "paper", y0 = 0, y1 = 1,
-            line = list(color = "blue", dash = "dash")
-          )),
-          annotations = list(
-            text = paste("Overall Mean:", round(mean(patient_summary$avg_wait_time), 2), "days"),
-            x = mean(patient_summary$avg_wait_time), y = 5, showarrow = FALSE, yshift = -10
-          )
-        )
-      plotly::subplot(
-        plotly::ggplotly(p),
-        plotly::ggplotly(p1),
-        nrows = 1, # Arrange the plots side by side
-        shareX = TRUE, # Optional: Share the X-axis if appropriate
-        titleX = TRUE, titleY = TRUE
-      )
-    })
-  
-  
-  
+      bed_wait_table(simulation_data())
+    }, na = "Not estimable")
     output$baseline_run_status <- shiny::renderUI({
       data <- simulation_data()
       shiny::req(data)
       mode_description <- if (identical(data$scenario_mode, "civilian_only")) {
-        "Routine civilian operation only: no surge arrivals. Day 0 is the start of observation after warm-up. Patient-time plots use completed civilians admitted from day 0 onward."
+        "Routine civilian operation only: no surge arrivals. Day 0 is the start of observation after warm-up. Bed waits are reported separately for civilian and surge requests."
       } else {
-        "Surge event: patient-time plots use completed surge patients. Day 0 marks surge onset when civilian flow is enabled."
+        "Surge event: bed waits include both populations. Day 0 marks surge onset when civilian flow is enabled."
       }
       if (!isTRUE(data$profile_config$baseline$enabled)) {
         return(shiny::div(class = "alert alert-info", "Surge-only run; routine civilian flow was disabled."))
       }
       shiny::div(class = "alert alert-info",
         mode_description, shiny::tags$br(),
-        sprintf("Civilian warm-up passed the configured screen after %.0f to %.0f days across replications. Resource plots include every patient occupying beds; raw history includes warm-up. The screen does not prove equilibrium.",
-                min(data$runs$warmup_days), max(data$runs$warmup_days)))
+        sprintf("Civilian warm-up lasted %.0f to %.0f days. Diagnostic failures across checks: %d. Fixed-duration runs continue even if the diagnostic fails. Resource plots include both populations; raw history includes warm-up. The screen does not prove equilibrium.",
+                min(data$runs$warmup_days), max(data$runs$warmup_days),
+                sum(!data$warmup_diagnostics$passed)))
     })
     output$patient_cohort_note <- shiny::renderText({
       data <- simulation_data()
       if (is.null(data)) return("Run the selected scenario to display its results.")
       if (identical(data$scenario_mode, "civilian_only")) {
-        "Patient-time plots: completed civilian patients admitted after warm-up. Raw output also retains patients present at day 0 and unfinished patients."
-      } else "Patient-time plots: completed surge patients. Raw output identifies both populations when civilian flow is enabled."
+        "Bed waits include zero waits for patients who completed their hospital trajectory; unfinished patients are excluded."
+      } else "Bed waits are restricted to completed patients, separated by requested unit and population. Day-zero requests form a separate cohort."
     })
     output$download_run_data <- shiny::downloadHandler(
       filename = function() {
@@ -648,7 +590,11 @@ app_server <- function(input, output, session) {
       },
       content = function(file) {
         shiny::req(simulation_data())
-        saveRDS(simulation_data(), file)
+        data <- simulation_data()
+        waits <- bed_wait_summary(data)
+        data$bed_wait_summary <- waits$summary
+        data$bed_wait_replications <- waits$replications
+        saveRDS(data, file)
       }
     )
     output$download_report <- shiny::downloadHandler(

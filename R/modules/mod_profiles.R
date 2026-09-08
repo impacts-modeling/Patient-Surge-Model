@@ -421,8 +421,8 @@ hospital_profiles_ui <- function(id) {
             "<strong>Configure fallback beds.</strong><br>",
             "When a primary unit is full, the model tries these alternatives",
             "in the displayed order. If none is available, the patient is",
-            "counted in the primary-unit queue, waits one day, and checks the",
-            "primary unit and ordered fallbacks again until a bed is available."
+            "counted in the primary-unit queue. When a bed is released, the oldest",
+            "compatible request receives it, respecting the ordered fallbacks."
           ),
           data.position = "top"
         )
@@ -566,7 +566,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
               if (unit_name == "ICU") {
                 84
               } else {
-                44
+                15
               }
             }
             if (!is.null(current_capacity)) default_capacity <- current_capacity

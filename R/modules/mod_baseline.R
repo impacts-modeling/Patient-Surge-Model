@@ -93,6 +93,11 @@ mod_baseline_ui <- function(id) {
       shiny::tags$hr(),
       shiny::fluidRow(
         shiny::column(6,
+          shiny::selectInput(ns("arrival_process"), "Civilian arrival process",
+            choices = c("Evenly spaced" = "even", "Poisson (random arrivals)" = "poisson")),
+          shiny::selectInput(ns("warmup_mode"), "Warm-up method",
+            choices = c("Fixed duration with diagnostics" = "fixed", "Adaptive stability screen" = "adaptive"),
+            selected = defaults$warmup_mode),
           shiny::textInput(ns("name"), "Civilian profile name", "routine_medical"),
           shiny::numericInput(ns("rate"), "Arrival rate (patients/day)", 1, min = 0, step = "any"),
           shiny::textInput(ns("units"), "Ordered pathway (unit IDs separated by commas)", "GenMed"),
@@ -109,8 +114,8 @@ mod_baseline_ui <- function(id) {
           shiny::numericInput(ns("window"), "Stability window (days; three windows compared)", defaults$window_days, min = 1),
           shiny::numericInput(ns("occupancy_tolerance"), "Occupancy tolerance (fraction of beds)", defaults$occupancy_tolerance, min = 0.001, step = 0.01),
           shiny::numericInput(ns("queue_tolerance"), "Queue tolerance (patients)", defaults$queue_tolerance, min = 0.01, step = 0.1),
-          shiny::helpText("Arrivals are evenly spaced at each profile's constant rate. Stays remain stochastic. Warm-up extends until the screen passes or the maximum is reached. This screen is not proof of equilibrium."),
-          shiny::helpText("No patients are removed at surge onset. In expansion searches, additional beds are available during warm-up: this represents planned capacity, not delayed emergency activation.")
+          shiny::helpText("Poisson uses each profile's mean patients/day and random exponential interarrival times. Fixed warm-up uses the minimum duration and retains the diagnostic even if it fails. Adaptive warm-up extends until the screen passes or the maximum is reached. Neither method proves equilibrium."),
+          shiny::helpText("No patients are removed at surge onset. The civilian warm-up uses existing capacity; additional beds are activated when the surge begins.")
         )
       ),
       shiny::tableOutput(ns("profiles")),
@@ -266,6 +271,8 @@ mod_baseline_server <- function(id, hospital_config) {
       if (!config$enabled) return(config)
       config$profiles <- lapply(profiles(), function(profile) profile[c("unit", "los")])
       config$arrival_rates <- vapply(profiles(), `[[`, numeric(1), "rate")
+      config$arrival_process <- if (is.null(input$arrival_process)) "even" else input$arrival_process
+      config$warmup_mode <- if (is.null(input$warmup_mode)) "fixed" else input$warmup_mode
       config$warmup_min_days <- input$warmup_min
       config$warmup_max_days <- input$warmup_max
       config$window_days <- input$window

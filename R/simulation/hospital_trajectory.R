@@ -5,6 +5,7 @@ validate_patient_configuration <- function(capacities, patient_profiles, profile
     !is.null(names(capacities)),
     all(is.finite(capacities)),
     all(capacities >= 0),
+    all(capacities == floor(capacities)),
     is.list(patient_profiles),
     length(patient_profiles) > 0,
     is.numeric(profile_prob),
@@ -15,6 +16,19 @@ validate_patient_configuration <- function(capacities, patient_profiles, profile
     is.list(fallbacks)
   )
 
+  for (values in list(names(capacities), names(patient_profiles), names(profile_prob))) {
+    if (is.null(values) || anyNA(values) || any(!nzchar(values)) || anyDuplicated(values)) {
+      stop("Capacities, profiles and probabilities need unique, nonempty names.")
+    }
+  }
+  for (profile in patient_profiles) {
+    if (length(profile$unit) != length(profile$los) ||
+        (length(profile$unit) > 0 &&
+         (!is.character(profile$unit) || anyNA(profile$unit) ||
+          !is.numeric(profile$los) || any(!is.finite(profile$los)) || any(profile$los <= 0)))) {
+      stop("Each pathway needs one positive finite mean stay for every ordered unit.")
+    }
+  }
   profile_units <- unique(unlist(lapply(patient_profiles, `[[`, "unit"), use.names = FALSE))
   fallback_units <- unique(c(names(fallbacks), unlist(fallbacks, use.names = FALSE)))
   configured_units <- names(capacities)
@@ -27,12 +41,65 @@ validate_patient_configuration <- function(capacities, patient_profiles, profile
   invisible(TRUE)
 }
 
-random_stay <- function(mean_days, cv = 0.2) {
+random_stay <- function(mean_days, cv = 0.1) {
   sigma <- sqrt(log(1 + cv^2))
   stats::rlnorm(1, meanlog = log(mean_days) - sigma^2 / 2, sdlog = sigma)
 }
 
 
+
+# Local streams isolate arrival and service draws from simulation event ordering.
+with_simulation_seed <- function(seed, code) {
+  previous_kind <- RNGkind()
+  had_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  if (had_seed) previous_seed <- get(".Random.seed", envir = .GlobalEnv)
+  on.exit({
+    do.call(RNGkind, as.list(previous_kind))
+    if (had_seed) assign(".Random.seed", previous_seed, envir = .GlobalEnv)
+    else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE))
+      rm(".Random.seed", envir = .GlobalEnv)
+  })
+  set.seed(seed, kind = "L'Ecuyer-CMRG")
+  force(code)
+}
+
+make_arrival_times <- function(rate, until, process = c("even", "poisson")) {
+  process <- match.arg(process)
+  stopifnot(length(rate) == 1L, is.finite(rate), rate >= 0,
+            length(until) == 1L, is.finite(until), until >= 0)
+  if (rate == 0 || until == 0) return(numeric())
+  if (process == "even") {
+    times <- (seq_len(ceiling(until * rate)) - 1) / rate
+    return(times[times < until])
+  }
+  # Fixed batches preserve the arrival prefix when extending the horizon.
+  batches <- list()
+  last_time <- 0
+  repeat {
+    times <- last_time + cumsum(stats::rexp(256L, rate))
+    batches[[length(batches) + 1L]] <- times[times < until]
+    if (utils::tail(times, 1L) >= until) break
+    last_time <- utils::tail(times, 1L)
+  }
+  unlist(batches, use.names = FALSE)
+}
+
+make_surge_arrivals <- function(rate, duration, profile_prob, process = "even") {
+  times <- make_arrival_times(rate, duration, process)
+  data.frame(arrival_time = times,
+             profile = if (length(times)) sample(names(profile_prob), length(times),
+                         replace = TRUE, prob = profile_prob) else character())
+}
+
+make_service_times <- function(n, profile, seed, cv = 0.1) {
+  if (n == 0 || !length(profile$los)) return(matrix(numeric(), n, length(profile$los)))
+  with_simulation_seed(seed, {
+    sigma <- sqrt(log(1 + cv^2))
+    means <- rep(profile$los, times = n)
+    matrix(stats::rlnorm(length(means), log(means) - sigma^2 / 2, sigma),
+           nrow = n, ncol = length(profile$los), byrow = TRUE)
+  })
+}
 
 logical_queue_prefix <- ".waiting_for__"
 
@@ -41,84 +108,83 @@ logical_queue_resource <- function(primary) {
 }
 
 
+# A shared dispatcher preserves FIFO among requests that can use a free bed.
+# Reservations make selection and seize atomic across simultaneous events.
+new_bed_dispatcher <- function(env, units) {
+  state <- new.env(parent = emptyenv())
+  state$requests <- list()
+  state$reservations <- list()
+  signal_for <- function(patient) paste0(".bed_ready__", patient)
+  register <- function(candidates) {
+    patient <- simmer::get_name(env)
+    state$requests[[patient]] <- candidates
+    0
+  }
+  dispatch <- function() {
+    available <- vapply(units, function(unit) {
+      reserved <- sum(vapply(state$reservations, identical, logical(1), unit))
+      max(0, simmer::get_capacity(env, unit) - simmer::get_server_count(env, unit) - reserved)
+    }, numeric(1))
+    signals <- character()
+    for (patient in names(state$requests)) {
+      candidates <- state$requests[[patient]]
+      free <- candidates[available[candidates] > 0]
+      if (!length(free)) next
+      unit <- free[[1]]
+      available[[unit]] <- available[[unit]] - 1
+      state$reservations[[patient]] <- unit
+      state$requests[[patient]] <- NULL
+      # The caller checks its reservation directly; only wake other patients.
+      if (patient != simmer::get_name(env)) signals <- c(signals, signal_for(patient))
+    }
+    if (length(signals)) signals else ".no_bed_allocated"
+  }
+  list(register = register, dispatch = dispatch, signal_for = signal_for,
+       assigned = function() state$reservations[[simmer::get_name(env)]],
+       claim = function() {
+         state$reservations[[simmer::get_name(env)]] <- NULL
+         1
+       })
+}
+
 attempt_bed <- function(env, traj, primary, mean_stay, fallbacks,
-                        trajectory_step_id, recheck_interval_days = 1) {
-  fallback_units <- fallbacks[[primary]]
-  if (is.null(fallback_units)) fallback_units <- character()
-  candidates <- unique(c(primary, fallback_units))
+                        trajectory_step_id, recheck_interval_days = 1,
+                        service_time = function() random_stay(mean_stay)) {
+  # recheck_interval_days remains accepted for older callers; no polling is used.
+  dispatcher <- attr(env, "bed_dispatcher")
+  if (is.null(dispatcher)) stop("The simulation needs a shared bed dispatcher.")
+  candidates <- unique(c(primary, fallbacks[[primary]]))
   waiting_resource <- logical_queue_resource(primary)
-  retry_tag <- paste0("retry_bed_", trajectory_step_id)
-
-  choose_available_unit <- function() {
-    for (index in seq_along(candidates)) {
-      unit_name <- candidates[[index]]
-      if (simmer::get_server_count(env, unit_name) <
-          simmer::get_capacity(env, unit_name)) {
-        return(index)
-      }
-    }
-    length(candidates) + 1L
-  }
-
-  use_bed <- function(unit_name, release_wait_counter = FALSE) {
-    bed_trajectory <- simmer::trajectory(paste0("use_", unit_name))
-    if (release_wait_counter) {
-      bed_trajectory <- bed_trajectory |>
-        simmer::release(waiting_resource, 1)
-    }
-    bed_trajectory |>
-      simmer::seize(unit_name, 1) |>
-      simmer::timeout(function() random_stay(mean_stay)) |>
-      simmer::release(unit_name, 1)
-  }
-
-  retry_branches <- c(
-    lapply(candidates, use_bed, release_wait_counter = TRUE),
-    list(
-      simmer::trajectory("wait_and_recheck") |>
-        simmer::timeout(recheck_interval_days) |>
-        simmer::rollback(retry_tag)
-    )
-  )
-  retry_trajectory <- do.call(
-    simmer::branch,
-    c(
-      list(
-        .trj = simmer::trajectory("recheck_beds"),
-        option = choose_available_unit,
-        continue = rep(TRUE, length(retry_branches))
-      ),
-      retry_branches,
-      list(tag = retry_tag)
-    )
-  )
-
-  initial_branches <- c(
-    lapply(candidates, use_bed),
-    list(
-      simmer::trajectory("enter_logical_queue") |>
-        simmer::seize(waiting_resource, 1) |>
-        simmer::timeout(recheck_interval_days) |>
-        simmer::join(retry_trajectory)
-    )
-  )
-  initial_attempt <- do.call(
-    simmer::branch,
-    c(
-      list(
-        .trj = simmer::trajectory("initial_bed_attempt"),
-        option = choose_available_unit,
-        continue = rep(TRUE, length(initial_branches))
-      ),
-      initial_branches
-    )
-  )
-
-  traj |> simmer::join(initial_attempt)
+  my_signal <- function() dispatcher$signal_for(simmer::get_name(env))
+  branches <- lapply(candidates, function(unit) {
+    simmer::trajectory(paste0("use_", unit)) |>
+      simmer::seize(unit, dispatcher$claim) |>
+      simmer::timeout(service_time) |>
+      simmer::release(unit, 1) |>
+      simmer::send(dispatcher$dispatch)
+  })
+  take_bed <- do.call(simmer::branch, c(list(
+    .trj = simmer::trajectory("take_reserved_bed"),
+    option = function() match(dispatcher$assigned(), candidates),
+    continue = rep(TRUE, length(branches))), branches))
+  traj |>
+    simmer::seize(waiting_resource, 1) |>
+    simmer::trap(my_signal) |>
+    simmer::set_attribute(".bed_request", function() dispatcher$register(candidates)) |>
+    simmer::send(dispatcher$dispatch) |>
+    simmer::branch(function() if (is.null(dispatcher$assigned())) 1L else 2L,
+      continue = c(TRUE, TRUE),
+      simmer::trajectory("await_bed") |> simmer::wait(),
+      simmer::trajectory("bed_ready")) |>
+    simmer::untrap(my_signal) |>
+    simmer::release(waiting_resource, 1) |>
+    simmer::join(take_bed)
 }
 
 profile_trajectory <- function(env, profile_name, patient_profiles, fallbacks,
-                               recheck_interval_days = 1) {
+                               recheck_interval_days = 1, service_times = NULL) {
+  # Freeze loop arguments before simmer calls the service closures later.
+  force(service_times)
   if (!profile_name %in% names(patient_profiles)) {
     stop("Unknown patient profile: ", profile_name)
   }
@@ -128,6 +194,14 @@ profile_trajectory <- function(env, profile_name, patient_profiles, fallbacks,
     return(trajectory |> simmer::timeout(0.1))
   }
   for (index in seq_along(profile$unit)) {
+    service_time <- local({
+      step <- index
+      function() {
+        if (is.null(service_times)) return(random_stay(profile$los[[step]]))
+        patient <- as.integer(sub("^.*_", "", simmer::get_name(env))) + 1L
+        service_times[patient, step]
+      }
+    })
     trajectory <- attempt_bed(
       env = env,
       traj = trajectory,
@@ -135,7 +209,8 @@ profile_trajectory <- function(env, profile_name, patient_profiles, fallbacks,
       mean_stay = profile$los[[index]],
       fallbacks = fallbacks,
       trajectory_step_id = paste(profile_name, index, sep = "_"),
-      recheck_interval_days = recheck_interval_days
+      recheck_interval_days = recheck_interval_days,
+      service_time = service_time
     )
   }
   trajectory
@@ -147,10 +222,19 @@ sample_patient_profile <- function(profile_prob) {
 
 run_simulation <- function(capacities, duration, n_patients, sim_days,
                            patient_profiles, profile_prob, fallbacks = list(),
-                           recheck_interval_days = 1, baseline = NULL) {
+                           recheck_interval_days = 1, baseline = NULL,
+                           warmup_capacities = capacities, arrival_process = "even") {
+  arrival_process <- match.arg(arrival_process, c("even", "poisson"))
+  stopifnot(length(duration) == 1L, is.finite(duration), duration >= 0,
+            duration == floor(duration), length(n_patients) == 1L,
+            is.finite(n_patients), n_patients >= 0,
+            arrival_process == "poisson" || n_patients == floor(n_patients),
+            length(sim_days) == 1L, is.finite(sim_days), sim_days > 0,
+            sim_days >= duration)
   if (!is.null(baseline) && isTRUE(baseline$enabled)) {
     return(run_baseline_simulation(capacities, duration, n_patients, sim_days,
-                                    patient_profiles, profile_prob, fallbacks, baseline))
+                                    patient_profiles, profile_prob, fallbacks, baseline,
+                                    warmup_capacities, arrival_process))
   }
   validate_patient_configuration(capacities, patient_profiles, profile_prob, fallbacks)
   stopifnot(
@@ -159,6 +243,7 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
     recheck_interval_days > 0
   )
   hospital_sim <- simmer::simmer("hospital-simulation")
+  attr(hospital_sim, "bed_dispatcher") <- new_bed_dispatcher(hospital_sim, names(capacities))
   for (unit_name in names(capacities)) {
     hospital_sim <- simmer::add_resource(
       hospital_sim,
@@ -174,6 +259,12 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
     )
   }
 
+  seeds <- sample.int(.Machine$integer.max, 4L)
+  patient_data <- with_simulation_seed(seeds[[3]],
+    make_surge_arrivals(n_patients, duration, profile_prob, arrival_process))
+  patient_data$profile_name <- patient_data$profile
+  service_seeds <- with_simulation_seed(seeds[[4]],
+    sample.int(.Machine$integer.max, length(patient_profiles)))
   trajectories <- stats::setNames(
     lapply(names(patient_profiles), function(profile_name) {
       profile_trajectory(
@@ -181,26 +272,12 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
         profile_name,
         patient_profiles,
         fallbacks,
-        recheck_interval_days = recheck_interval_days
+        recheck_interval_days = recheck_interval_days,
+        service_times = make_service_times(sum(patient_data$profile == profile_name),
+          patient_profiles[[profile_name]], service_seeds[[match(profile_name, names(patient_profiles))]])
       )
     }),
     names(patient_profiles)
-  )
-
-  patient_data <- base::expand.grid(
-    day = seq_len(duration),
-    patient_num = seq_len(n_patients),
-    KEEP.OUT.ATTRS = FALSE
-  ) |>
-    dplyr::mutate(
-      arrival_time = .data$day + (.data$patient_num - 1) / n_patients
-    )
-
-  patient_data$profile_name <- base::sample(
-    names(profile_prob),
-    size = nrow(patient_data),
-    replace = TRUE,
-    prob = profile_prob
   )
 
   for (profile_name in names(trajectories)) {
@@ -217,9 +294,11 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
     )
   }
 
-  hospital_sim |>
+  result <- hospital_sim |>
     simmer::run(until = sim_days) |>
     simmer::wrap()
+  attr(result, "observation_metadata") <- list(capacities = capacities, sim_days = sim_days)
+  result
 }
 
 collect_hospital_resources <- function(simulation, include_resources = NULL) {
@@ -346,8 +425,16 @@ get_hospital_mon_resources <- function(simulation, include_resources = NULL,
                                         include_warmup = FALSE) {
   resources <- collect_hospital_resources(simulation, include_resources)
   metadata <- attr(simulation, "civilian_metadata")
-  if (is.null(metadata)) return(resources)
-  capacities <- metadata$capacities
+  if (is.null(metadata)) {
+    observation <- attr(simulation, "observation_metadata")
+    if (is.null(observation)) return(resources)
+    capacities <- observation$capacities
+    if (!is.null(include_resources)) capacities <- capacities[intersect(names(capacities), include_resources)]
+    return(slice_resource_history(initialize_resource_history(resources, capacities),
+                                  0, observation$sim_days))
+  }
+  capacities <- metadata$warmup_capacities
+  if (is.null(capacities)) capacities <- metadata$capacities
   if (!is.null(include_resources)) capacities <- capacities[intersect(names(capacities), include_resources)]
   resources <- initialize_resource_history(resources, capacities)
   slice_resource_history(resources,
@@ -357,12 +444,16 @@ get_hospital_mon_resources <- function(simulation, include_resources = NULL,
 
 get_hospital_mon_arrivals <- function(simulation) {
   metadata <- attr(simulation, "civilian_metadata")
-  arrivals <- simmer::get_mon_arrivals(simulation, ongoing = !is.null(metadata)) |>
+  arrivals <- simmer::get_mon_arrivals(simulation, ongoing = TRUE) |>
     dplyr::filter(.data$start_time >= 0)
   arrivals_by_resource <- simmer::get_mon_arrivals(
     simulation,
-    per_resource = TRUE, ongoing = !is.null(metadata)
+    per_resource = TRUE, ongoing = TRUE
   )
+  # simmer omits replication on completely empty monitor tables.
+  if (!"replication" %in% names(arrivals)) arrivals$replication <- rep(1L, nrow(arrivals))
+  if (!"replication" %in% names(arrivals_by_resource))
+    arrivals_by_resource$replication <- rep(1L, nrow(arrivals_by_resource))
   logical_wait <- arrivals_by_resource |>
     dplyr::filter(startsWith(.data$resource, logical_queue_prefix)) |>
     dplyr::group_by(.data$name, .data$replication) |>
@@ -377,7 +468,7 @@ get_hospital_mon_arrivals <- function(simulation) {
       activity_time = pmax(0, .data$activity_time - .data$logical_wait_days)
     ) |>
     dplyr::select(-dplyr::all_of("logical_wait_days"))
-  if (is.null(metadata)) return(arrivals)
+  if (is.null(metadata)) return(dplyr::arrange(arrivals, .data$start_time, .data$name))
   arrivals |>
     dplyr::left_join(metadata$patients, by = "name") |>
     dplyr::mutate(start_time = .data$start_time - metadata$surge_start,
@@ -396,14 +487,12 @@ estimate_peak_unit_demand <- function(patient_profiles, profile_prob, n_patients
     length(n_patients) == 1,
     length(duration) == 1,
     length(sim_days) == 1,
-    n_patients >= 1,
+    n_patients > 0,
     duration >= 1,
     sim_days >= 1
   )
 
-  arrival_times <- as.vector(
-    outer(seq_len(duration), (seq_len(n_patients) - 1) / n_patients, "+")
-  )
+  arrival_times <- make_arrival_times(n_patients, duration, "even")
   events <- stats::setNames(lapply(units, function(unit_name) {
     data.frame(unit = character(), time = numeric(), change = numeric())
   }), units)
@@ -451,28 +540,71 @@ estimate_peak_unit_demand <- function(patient_profiles, profile_prob, n_patients
     )
   }))
 }
+# Top-level worker avoids exporting the optimizer's cache and nested closures.
+capacity_replication <- function(replication_id, simulation_args, units) {
+  replication_rng_state <- get(".Random.seed", envir = .GlobalEnv)
+  simulation <- do.call(run_simulation, simulation_args)
+  resources <- get_hospital_mon_resources(simulation, include_resources = units)
+  summary <- resource_state_intervals(resources) |>
+    dplyr::group_by(.data$resource) |>
+    dplyr::summarise(maximum_occupied = safe_max(.data$server),
+      maximum_queue = safe_max(.data$queue),
+      mean_queue = sum(.data$queue * .data$state_duration) / sum(.data$state_duration),
+      .groups = "drop")
+  summary <- dplyr::left_join(data.frame(resource = units), summary, by = "resource")
+  if (anyNA(summary$maximum_queue)) stop("Target resource monitoring is incomplete for optimization.")
+  if (any(!is.finite(summary$mean_queue))) stop("A positive observation duration is required for mean queues.")
+  dplyr::mutate(summary, replication = replication_id,
+    rng_state = rep(list(replication_rng_state), nrow(summary)))
+}
+
+# Independent replication means; the t interval measures Monte Carlo error.
+# With one replication, uncertainty is unavailable rather than zero.
+summarize_queue_means <- function(resources, thresholds, confidence_level = 0.95) {
+  resources |>
+    dplyr::group_by(.data$resource) |>
+    dplyr::summarise(replications = dplyr::n(), sd_queue = stats::sd(.data$mean_queue),
+      mean_queue = mean(.data$mean_queue), .groups = "drop") |>
+    dplyr::mutate(mcse = .data$sd_queue / sqrt(.data$replications),
+      threshold = unname(thresholds[.data$resource]),
+      confidence_level = confidence_level,
+      critical_value = stats::qt((1 + confidence_level) / 2, pmax(1, .data$replications - 1)),
+      lower = .data$mean_queue - .data$critical_value * .data$mcse,
+      upper = .data$mean_queue + .data$critical_value * .data$mcse,
+      passes = .data$mean_queue <= .data$threshold,
+      interval_crosses_threshold = .data$lower <= .data$threshold & .data$upper >= .data$threshold) |>
+    dplyr::select(-"critical_value")
+}
+
 find_n_needed <- function(capacities, duration, n_patients, sim_days,
                           patient_profiles, profile_prob, fallbacks = list(),
-                          num_sims = 40,
-                          search_num_sims = min(10, num_sims),
-                          max_evaluations = 100, max_validation_evaluations = 10,
+                          num_sims = 20,
+                          max_evaluations = 100,
                           minimum_step = 1, demand_safety_factor = 1.1,
-                          search_queue_tolerance = 1,
                           reliability_level = 0.80,
                           congestion_index_opt = 5, congestion_index_opt_ICU = 5,
                           workers = 1, search_seed = 2026, verbose = FALSE,
-                          baseline = NULL) {
+                          baseline = NULL, warmup_capacities = capacities,
+                          arrival_process = "even", final_num_sims = 50L,
+                          initialization = c("analytical", "incremental")) {
+  # reliability_level is the required proportion of joint peak-compliant runs.
+  # One fixed replication bank and exact queue limits for all candidate selection.
+  # The independent final bank is never used to tune capacity.
+  arrival_process <- match.arg(arrival_process, c("even", "poisson"))
+  initialization <- match.arg(initialization)
+  stopifnot(final_num_sims >= 1, final_num_sims == floor(final_num_sims),
+            is.finite(search_seed), search_seed >= 1,
+            search_seed <= .Machine$integer.max - 200000L,
+            is.finite(congestion_index_opt), congestion_index_opt >= 0,
+            is.finite(congestion_index_opt_ICU), congestion_index_opt_ICU >= 0)
   validate_patient_configuration(capacities, patient_profiles, profile_prob, fallbacks)
   if (!is.null(baseline) && isTRUE(baseline$enabled)) {
-    validate_baseline_config(baseline, capacities, fallbacks)
+    validate_baseline_config(baseline, warmup_capacities, fallbacks)
   }
   stopifnot(
     all(c("GenMed", "ICU") %in% names(capacities)),
-    num_sims >= 1,
+    length(num_sims) == 1, is.finite(num_sims), num_sims >= 1, num_sims == floor(num_sims),
     max_evaluations >= 2,
-    max_validation_evaluations >= 1,
-    search_num_sims >= 1,
-    search_queue_tolerance >= 0,
     minimum_step >= 1,
     demand_safety_factor >= 1,
     is.finite(reliability_level),
@@ -499,74 +631,66 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
   estimated_additional_beds <- pmax(0L, estimated_capacities - initial_capacities)
   names(estimated_additional_beds) <- names(initial_capacities)
 
+  # Routine offered load plus the finite-horizon surge trajectory is a starting
+  # guess only. It ignores congestion/fallback redistribution, not a capacity bound.
+  routine_load <- stats::setNames(c(0, 0), names(initial_capacities))
+  if (!is.null(baseline) && isTRUE(baseline$enabled)) {
+    for (profile in names(baseline$profiles)) {
+      path <- baseline$profiles[[profile]]
+      for (unit in names(routine_load)) {
+        routine_load[[unit]] <- routine_load[[unit]] + baseline$arrival_rates[[profile]] *
+          sum(path$los[path$unit == unit])
+      }
+    }
+  }
+  analytical_start <- pmax(initial_capacities,
+    ceiling(routine_load + demand_safety_factor * expected_peak[names(initial_capacities)]))
+
   cache <- new.env(parent = emptyenv())
   search_evaluation_count <- 0L
-  validation_evaluation_count <- 0L
+  final_evaluation_count <- 0L
+  evaluation_history <- list()
+  replication_history <- list()
+  auxiliary_history <- list()
+  cache_hits <- 0L
 
   replication_chunk_size <- function(replications) {
     as.integer(max(1L, ceiling(replications / max(1L, workers))))
   }
 
-  evaluate <- function(candidate, replications = search_num_sims,
-                       stage = c("search", "validation")) {
+  evaluate <- function(candidate, replications = num_sims,
+                        stage = c("search", "holdout")) {
     stage <- match.arg(stage)
-    replications <- as.integer(min(replications, num_sims))
+    replications <- as.integer(if (stage == "holdout") replications else num_sims)
     candidate <- as.integer(candidate[c("GenMed", "ICU")])
     names(candidate) <- c("GenMed", "ICU")
     key <- paste(c(stage, candidate, replications), collapse = ":")
     if (exists(key, envir = cache, inherits = FALSE)) {
+      cache_hits <<- cache_hits + 1L
       return(get(key, envir = cache, inherits = FALSE))
     }
     if (stage == "search" && search_evaluation_count >= max_evaluations) return(NULL)
-    if (stage == "validation" &&
-        validation_evaluation_count >= max_validation_evaluations) return(NULL)
 
     if (stage == "search") {
       search_evaluation_count <<- search_evaluation_count + 1L
       stage_evaluation <- search_evaluation_count
       evaluation_seed <- search_seed
     } else {
-      validation_evaluation_count <<- validation_evaluation_count + 1L
-      stage_evaluation <- validation_evaluation_count
-      evaluation_seed <- search_seed + 100000L
+      final_evaluation_count <<- final_evaluation_count + 1L
+      stage_evaluation <- final_evaluation_count
+      evaluation_seed <- search_seed + 200000L
     }
 
+    simulation_capacities <- configured_capacities
+    evaluation_started <- proc.time()[["elapsed"]]
+    simulation_capacities[c("GenMed", "ICU")] <- candidate
+    simulation_args <- list(capacities = simulation_capacities, duration = duration,
+      n_patients = n_patients, sim_days = sim_days, patient_profiles = patient_profiles,
+      profile_prob = profile_prob, fallbacks = fallbacks, baseline = baseline,
+      warmup_capacities = warmup_capacities, arrival_process = arrival_process)
     resources <- future.apply::future_lapply(
-      seq_len(replications),
-      function(replication_id) {
-        simulation_capacities <- configured_capacities
-        simulation_capacities[c("GenMed", "ICU")] <- candidate
-        simulation <- run_simulation(
-          capacities = simulation_capacities,
-          duration = duration,
-          n_patients = n_patients,
-          sim_days = sim_days,
-          patient_profiles = patient_profiles,
-          profile_prob = profile_prob,
-          fallbacks = fallbacks,
-          baseline = baseline
-        )
-        monitored_resources <- get_hospital_mon_resources(
-          simulation,
-          include_resources = c("GenMed", "ICU")
-        )
-        resource_summary <- monitored_resources |>
-          dplyr::group_by(.data$resource) |>
-          dplyr::summarise(
-            maximum_occupied = safe_max(.data$server),
-            maximum_queue = safe_max(.data$queue),
-            .groups = "drop"
-          )
-        target_summary <- dplyr::tibble(resource = c("GenMed", "ICU")) |>
-          dplyr::left_join(resource_summary, by = "resource")
-        if (anyNA(target_summary$maximum_queue)) {
-          stop(
-            "Target resource monitoring is incomplete for optimization.",
-            call. = FALSE
-          )
-        }
-        dplyr::mutate(target_summary, replication = replication_id)
-      },
+      seq_len(replications), capacity_replication,
+      simulation_args = simulation_args, units = c("GenMed", "ICU"),
       future.seed = evaluation_seed,
       future.chunk.size = replication_chunk_size(replications)
     ) |>
@@ -581,10 +705,8 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       c("GenMed", "ICU")
     )
 
-    maximum_queues <- resources |>
-      dplyr::select(dplyr::all_of(c("replication", "resource", "maximum_queue")))
-    queue_for <- function(unit_name) {
-      unit_rows <- maximum_queues[maximum_queues$resource == unit_name, , drop = FALSE]
+    queue_for <- function(unit_name, column = "maximum_queue") {
+      unit_rows <- resources[resources$resource == unit_name, , drop = FALSE]
       replications_found <- unit_rows$replication
       expected_replications <- seq_len(replications)
       missing_replications <- setdiff(expected_replications, replications_found)
@@ -609,7 +731,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
         )
       }
 
-      unit_rows$maximum_queue[match(expected_replications, replications_found)]
+      unit_rows[[column]][match(expected_replications, replications_found)]
     }
     queue_matrix <- data.frame(
       replication = seq_len(replications),
@@ -618,49 +740,67 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       check.names = FALSE
     )
 
-    queue_tolerance <- if (stage == "search") search_queue_tolerance else 0
     thresholds <- c(
-      GenMed = congestion_index_opt + queue_tolerance,
-      ICU = congestion_index_opt_ICU + queue_tolerance
+      GenMed = congestion_index_opt,
+      ICU = congestion_index_opt_ICU
     )
     unit_pass <- data.frame(
       GenMed = queue_matrix$GenMed <= thresholds[["GenMed"]],
       ICU = queue_matrix$ICU <= thresholds[["ICU"]]
     )
     joint_pass <- unit_pass$GenMed & unit_pass$ICU
-    required_successes <- ceiling(reliability_level * replications)
     unit_successful_replications <- c(
       GenMed = sum(unit_pass$GenMed),
       ICU = sum(unit_pass$ICU)
     )
     unit_reliability <- unit_successful_replications / replications
+    # Acceptance counts simultaneous maximum-queue compliance. Retain
+    # mean queues as complementary diagnostics over the same observation horizon.
+    mean_queues <- c(GenMed = mean(queue_for("GenMed", "mean_queue")),
+                     ICU = mean(queue_for("ICU", "mean_queue")))
+    mean_intervals <- summarize_queue_means(resources, thresholds)
 
     result <- list(
       capacities = candidate,
       maximum_occupancy = maximum_occupancy,
-      queues = c(
-        GenMed = safe_median(queue_matrix$GenMed),
-        ICU = safe_median(queue_matrix$ICU)
-      ),
+      queues = mean_queues,
+      mean_intervals = mean_intervals,
       unit_reliability = unit_reliability,
       reliability = safe_mean(as.numeric(joint_pass)),
       successful_replications = sum(joint_pass),
       unit_successful_replications = unit_successful_replications,
-      required_successes = required_successes,
       replications = replications,
       thresholds = thresholds,
-      # Each unit must independently reach the reliability target. Joint
-      # reliability is retained as a diagnostic because failures may occur in
-      # different replications.
-      passes = all(unit_successful_replications >= required_successes)
+      passes = sum(joint_pass) >= ceiling(reliability_level * replications)
     )
+    evaluation_id <- length(evaluation_history) + 1L
+    evaluation_history[[evaluation_id]] <<- data.frame(
+      evaluation_id = evaluation_id, stage = stage, stage_evaluation = stage_evaluation,
+      seed = evaluation_seed, replications = replications,
+      GenMed = candidate[["GenMed"]], ICU = candidate[["ICU"]],
+      added_beds = sum(candidate - initial_capacities),
+      GenMed_threshold = thresholds[["GenMed"]], ICU_threshold = thresholds[["ICU"]],
+      acceptance_criterion = "joint_maximum_queue_GenMed_ICU",
+      reliability_target = reliability_level,
+      required_successes = ceiling(reliability_level * replications),
+      GenMed_mean_queue = mean_queues[["GenMed"]], ICU_mean_queue = mean_queues[["ICU"]],
+      GenMed_mcse = mean_intervals$mcse[match("GenMed", mean_intervals$resource)],
+      ICU_mcse = mean_intervals$mcse[match("ICU", mean_intervals$resource)],
+      joint_successes = sum(joint_pass), joint_reliability = result$reliability,
+      GenMed_reliability = unit_reliability[["GenMed"]], ICU_reliability = unit_reliability[["ICU"]],
+      passes = result$passes, elapsed_seconds = proc.time()[["elapsed"]] - evaluation_started)
+    replication_history[[evaluation_id]] <<- resources |>
+      dplyr::mutate(evaluation_id = evaluation_id, stage = stage, seed = evaluation_seed,
+        threshold = unname(thresholds[.data$resource]),
+        unit_pass = .data$maximum_queue <= .data$threshold,
+        joint_pass = joint_pass[.data$replication])
     assign(key, result, envir = cache)
 
     if (verbose) {
       cat(sprintf(
         paste0(
-          "%s evaluation %d: GenMed=%d (median max %.2f, %.0f%% pass), ",
-          "ICU=%d (median max %.2f, %.0f%% pass), joint diagnostic %.0f%%, pass=%s\n"
+          "%s evaluation %d: GenMed=%d (mean queue %.2f, %.0f%% peak compliance), ",
+          "ICU=%d (mean queue %.2f, %.0f%% peak compliance), joint peak compliance %.0f%%, pass=%s\n"
         ),
         tools::toTitleCase(stage), stage_evaluation,
         candidate[["GenMed"]], result$queues[["GenMed"]],
@@ -684,6 +824,13 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     total_generated_patients <- total_generated_patients + sum(ceiling(
       baseline$arrival_rates * (baseline$warmup_max_days + sim_days)))
   }
+  poisson_arrivals <- arrival_process == "poisson" ||
+    (!is.null(baseline) && isTRUE(baseline$enabled) && identical(baseline$arrival_process, "poisson"))
+  if (poisson_arrivals) {
+    # Poisson counts have no finite absolute bound. This is a numerical search
+    # limit, not a guarantee of unconstrained demand or global optimality.
+    total_generated_patients <- as.integer(stats::qpois(1 - 1e-10, total_generated_patients))
+  }
   unlimited_capacity_value <- max(500L, total_generated_patients)
   unlimited_simulation_used <- FALSE
   unlimited_max_occupancy <- stats::setNames(
@@ -697,18 +844,16 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
   )
   names(safety_capacities) <- target_units
   frontier_complete <- FALSE
-  validation_refinement_complete <- FALSE
   current_capacity_validated <- FALSE
-  current_validation <- NULL
 
   failing_units_for <- function(evaluation_result) {
     if (is.null(evaluation_result)) return(target_units)
-    names(evaluation_result$unit_reliability)[
-      evaluation_result$unit_reliability < reliability_level
-    ]
+    if (isTRUE(evaluation_result$passes)) return(character())
+    names(evaluation_result$unit_reliability)[evaluation_result$unit_reliability < 1]
   }
 
   estimate_unlimited_demand <- function(replications = num_sims) {
+    auxiliary_started <- proc.time()[["elapsed"]]
     observed <- future.apply::future_lapply(
       seq_len(replications),
       function(replication_id) {
@@ -724,7 +869,9 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
           patient_profiles = patient_profiles,
           profile_prob = profile_prob,
           fallbacks = fallbacks,
-          baseline = baseline
+          baseline = baseline,
+          warmup_capacities = warmup_capacities,
+          arrival_process = arrival_process
         )
         simmer::get_mon_resources(simulation) |>
           dplyr::filter(
@@ -752,33 +899,20 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       names(configured_capacities)
     )
     maximum_occupancy[observed$resource] <- observed$maximum_occupied
+    auxiliary_history[[length(auxiliary_history) + 1L]] <<- data.frame(
+      stage = "unlimited_demand", seed = search_seed + 100000L,
+      replications = replications, capacity_per_unit = unlimited_capacity_value,
+      elapsed_seconds = proc.time()[["elapsed"]] - auxiliary_started)
     maximum_occupancy
   }
-  # Always evaluate current capacity first. If it passes the search screen,
-  # verify it against the exact validation thresholds before estimating demand.
+  # Current capacity is evaluated once on the same bank as every other candidate.
   capacities <- initial_capacities
   result <- evaluate(capacities)
-  if (!is.null(result) && result$passes) {
-    current_validation <- evaluate(
-      capacities,
-      replications = num_sims,
-      stage = "validation"
-    )
-    if (!is.null(current_validation) && current_validation$passes) {
-      result <- current_validation
-      current_capacity_validated <- TRUE
-      frontier_complete <- TRUE
-      validation_refinement_complete <- TRUE
-    }
-  }
+  current_capacity_validated <- !is.null(result) && isTRUE(result$passes)
+  if (current_capacity_validated) frontier_complete <- TRUE
 
   if (!current_capacity_validated) {
-    reference_result <- if (!is.null(current_validation) &&
-                            !current_validation$passes) {
-      current_validation
-    } else {
-      result
-    }
+    reference_result <- result
     active_units <- failing_units_for(reference_result)
     if (length(active_units) == 0) active_units <- target_units
 
@@ -786,15 +920,17 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     # total number of arrivals. This is a reference, not a hard ceiling,
     # because constrained upstream units can route additional patients through
     # fallbacks to GenMed or ICU.
-    unlimited_max_occupancy <- estimate_unlimited_demand()
-    unlimited_simulation_used <- TRUE
+    if (initialization == "incremental") {
+      unlimited_max_occupancy <- estimate_unlimited_demand()
+      unlimited_simulation_used <- TRUE
+    }
     unlimited_reference_capacities <- pmax(
       initial_capacities,
-      as.integer(unlimited_max_occupancy[target_units])
+      if (unlimited_simulation_used) as.integer(unlimited_max_occupancy[target_units]) else initial_capacities
     )
     names(unlimited_reference_capacities) <- target_units
 
-    if (verbose) {
+    if (verbose && unlimited_simulation_used) {
       demand_text <- paste0(
         names(unlimited_max_occupancy),
         "=",
@@ -815,6 +951,16 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
 
     capacities <- initial_capacities
     result <- reference_result
+    if (initialization == "analytical") {
+      trial <- pmin(safety_capacities, analytical_start)
+      if (any(trial > capacities)) {
+        trial_result <- evaluate(trial)
+        if (!is.null(trial_result)) {
+          capacities <- trial
+          result <- trial_result
+        }
+      }
+    }
     growth_steps <- stats::setNames(
       rep(as.integer(minimum_step), length(target_units)),
       target_units
@@ -937,130 +1083,27 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       frontier_complete <- all(refinement_status) && local_complete
     }
 
-    # Validation uses the full replication bank and exact queue limits. Failed
-    # units grow exponentially without exceeding unlimited-capacity demand.
-    validation_result <- NULL
-    if (!is.null(result) && result$passes) {
-      validation_result <- evaluate(
-        capacities,
-        replications = num_sims,
-        stage = "validation"
-      )
-      validation_growth_steps <- stats::setNames(
-        rep(as.integer(minimum_step), length(target_units)),
-        target_units
-      )
-      # A value one below the initial capacity is a conceptual lower boundary
-      # when validation has not yet observed a failure for that resource.
-      validation_failure_floor <- initial_capacities - 1L
-      validation_expanded <- FALSE
-
-      while (!is.null(validation_result) && !validation_result$passes &&
-             validation_evaluation_count < max_validation_evaluations) {
-        failing_units <- failing_units_for(validation_result)
-        validation_failure_floor[failing_units] <- pmax(
-          validation_failure_floor[failing_units],
-          capacities[failing_units]
-        )
-        failing_units <- intersect(
-          failing_units,
-          target_units[capacities[target_units] < safety_capacities[target_units]]
-        )
-        if (length(failing_units) == 0) break
-
-        trial <- capacities
-        trial[failing_units] <- pmin(
-          safety_capacities[failing_units],
-          trial[failing_units] + validation_growth_steps[failing_units]
-        )
-        if (identical(as.integer(trial), as.integer(capacities))) break
-
-        capacities <- trial
-        validation_expanded <- TRUE
-        validation_result <- evaluate(
-          capacities,
-          replications = num_sims,
-          stage = "validation"
-        )
-        validation_growth_steps[failing_units] <- pmin(
-          safety_capacities[failing_units] - initial_capacities[failing_units],
-          pmax(minimum_step, 2L * validation_growth_steps[failing_units])
-        )
-      }
-
-      validation_refinement_complete <-
-        !is.null(validation_result) && validation_result$passes
-      if (validation_refinement_complete && !validation_expanded) {
-        # Search refinement usually leaves a near-boundary candidate. When it
-        # validates immediately, test one-bed reductions before using a wider
-        # interval search.
-        improved <- TRUE
-        while (improved && validation_refinement_complete) {
-          improved <- FALSE
-          for (unit_name in target_units) {
-            if (capacities[[unit_name]] <= initial_capacities[[unit_name]]) next
-            trial <- capacities
-            trial[[unit_name]] <- trial[[unit_name]] - 1L
-            trial_result <- evaluate(
-              trial,
-              replications = num_sims,
-              stage = "validation"
-            )
-            if (is.null(trial_result)) {
-              validation_refinement_complete <- FALSE
-              break
-            }
-            if (trial_result$passes) {
-              capacities <- trial
-              validation_result <- trial_result
-              improved <- TRUE
-              break
-            }
-          }
-        }
-      } else if (validation_refinement_complete) {
-        # After validation expansion, the last failing value and first passing
-        # value form a narrow bracket that can be refined efficiently.
-        for (unit_name in c("ICU", "GenMed", "ICU")) {
-          lower <- validation_failure_floor[[unit_name]]
-          upper <- capacities[[unit_name]]
-
-          while (upper - lower > 1L) {
-            if (validation_evaluation_count >= max_validation_evaluations) {
-              validation_refinement_complete <- FALSE
-              break
-            }
-            midpoint <- as.integer(floor((lower + upper) / 2))
-            trial <- capacities
-            trial[[unit_name]] <- midpoint
-            trial_result <- evaluate(
-              trial,
-              replications = num_sims,
-              stage = "validation"
-            )
-            if (is.null(trial_result)) {
-              validation_refinement_complete <- FALSE
-              break
-            }
-            if (trial_result$passes) {
-              capacities <- trial
-              validation_result <- trial_result
-              upper <- midpoint
-            } else {
-              lower <- midpoint
-              validation_failure_floor[[unit_name]] <- max(
-                validation_failure_floor[[unit_name]],
-                midpoint
-              )
-            }
-          }
-          if (!validation_refinement_complete) break
-        }
-      }
-      result <- validation_result
-    }
   }
 
+  selection_result <- result
+  if (!is.null(result) && isTRUE(result$passes)) {
+    # Never tune capacity using this independent final bank.
+    result <- evaluate(capacities, replications = final_num_sims, stage = "holdout")
+  }
+  final_intervals <- if (final_evaluation_count > 0L) {
+    dplyr::bind_rows(lapply(target_units, function(unit) {
+      interval <- stats::binom.test(result$unit_successful_replications[[unit]], result$replications)$conf.int
+      data.frame(resource = unit, successes = result$unit_successful_replications[[unit]],
+        replications = result$replications, probability = result$unit_reliability[[unit]],
+        lower_95 = interval[[1]], upper_95 = interval[[2]])
+    }))
+  } else data.frame()
+  final_joint_interval <- if (final_evaluation_count > 0L) {
+    interval <- stats::binom.test(result$successful_replications, result$replications)$conf.int
+    data.frame(criterion = "GenMed_and_ICU", successes = result$successful_replications,
+      replications = result$replications, probability = result$reliability,
+      lower_95 = interval[[1]], upper_95 = interval[[2]])
+  } else data.frame()
   if (is.null(result)) {
     result <- list(
       queues = c(GenMed = NA_real_, ICU = NA_real_),
@@ -1077,6 +1120,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     reliability_ICU = result$unit_reliability[["ICU"]],
     joint_reliability = result$reliability,
     reliability_level = reliability_level,
+    reliability_diagnostic = "maximum_queue_below_limit_per_replication",
     N_added = capacities[["GenMed"]] - initial_capacities[["GenMed"]],
     N_added_ICU = capacities[["ICU"]] - initial_capacities[["ICU"]],
     GenMed_N = capacities[["GenMed"]],
@@ -1086,6 +1130,9 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     expected_peak_GenMed = expected_peak[["GenMed"]],
     expected_peak_ICU = expected_peak[["ICU"]],
     analytical_reference_scope = "surge_only; excludes routine civilian demand",
+    initialization = initialization,
+    analytical_start = analytical_start,
+    routine_offered_load = routine_load,
     estimated_additional_GenMed = estimated_additional_beds[["GenMed"]],
     estimated_additional_ICU = estimated_additional_beds[["ICU"]],
     unlimited_simulation_used = unlimited_simulation_used,
@@ -1097,10 +1144,39 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     safety_capacity_GenMed = safety_capacities[["GenMed"]],
     safety_capacity_ICU = safety_capacities[["ICU"]],
     search_evaluations = search_evaluation_count,
-    validation_evaluations = validation_evaluation_count,
-    evaluations = search_evaluation_count + validation_evaluation_count,
+    final_evaluations = final_evaluation_count,
+    final_num_sims = final_num_sims,
+    final_intervals = final_intervals,
+    final_joint_interval = final_joint_interval,
+    final_mean_intervals = if (final_evaluation_count > 0L) result$mean_intervals else data.frame(),
+    acceptance_criterion = "joint_maximum_queue_GenMed_ICU",
+    mean_queue_GenMed = result$queues[["GenMed"]],
+    mean_queue_ICU = result$queues[["ICU"]],
+    evaluation_history = dplyr::bind_rows(evaluation_history),
+    replication_history = dplyr::bind_rows(replication_history),
+    auxiliary_history = dplyr::bind_rows(auxiliary_history),
+    cache_hits = cache_hits,
+    total_simulations = sum(vapply(c(evaluation_history, auxiliary_history),
+      function(x) x$replications[[1]], numeric(1))),
+    search_configuration = list(capacities = configured_capacities,
+      warmup_capacities = warmup_capacities, baseline = baseline,
+      patient_profiles = patient_profiles, profile_prob = profile_prob, fallbacks = fallbacks,
+      duration = duration, n_patients = n_patients, sim_days = sim_days,
+      arrival_process = arrival_process, search_seed = search_seed,
+      initialization = initialization,
+      num_sims = num_sims, final_num_sims = final_num_sims,
+      max_evaluations = max_evaluations,
+      minimum_step = minimum_step, demand_safety_factor = demand_safety_factor,
+      reliability_level = reliability_level,
+      congestion_index_opt = congestion_index_opt, congestion_index_opt_ICU = congestion_index_opt_ICU,
+      workers = workers,
+      rng_kind = RNGkind(), future_version = as.character(utils::packageVersion("future.apply"))),
+    selection_passed = !is.null(selection_result) && isTRUE(selection_result$passes),
+    arrival_process = arrival_process,
+    capacity_bound_scope = if (poisson_arrivals) "Poisson numerical search limit" else "Total scheduled arrivals",
+    evaluations = search_evaluation_count + final_evaluation_count,
     converged = isTRUE(result$passes),
-    refinement_complete = frontier_complete && validation_refinement_complete,
+    refinement_complete = frontier_complete,
     search_complete = isTRUE(result$passes)
   )
 }

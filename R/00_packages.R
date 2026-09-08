@@ -9,7 +9,6 @@
 library(shiny)
 library(shinydashboard)
 library(markdown)
-library(thematic)
 library(rintrojs)
 library(simmer)
 library(future.apply)
@@ -49,7 +48,7 @@ library(openxlsx)
 # missing <- setdiff(pkgs, installed)
 # if (length(missing)) install.packages(missing)
 # rm(installed, missing)
-# 
+#
 # # Load packages -----------------------------------------------------------
 # suppressMessages({
 #   suppressWarnings({

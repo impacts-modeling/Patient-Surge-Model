@@ -4,6 +4,9 @@ run_hospital_scenario <- function(config, duration, n_patients, sim_days,
                                   num_sims = 1L, seed = 2026L, scenario_id = "scenario",
                                   scenario_mode = c("surge", "civilian_only")) {
   scenario_mode <- match.arg(scenario_mode)
+  arrival_process <- if (is.null(config$arrival_process)) "even" else config$arrival_process
+  arrival_process <- match.arg(arrival_process, c("even", "poisson"))
+  config$arrival_process <- arrival_process
   # Explicit mode ignores surge settings, while the zero-arrival API remains supported.
   if (scenario_mode == "civilian_only") {
     duration <- 0
@@ -14,9 +17,12 @@ run_hospital_scenario <- function(config, duration, n_patients, sim_days,
             length(scenario_id) == 1, !is.na(scenario_id),
             length(duration) == 1, is.finite(duration), duration >= 0, duration == floor(duration),
             length(n_patients) == 1, is.finite(n_patients), n_patients >= 0,
-            n_patients == floor(n_patients), length(sim_days) == 1, is.finite(sim_days), sim_days > 0)
+            arrival_process == "poisson" || n_patients == floor(n_patients),
+            length(sim_days) == 1, is.finite(sim_days), sim_days > 0, sim_days >= duration)
   baseline <- config$baseline
   if (is.null(baseline)) baseline <- baseline_defaults()
+  warmup_capacities <- config$warmup_capacities
+  if (is.null(warmup_capacities)) warmup_capacities <- config$capacities
   if (n_patients == 0 || duration == 0) scenario_mode <- "civilian_only"
   if (scenario_mode == "civilian_only" && !isTRUE(baseline$enabled)) {
     stop("Enable Routine Civilian Flow and configure civilian profiles before running civilian-only operations.")
@@ -25,7 +31,8 @@ run_hospital_scenario <- function(config, duration, n_patients, sim_days,
   results <- future.apply::future_lapply(seq_len(num_sims), function(replication) {
     sim <- run_simulation(config$capacities, duration, n_patients, sim_days,
                           config$patient_profiles, config$profile_prob, config$fallbacks,
-                          baseline = baseline)
+                          baseline = baseline, warmup_capacities = warmup_capacities,
+                          arrival_process = arrival_process)
     metadata <- attr(sim, "civilian_metadata")
     decorate <- function(rows) {
       dplyr::mutate(rows, replication = .env$replication, scenario_id = .env$scenario_id,
@@ -53,15 +60,20 @@ run_hospital_scenario <- function(config, duration, n_patients, sim_days,
     }
     activity$is_logical_wait <- startsWith(activity$resource, logical_queue_prefix)
     activity <- dplyr::arrange(activity, .data$start_time, .data$name, .data$resource, .data$end_time)
-    list(resources = decorate(get_hospital_mon_resources(sim)),
-         resource_history = decorate(get_hospital_mon_resources(sim, include_warmup = TRUE)),
+    # Consolidate the raw resource monitor only once, then slice the observation.
+    history <- get_hospital_mon_resources(sim, include_warmup = TRUE)
+    observation <- if (is.null(metadata)) history else slice_resource_history(history, 0, sim_days)
+    list(resources = decorate(observation),
+         resource_history = decorate(history),
          arrivals = decorate(arrivals),
          patient_resource_activity = decorate(activity),
          warmup_diagnostics = if (is.null(metadata)) data.frame() else decorate(metadata$warmup_diagnostics),
          runs = data.frame(replication = replication, scenario_id = scenario_id,
                            scenario_mode = scenario_mode,
                            warmup_days = if (is.null(metadata)) 0 else metadata$surge_start,
-                           sim_days = sim_days, seed = seed))
+                           sim_days = sim_days, seed = seed,
+                           arrival_process = arrival_process,
+                           actual_surge_arrivals = sum(arrivals$population == "surge")))
   }, future.seed = as.integer(seed))
   tables <- stats::setNames(lapply(names(results[[1]]), function(name) {
     dplyr::bind_rows(lapply(results, `[[`, name))
@@ -69,5 +81,5 @@ run_hospital_scenario <- function(config, duration, n_patients, sim_days,
   c(tables, list(configuration = config, scenario_mode = scenario_mode,
                  parameters = data.frame(duration = duration, n_patients = n_patients,
                                          sim_days = sim_days, num_sims = num_sims, seed = seed,
-                                         scenario_mode = scenario_mode)))
+                                         scenario_mode = scenario_mode, arrival_process = arrival_process)))
 }

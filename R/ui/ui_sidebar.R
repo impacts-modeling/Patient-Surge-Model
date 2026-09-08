@@ -42,17 +42,21 @@ build_sidebar <- function() {
                 width = col1,
                 shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
                   shiny::numericInput("n_patients", "Surge Patients per Day", min = 1, max = 100, value = 10)),
-                shiny::numericInput("sim_days", "Observation Duration (days)", min = 1, max = 100, value = 30)
+                shiny::numericInput("sim_days", "Observation Duration (days)", min = 1, max = 365, value = app_development_config$sim_days)
               ),
               shiny::column(
                 width = col1,
                 shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
                   shiny::numericInput("duration", "Surge Arrival Period (days)", min = 1, max = 100, value = 10)),
-                shiny::numericInput("num_sims", "Number of simulations", min = 1, max = 100, value = 10)
+                shiny::numericInput("num_sims", "Number of simulations", min = 1, max = 1000, value = app_development_config$num_sims)
               )
             ),
-            shiny::numericInput("simulation_seed", "Simulation seed", value = 2026, min = 1, step = 1),
-            shiny::helpText("With civilian flow enabled, day 0 starts observation after warm-up. Civilian-only mode generates no surge arrivals.")
+            shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
+              shiny::selectInput("surge_arrival_process", "Surge arrival process",
+                choices = c("Evenly spaced" = "even", "Poisson (random arrivals)" = "poisson")),
+              shiny::helpText("For Poisson arrivals, patients/day is the mean rate; the actual count varies. The observation duration must cover the full arrival period.")),
+            shiny::numericInput("simulation_seed", "Simulation seed", value = app_development_config$simulation_seed, min = 1, step = 1),
+            shiny::helpText("Day 0 starts observation and surge arrivals. With civilian flow enabled, warm-up occurs before day 0. Bed search uses 14 replications per candidate in development mode, followed by an independent final evaluation.")
           ),
           id = "tour_simulation_parameters",
           data.step = 7,
@@ -87,16 +91,13 @@ build_sidebar <- function() {
           shiny::tags$details(
             class = "sidebar-section", open = NA,
             shiny::tags$summary("Calculate HxS Expansion"),
-            shiny::h4("Maximum Allowed Queue Lengths:"),
+            shiny::h4("Maximum Queue Limits (Patients):"),
             shiny::fluidRow(
               shiny::column(width = 6, shiny::numericInput("congestion_index", "Med/Surg", min = 1, max = 100, value = 10, step = 5)),
               shiny::column(width = 6, shiny::numericInput("congestion_index_icu", "ICU", min = 1, max = 100, value = 10, step = 5))
             ),
             shiny::helpText(paste(
-              "Current capacity is checked first."# An internal run with at least 500 beds",
-              # "per unit measures unconstrained primary demand. Fallback demand can exceed",
-              # "that reference, so failing units grow exponentially up to a fallback-safe",
-              # "ceiling. Each unit must independently meet its limit in 70% of validation simulations."
+              "In at least 70% of replications, the maximum queues of GenMed and ICU must both stay within their limits during the full observation period."
             )),
             shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
               shiny::actionButton("run_N", "Estimate Bed Expansion", class = "btn-primary")),
@@ -111,11 +112,11 @@ build_sidebar <- function() {
           data.step = 9,
           data.intro = paste(
             "<strong>Estimate additional capacity.</strong><br>",
-            "Enter acceptable GenMed and ICU queue limits. The optimizer first measures",
-            "unconstrained primary demand with at least 500 beds in every unit.",
+            "Enter acceptable GenMed and ICU queue limits. The optimizer first checks current capacity",
+            "and, if needed, estimates demand with at least 500 beds in every unit.",
             "It then grows only failing resources exponentially; this can exceed primary",
-            "demand when fallbacks route patients into GenMed or ICU. The 70% target is",
-            "validated independently for each unit. Confirm before starting; only one",
+            "demand when fallbacks route patients into GenMed or ICU. Both units must meet",
+            "their maximum queue limits simultaneously in at least 70% of replications. Confirm before starting; only one",
             "calculation can run at a time."
           ),
           data.position = "right"
@@ -124,4 +125,3 @@ build_sidebar <- function() {
     )
   )
 }
-

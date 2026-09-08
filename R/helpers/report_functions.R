@@ -31,9 +31,11 @@ make_expansion_table <- function(n_result) {
       "Additional ICU HxS beds",
       "Validated total Med/Surg capacity",
       "Validated total ICU capacity",
-      "Search evaluations",
-      "Validation evaluations",
-      "Converged"
+      "Unified search evaluations",
+      "Independent final evaluations",
+      "Joint maximum-queue compliance target met",
+      "Final mean GenMed queue (patients)",
+      "Final mean ICU queue (patients)"
     ),
     Value = c(
       n_result$N_added %||% NA_integer_,
@@ -41,8 +43,10 @@ make_expansion_table <- function(n_result) {
       n_result$GenMed_N %||% NA_integer_,
       n_result$ICU_N %||% NA_integer_,
       n_result$search_evaluations %||% NA_integer_,
-      n_result$validation_evaluations %||% NA_integer_,
-      isTRUE(n_result$converged)
+      n_result$final_evaluations %||% NA_integer_,
+      isTRUE(n_result$converged),
+      n_result$mean_queue_GenMed %||% NA_real_,
+      n_result$mean_queue_ICU %||% NA_real_
     ),
     stringsAsFactors = FALSE
   )
@@ -240,7 +244,7 @@ select_patient_time_cohort <- function(arrivals, scenario_mode = "surge") {
   if ("population" %in% names(arrivals)) {
     population <- if (identical(scenario_mode, "civilian_only")) "civilian" else "surge"
     arrivals <- dplyr::filter(arrivals, .data$population == .env$population,
-                              .data$start_time >= 0, .data$finished %in% TRUE)
+                              .data$start_time >= 0)
   }
   arrivals
 }
@@ -253,7 +257,7 @@ make_patient_summary <- function(arrivals, scenario_mode = "surge") {
       total_patients = dplyr::n(),
       completion_rate = safe_mean(as.numeric(finished)),
       avg_treatment_time = safe_mean(activity_time[finished], default = NA_real_),
-      avg_wait_time = safe_mean(end_time - start_time - activity_time, default = NA_real_),
+      avg_wait_time = safe_mean((end_time - start_time - activity_time)[finished %in% TRUE], default = NA_real_),
       .groups = "drop"
     ) |>
     dplyr::filter(is.finite(avg_treatment_time), is.finite(avg_wait_time))
@@ -315,12 +319,16 @@ build_report_params <- function(input, profile_config) {
   c(
     list(
       `Scenario` = if (civilian_only) "Routine civilian operation only" else "Surge event",
+      `Surge arrival process` = profile_config$arrival_process,
       `Surge Patients per Day` = if (civilian_only) 0 else input$n_patients,
       `Surge Arrival Period (days)` = if (civilian_only) 0 else input$duration,
       `Simulation Duration (days)` = input$sim_days,
       `Number of simulations` = input$num_sims
     ),
     list(`Routine civilian flow enabled` = isTRUE(profile_config$baseline$enabled),
+         `Civilian arrival process` = profile_config$baseline$arrival_process,
+         `Warm-up method` = profile_config$baseline$warmup_mode,
+         `Warm-up duration (days)` = profile_config$baseline$warmup_min_days,
          `Simulation seed` = input$simulation_seed),
     capacity_params,
     list(
@@ -379,7 +387,7 @@ generate_simulation_pdf_report <- function(file, params, simulation_data, profil
       paste("Generated:", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
       "",
       "This report summarizes the current model configuration, bed expansion estimate,",
-      "resource utilization, queue bottlenecks, and patient treatment/wait time results."
+      "resource utilization, queue bottlenecks, and bed waiting time results."
     ),
     cex = 1.1
   )
@@ -404,11 +412,12 @@ generate_simulation_pdf_report <- function(file, params, simulation_data, profil
     add_report_text_page("Civilian Flow Interpretation", c(
       if (civilian_only) "Civilian-only scenario: day 0 starts observation after warm-up; no surge patients arrive."
       else "Resource results include both populations after surge onset (day 0).",
-      if (civilian_only) "Patient-time plots include completed civilians admitted from day 0 onward."
-      else "Patient-time plots include completed surge patients only.",
+      if (civilian_only) "Bed wait tables include civilian bed requests and identify pending requests."
+      else "Bed wait tables distinguish civilian and surge bed requests.",
       "Civilian arrivals continue throughout warm-up and follow-up without resetting beds or patients.",
-      "Three time-weighted windows passed the configured stability screen; this is not proof of equilibrium.",
-      "Expansion candidates include added beds during warm-up (planned expansion).",
+      sprintf("Warm-up diagnostic failures across checks: %d. Fixed-duration runs continue even if the screen fails; equilibrium is not established.",
+        sum(!simulation_data$warmup_diagnostics$passed)),
+      "Warm-up uses existing beds; added capacity is activated at the start of observation.",
       "Raw RDS output retains civilian patient records, incomplete patients and warm-up diagnostics."))
   }
   add_report_table_page("Fallback Configuration", make_fallback_configuration_table(profile_config))
@@ -418,7 +427,7 @@ generate_simulation_pdf_report <- function(file, params, simulation_data, profil
 
   add_resource_plot_page(simulation_data$resources, var = "server")
   add_resource_plot_page(simulation_data$resources, var = "queue")
-  add_patient_time_plot_page(simulation_data$arrivals, simulation_data$scenario_mode)
+  add_report_table_page("Bed waiting times (days; completed patients only)", bed_wait_table(simulation_data))
 
   invisible(file)
 }

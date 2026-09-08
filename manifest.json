@@ -621,7 +621,7 @@
         "Maintainer": "Hadley Wickham <hadley@posit.co>",
         "Repository": "CRAN",
         "Date/Publication": "2026-04-03 07:30:08 UTC",
-        "Built": "R 4.6.1; x86_64-w64-mingw32; 2026-07-30 03:09:29 UTC; windows",
+        "Built": "R 4.6.1; x86_64-w64-mingw32; 2026-09-02 04:00:08 UTC; windows",
         "Archs": "x64",
         "RemoteType": "standard",
         "RemotePkgRef": "dplyr",
@@ -860,7 +860,7 @@
         "Maintainer": "Henrik Bengtsson <henrikb@braju.com>",
         "Repository": "CRAN",
         "Date/Publication": "2026-02-20 12:00:09 UTC",
-        "Built": "R 4.6.1; ; 2026-08-07 01:55:22 UTC; windows",
+        "Built": "R 4.6.1; ; 2026-09-02 02:52:54 UTC; windows",
         "RemoteType": "standard",
         "RemotePkgRef": "future.apply",
         "RemoteRef": "future.apply",
@@ -2456,7 +2456,7 @@
         "Maintainer": "Carson Sievert <carson@posit.co>",
         "Repository": "CRAN",
         "Date/Publication": "2026-06-21 14:10:08 UTC",
-        "Built": "R 4.6.1; ; 2026-08-06 19:21:47 UTC; windows",
+        "Built": "R 4.6.1; ; 2026-09-02 03:39:14 UTC; windows",
         "RemoteType": "standard",
         "RemotePkgRef": "shiny",
         "RemoteRef": "shiny",
@@ -2486,7 +2486,7 @@
         "Maintainer": "Winston Chang <winston@posit.co>",
         "Repository": "CRAN",
         "Date/Publication": "2025-04-21 21:30:02 UTC",
-        "Built": "R 4.6.1; ; 2026-08-05 03:50:10 UTC; windows",
+        "Built": "R 4.6.1; ; 2026-09-02 03:40:16 UTC; windows",
         "RemoteType": "standard",
         "RemotePkgRef": "shinydashboard",
         "RemoteRef": "shinydashboard",
@@ -2520,7 +2520,7 @@
         "Maintainer": "Iñaki Ucar <iucar@fedoraproject.org>",
         "Repository": "CRAN",
         "Date/Publication": "2024-09-28 00:10:02 UTC",
-        "Built": "R 4.6.1; x86_64-w64-mingw32; 2026-08-07 01:13:31 UTC; windows",
+        "Built": "R 4.6.1; x86_64-w64-mingw32; 2026-09-02 02:02:42 UTC; windows",
         "Archs": "x64",
         "RemoteType": "standard",
         "RemotePkgRef": "simmer",
@@ -3116,52 +3116,139 @@
   },
   "files": {
     ".RData": {
-      "checksum": "c9643b6814539471c99fd7ce8cdb32aa"
+      "checksum": "fed933d1fe100f6bbc0feacbe6710d49"
+    },
+    "2026_DES_Model/Extra/Algorithm.tex": {
+      "checksum": "6ac2585f380326ffea0213b8d34de5fb"
+    },
+    "2026_DES_Model/Extra/extra.tex": {
+      "checksum": "020acecdac56cb91d00a818368499a9e"
+    },
+    "2026_DES_Model/Extra/main_previosversion.tex": {
+      "checksum": "df2b3c22bf5d00af526e4fb13ae15800"
+    },
+    "2026_DES_Model/Extra/MilitarMedicineFormat.tex": {
+      "checksum": "2c773b98c85fd5bb95806af64e819d53"
+    },
+    "2026_DES_Model/Extra/other_paper.tex": {
+      "checksum": "bd811fbd43363b99134c994b3e0001e0"
+    },
+    "2026_DES_Model/Extra/Wavelet Transform.tex": {
+      "checksum": "1a828105a44ba98f6445362608038d41"
+    },
+    "2026_DES_Model/figure1.jpeg": {
+      "checksum": "bf4cda044b34ec1d9339040bd3f1ff22"
+    },
+    "2026_DES_Model/figure1.png": {
+      "checksum": "849692a7142b527c41ed1c20a5ca8984"
+    },
+    "2026_DES_Model/figure1_1.jpeg": {
+      "checksum": "51e31eb9905589896931efe04fe141d6"
+    },
+    "2026_DES_Model/Flow.pdf": {
+      "checksum": "a87877976375c4a895cca389d5dedad3"
+    },
+    "2026_DES_Model/Hospital_flow.pdf": {
+      "checksum": "b08780eb20d6d564488b6fc6dfee1c85"
+    },
+    "2026_DES_Model/main - Copy.pdf": {
+      "checksum": "814241e94e77431ab4825399f6a0b984"
+    },
+    "2026_DES_Model/main.aux": {
+      "checksum": "cd90a87fe313039db825fa7120af1ceb"
+    },
+    "2026_DES_Model/main.bbl": {
+      "checksum": "80ef6aec3a5b5c94f33407188d32a085"
+    },
+    "2026_DES_Model/main.blg": {
+      "checksum": "e76b0d439a4eade8e455aaec7424ad8a"
+    },
+    "2026_DES_Model/main.log": {
+      "checksum": "c6672c4bc627e26f7ba710d31c263da9"
+    },
+    "2026_DES_Model/main.out": {
+      "checksum": "177112b50def484517cefeb7e4a094b8"
+    },
+    "2026_DES_Model/main.pdf": {
+      "checksum": "814241e94e77431ab4825399f6a0b984"
+    },
+    "2026_DES_Model/main.synctex.gz": {
+      "checksum": "ed0625d624ac0b3a326dc5eff9db227f"
+    },
+    "2026_DES_Model/main.tex": {
+      "checksum": "47ebf7590dcd218278ab98b892640c58"
+    },
+    "2026_DES_Model/main_verify.aux": {
+      "checksum": "8cb1be078f68943822ede7378034755b"
+    },
+    "2026_DES_Model/main_verify.log": {
+      "checksum": "f225b7b1f5e5f1ff2e65d436a3d42440"
+    },
+    "2026_DES_Model/main_verify.out": {
+      "checksum": "177112b50def484517cefeb7e4a094b8"
+    },
+    "2026_DES_Model/Pathway.png": {
+      "checksum": "e597f00bfe98af7448ee9ffcffb26e2a"
+    },
+    "2026_DES_Model/references.bib": {
+      "checksum": "b879356e9ac386075c80c1d4ca7f9ba3"
     },
     "AGENTS.md": {
-      "checksum": "91756fc5f7339f84ef2b60dc46424304"
+      "checksum": "74c3a2c68b47c0139f8bd527dc4cf0f7"
     },
     "app.R": {
-      "checksum": "b09cbc751bd6c3bf3277be3ff4439c90"
+      "checksum": "d40924b6818f33543ec00c83e979f581"
     },
     "description.md": {
-      "checksum": "03ed9da0e55be03b6e24e075d8b2506b"
+      "checksum": "e14e6607ab241a90396e74757a5953d3"
     },
     "R/00_packages.R": {
-      "checksum": "481739583fa56da9e4b7ed5592b77c26"
+      "checksum": "7cc03cde2940923f5bb07ab79a0eae0a"
     },
     "R/01_config.R": {
-      "checksum": "e3e06fa5e86a17d271c9a5aa3d6551a6"
+      "checksum": "7032f9d7e228101edd7794b76728f640"
     },
     "R/app_server.R": {
-      "checksum": "2a4b3ef10667e3b174cac1f849849002"
+      "checksum": "b3fe29c06f99a366bb98272b2eed88b5"
     },
     "R/app_ui.R": {
       "checksum": "be83e46045c4da5052750f819e3ad983"
+    },
+    "R/data/baseline_civilian_profiles.csv": {
+      "checksum": "195033af4a89a94df4df01b892717a71"
     },
     "R/data/profiles_deloitte.R": {
       "checksum": "11a3ca015c6477af5ce275dd61113afa"
     },
     "R/helpers/report_functions.R": {
-      "checksum": "87bf09f01fd179043fcb1f06647cc452"
+      "checksum": "3d7e26943b23a0eac216c5bab168b1d3"
     },
     "R/helpers/simulation_metrics.R": {
-      "checksum": "103a23dc3fcf701746e211d4c901a772"
+      "checksum": "aa801a617d5fab05a7b249957f2062fc"
+    },
+    "R/modules/mod_baseline.R": {
+      "checksum": "1d941a3af7fda4cbf7da588a52bf21ca"
     },
     "R/modules/mod_profiles.R": {
-      "checksum": "469a166a075ab86c444b13607433cad8"
+      "checksum": "db8710b248c667827e6cf7cddd3c8bd0"
+    },
+    "R/simulation/baseline_flow.R": {
+      "checksum": "5235b6423f56fd0f5b6f6b5fc5146479"
     },
     "R/simulation/hospital_trajectory.R": {
-      "checksum": "4ab0b71d80325c1ecd89c23042459dca"
+      "checksum": "3b4ee807462d1596ef65f5cf6ebb6124"
+    },
+    "R/simulation/run_scenarios.R": {
+      "checksum": "02d2da2f705082d8b889031e60a62cae"
     },
     "R/ui/ui_main.R": {
-      "checksum": "7f1b47a1220887c9e77e47ea772c7ec5"
+      "checksum": "cccab451fa9caaf64be3ab52ee6ff1c3"
     },
     "R/ui/ui_sidebar.R": {
-      "checksum": "527347dcabc112eccf6bf5cb6f75f60c"
+      "checksum": "6c4dce6304b128eb1328cfe2b4cbfe6b"
     },
     "README.md": {
-      "checksum": "f06a8fbdbb181656d962e5413228ed8c"
+      "checksum": "188f0f37e9f80baf4f4b3c41fef9d60a"
     }
   },
   "users": null

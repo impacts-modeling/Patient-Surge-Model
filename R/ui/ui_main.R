@@ -169,10 +169,10 @@ build_body <- function() {
             ),
             shiny::fluidRow(
               shinydashboard::box(
-                title = "Distribution of Average Treatment/Wait Time", status = "success", solidHeader = TRUE, width = 12,
+                title = "Bed Waiting Times", status = "success", solidHeader = TRUE, width = 12,
                 collapsible = TRUE,
-                collapsed = TRUE,
-                plotly::plotlyOutput("mean_stay"), style = "overflow-x: auto;"
+                collapsed = FALSE,
+                shiny::tableOutput("bed_wait_table"), shiny::helpText("Only patients who completed their hospital trajectory are included. Means include zero waits and average replication-specific bed-request means; 95% CIs require at least two contributing replications. Results exclude unfinished patients and may understate delays. Day-zero waits include waiting before observation."), style = "overflow-x: auto;"
               )
             ),
             shiny::fluidRow(
@@ -214,4 +214,3 @@ build_body <- function() {
     )
   )
 }
-

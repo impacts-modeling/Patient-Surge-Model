@@ -13,25 +13,18 @@ if (workers > 1L) {
   future::plan(future::sequential)
 }
 
+# Interactive development defaults; final manuscript runs need a separate pilot.
+app_development_config <- list(sim_days = 45L, num_sims = 10L, simulation_seed = 2026L)
+# One exact-threshold search bank; final evaluation uses independent seeds.
 bed_search_configs <- list(
-  fast = list(
-    search_num_sims = 7L,
-    max_evaluations = 25L,
-    max_validation_evaluations = 5L,
-    minimum_step = 1L,
-    search_queue_tolerance = 1,
-    demand_safety_factor = 1.1,
-    reliability_level = 0.7,
-    search_seed = 2026L
+  development = list(
+    num_sims = 15L, max_evaluations = 45L, final_num_sims = 20L,
+    minimum_step = 1L, demand_safety_factor = 1.1,
+    reliability_level = 0.3, search_seed = 2026L
   ),
-  precise = list(
-    search_num_sims = 10L,
-    max_evaluations = 30L,
-    max_validation_evaluations = 10L,
-    minimum_step = 1L,
-    search_queue_tolerance = 0.5,
-    demand_safety_factor = 1,
-    reliability_level = 0.7,
-    search_seed = 2026L
+  paper = list(
+    num_sims = 15L, max_evaluations = 40L, final_num_sims = 20L,
+    minimum_step = 1L, demand_safety_factor = 1,
+    reliability_level = 0.3, search_seed = 2026L
   )
 )
