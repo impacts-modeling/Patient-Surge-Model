@@ -5,7 +5,7 @@ options(shiny.maxRequestSize = 50 * 1024^2)
 options(dplyr.summarise.inform = FALSE)
 
 available_cores <- future::availableCores()
-workers <- max(1L, min(4L, available_cores))
+workers <- max(1L, min(2L, available_cores))
 
 if (workers > 1L) {
   future::plan(future::multisession, workers = workers)
