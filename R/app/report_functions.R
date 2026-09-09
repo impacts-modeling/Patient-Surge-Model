@@ -214,7 +214,10 @@ add_report_table_page <- function(title, table_data, rows_per_page = 16) {
 }
 
 add_resource_plot_page <- function(resources, var = "server") {
-  plot_data <- make_resource_data(resources, var = var)
+  # Same daily-peak definition as the dashboard plot and the manuscript
+  # figures: median of daily maxima across replications, 10th-90th
+  # percentile band. See make_daily_peak_summary in simulation_metrics.R.
+  plot_data <- make_daily_peak_summary(resources, var = var)
   y_label <- switch(
     var,
     "server" = "Number of Beds Occupied",
@@ -223,17 +226,20 @@ add_resource_plot_page <- function(resources, var = "server") {
   )
   title <- switch(
     var,
-    "server" = "Average Resource Utilization Over Time",
-    "queue" = "Queue Lengths Over Time",
+    "server" = "Daily Maximum Occupied Beds",
+    "queue" = "Daily Maximum Queue Length",
     paste("Plot of", var)
   )
 
   plot_obj <- ggplot2::ggplot(
     plot_data,
-    ggplot2::aes(x = time1, y = median_val, color = resource)
+    ggplot2::aes(x = time1, y = median_val, color = resource, fill = resource)
   ) +
+    ggplot2::geom_ribbon(ggplot2::aes(ymin = lower, ymax = upper),
+                         alpha = 0.15, color = NA, na.rm = TRUE) +
     ggplot2::geom_line(linewidth = 0.9) +
-    ggplot2::labs(title = title, x = "Time (days)", y = y_label, color = "Resource") +
+    ggplot2::labs(title = title, x = "Time (days)", y = y_label, color = "Resource", fill = "Resource",
+      caption = "Median of daily maxima across replications; shaded band shows the 10th-90th percentiles.") +
     ggplot2::theme_minimal(base_size = 12) +
     ggplot2::theme(legend.position = "bottom")
 

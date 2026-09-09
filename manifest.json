@@ -2329,36 +2329,6 @@
         "RemoteSha.Version": "2.31"
       }
     },
-    "rstudioapi": {
-      "Source": "CRAN",
-      "Repository": "https://cran.rstudio.com",
-      "description": {
-        "Package": "rstudioapi",
-        "Title": "Safely Access the RStudio API",
-        "Description": "Access the RStudio API (if available) and provide informative error\n    messages when it's not.",
-        "Version": "0.19.0",
-        "Authors@R": "c(\n    person(\"Kevin\", \"Ushey\", role = c(\"aut\", \"cre\"), email = \"kevin@rstudio.com\"),\n    person(\"JJ\", \"Allaire\", role = c(\"aut\"), email = \"jj@posit.co\"),\n    person(\"Hadley\", \"Wickham\", role = c(\"aut\"), email = \"hadley@posit.co\"),\n    person(\"Gary\", \"Ritchie\", role = c(\"aut\"), email = \"gary@posit.co\"),\n    person(family = \"RStudio\", role = \"cph\")\n    )",
-        "Maintainer": "Kevin Ushey <kevin@rstudio.com>",
-        "License": "MIT + file LICENSE",
-        "URL": "https://rstudio.github.io/rstudioapi/,\nhttps://github.com/rstudio/rstudioapi",
-        "BugReports": "https://github.com/rstudio/rstudioapi/issues",
-        "Suggests": "testthat, knitr, rmarkdown, clipr, covr, curl, jsonlite, R6,\nwithr",
-        "VignetteBuilder": "knitr",
-        "Encoding": "UTF-8",
-        "Config/roxygen2/version": "8.0.0",
-        "NeedsCompilation": "no",
-        "Packaged": "2026-06-11 21:44:33 UTC; kevin",
-        "Author": "Kevin Ushey [aut, cre],\n  JJ Allaire [aut],\n  Hadley Wickham [aut],\n  Gary Ritchie [aut],\n  RStudio [cph]",
-        "Repository": "CRAN",
-        "Date/Publication": "2026-06-11 23:10:02 UTC",
-        "Built": "R 4.6.1; ; 2026-08-05 01:29:02 UTC; windows",
-        "RemoteType": "standard",
-        "RemotePkgRef": "rstudioapi",
-        "RemoteRef": "rstudioapi",
-        "RemoteRepos": "https://cran.rstudio.com",
-        "RemoteSha.Version": "0.19.0"
-      }
-    },
     "sass": {
       "Source": "CRAN",
       "Repository": "https://cran.rstudio.com",
@@ -2662,42 +2632,6 @@
         "RemoteRef": "sys",
         "RemoteRepos": "https://cran.rstudio.com",
         "RemoteSha.Version": "3.4.3"
-      }
-    },
-    "thematic": {
-      "Source": "CRAN",
-      "Repository": "https://cran.rstudio.com",
-      "description": {
-        "Package": "thematic",
-        "Title": "Unified and Automatic 'Theming' of 'ggplot2', 'lattice', and\n'base' R Graphics",
-        "Version": "0.1.8",
-        "Authors@R": "c(\n    person(\"Carson\", \"Sievert\", , \"carson@posit.co\", role = c(\"aut\", \"cre\"),\n           comment = c(ORCID = \"0000-0002-4958-2844\")),\n    person(\"Barret\", \"Schloerke\", , \"barret@posit.co\", role = \"aut\",\n           comment = c(ORCID = \"0000-0001-9986-114X\")),\n    person(\"Joe\", \"Cheng\", , \"joe@posit.co\", role = \"aut\"),\n    person(\"Posit Software, PBC\", role = c(\"cph\", \"fnd\"))\n  )",
-        "Description": "Theme 'ggplot2', 'lattice', and 'base' graphics based on a\n    few choices, including foreground color, background color, accent\n    color, and font family. Fonts that aren't available on the system, but\n    are available via download on 'Google Fonts', can be automatically\n    downloaded, cached, and registered for use with the 'showtext' and\n    'ragg' packages.",
-        "License": "MIT + file LICENSE",
-        "URL": "https://rstudio.github.io/thematic/,\nhttps://github.com/rstudio/thematic",
-        "BugReports": "https://github.com/rstudio/thematic/issues",
-        "Depends": "R (>= 3.0.0)",
-        "Imports": "farver, ggplot2 (>= 3.5.2), graphics, grDevices, grid,\nrappdirs, rlang, rstudioapi (>= 0.8), scales, utils",
-        "Suggests": "bslib, Cairo, curl, gganimate, ggiraph, htmltools, jsonlite,\nknitr, lattice, ragg, rmarkdown, shiny (>= 1.5.0), showtext,\nstats, svglite, sysfonts, systemfonts, testthat, vdiffr (>=\n1.0.0), withr",
-        "Config/Needs/check": "shinytest2, callr, sf, ggthemes, patchwork,\ngridExtra, tinytex, devtools, rversions",
-        "Config/Needs/routine": "ggrepel, r-lib/evaluate",
-        "Config/Needs/website": "GGally, RColorBrewer, patchwork,\napreshill/quillt, r-lib/evaluate",
-        "Config/testthat/edition": "3",
-        "Encoding": "UTF-8",
-        "RoxygenNote": "7.3.3",
-        "Collate": "'auto.R' 'base.R' 'cache.R' 'gfonts.R' 'ggplot.R' 'globals.R'\n'hooks.R' 'knitr.R' 'lattice.R' 'onLoad.R' 'thematic-package.R'\n'thematic-save-plot.R' 'thematic.R' 'utils.R'",
-        "NeedsCompilation": "no",
-        "Packaged": "2025-09-29 22:13:21 UTC; cpsievert",
-        "Author": "Carson Sievert [aut, cre] (ORCID:\n    <https://orcid.org/0000-0002-4958-2844>),\n  Barret Schloerke [aut] (ORCID: <https://orcid.org/0000-0001-9986-114X>),\n  Joe Cheng [aut],\n  Posit Software, PBC [cph, fnd]",
-        "Maintainer": "Carson Sievert <carson@posit.co>",
-        "Repository": "CRAN",
-        "Date/Publication": "2025-09-29 23:40:03 UTC",
-        "Built": "R 4.6.1; ; 2026-08-30 18:37:34 UTC; windows",
-        "RemoteType": "standard",
-        "RemotePkgRef": "thematic",
-        "RemoteRef": "thematic",
-        "RemoteRepos": "https://cran.rstudio.com",
-        "RemoteSha.Version": "0.1.8"
       }
     },
     "tibble": {
@@ -3115,140 +3049,461 @@
     }
   },
   "files": {
+    ".claude/scheduled_tasks.lock": {
+      "checksum": "edcffbd1a86f3cbdf253d782c65bb116"
+    },
     ".RData": {
-      "checksum": "fed933d1fe100f6bbc0feacbe6710d49"
-    },
-    "2026_DES_Model/Extra/Algorithm.tex": {
-      "checksum": "6ac2585f380326ffea0213b8d34de5fb"
-    },
-    "2026_DES_Model/Extra/extra.tex": {
-      "checksum": "020acecdac56cb91d00a818368499a9e"
-    },
-    "2026_DES_Model/Extra/main_previosversion.tex": {
-      "checksum": "df2b3c22bf5d00af526e4fb13ae15800"
-    },
-    "2026_DES_Model/Extra/MilitarMedicineFormat.tex": {
-      "checksum": "2c773b98c85fd5bb95806af64e819d53"
-    },
-    "2026_DES_Model/Extra/other_paper.tex": {
-      "checksum": "bd811fbd43363b99134c994b3e0001e0"
-    },
-    "2026_DES_Model/Extra/Wavelet Transform.tex": {
-      "checksum": "1a828105a44ba98f6445362608038d41"
-    },
-    "2026_DES_Model/figure1.jpeg": {
-      "checksum": "bf4cda044b34ec1d9339040bd3f1ff22"
-    },
-    "2026_DES_Model/figure1.png": {
-      "checksum": "849692a7142b527c41ed1c20a5ca8984"
-    },
-    "2026_DES_Model/figure1_1.jpeg": {
-      "checksum": "51e31eb9905589896931efe04fe141d6"
-    },
-    "2026_DES_Model/Flow.pdf": {
-      "checksum": "a87877976375c4a895cca389d5dedad3"
-    },
-    "2026_DES_Model/Hospital_flow.pdf": {
-      "checksum": "b08780eb20d6d564488b6fc6dfee1c85"
-    },
-    "2026_DES_Model/main - Copy.pdf": {
-      "checksum": "814241e94e77431ab4825399f6a0b984"
-    },
-    "2026_DES_Model/main.aux": {
-      "checksum": "cd90a87fe313039db825fa7120af1ceb"
-    },
-    "2026_DES_Model/main.bbl": {
-      "checksum": "80ef6aec3a5b5c94f33407188d32a085"
-    },
-    "2026_DES_Model/main.blg": {
-      "checksum": "e76b0d439a4eade8e455aaec7424ad8a"
-    },
-    "2026_DES_Model/main.log": {
-      "checksum": "c6672c4bc627e26f7ba710d31c263da9"
-    },
-    "2026_DES_Model/main.out": {
-      "checksum": "177112b50def484517cefeb7e4a094b8"
-    },
-    "2026_DES_Model/main.pdf": {
-      "checksum": "814241e94e77431ab4825399f6a0b984"
-    },
-    "2026_DES_Model/main.synctex.gz": {
-      "checksum": "ed0625d624ac0b3a326dc5eff9db227f"
-    },
-    "2026_DES_Model/main.tex": {
-      "checksum": "47ebf7590dcd218278ab98b892640c58"
-    },
-    "2026_DES_Model/main_verify.aux": {
-      "checksum": "8cb1be078f68943822ede7378034755b"
-    },
-    "2026_DES_Model/main_verify.log": {
-      "checksum": "f225b7b1f5e5f1ff2e65d436a3d42440"
-    },
-    "2026_DES_Model/main_verify.out": {
-      "checksum": "177112b50def484517cefeb7e4a094b8"
-    },
-    "2026_DES_Model/Pathway.png": {
-      "checksum": "e597f00bfe98af7448ee9ffcffb26e2a"
-    },
-    "2026_DES_Model/references.bib": {
-      "checksum": "b879356e9ac386075c80c1d4ca7f9ba3"
+      "checksum": "4c0e8d3c203d7c06b90c3b65119953fb"
     },
     "AGENTS.md": {
       "checksum": "74c3a2c68b47c0139f8bd527dc4cf0f7"
     },
     "app.R": {
-      "checksum": "d40924b6818f33543ec00c83e979f581"
+      "checksum": "a59750c1f34fe2f509328a0e633570cd"
+    },
+    "data/baseline_civilian_profiles.csv": {
+      "checksum": "9b64bc3a0b0ce94f65b80dfdddcfb2c9"
     },
     "description.md": {
       "checksum": "e14e6607ab241a90396e74757a5953d3"
     },
+    "outputs/concentration_01/cache_usage.csv": {
+      "checksum": "32c30f9c90c18bae139c648c317dc3b4"
+    },
+    "outputs/concentration_01/daily_replications.csv": {
+      "checksum": "88fb7837b7268924ddff95c607684438"
+    },
+    "outputs/concentration_01/daily_summary.csv": {
+      "checksum": "ca770fae2eee0d34f2cfa86f133537de"
+    },
+    "outputs/concentration_01/design.csv": {
+      "checksum": "09602647750d37ffd54ef727bf7485c4"
+    },
+    "outputs/concentration_01/expansion.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/concentration_01/paired_comparisons.csv": {
+      "checksum": "fd6127ba77a120d52642f5d2494b0592"
+    },
+    "outputs/concentration_01/resource_replications.csv": {
+      "checksum": "1ee784a3c2232708fd481fad83b682d3"
+    },
+    "outputs/concentration_01/resource_summary.csv": {
+      "checksum": "dee59c93ae9e7750061924ab1a90308f"
+    },
+    "outputs/concentration_01/run_metadata.csv": {
+      "checksum": "65f805b1dd0ce337144f7a38ca85a089"
+    },
+    "outputs/concentration_01/search_evaluation_history.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/concentration_01/search_final_intervals.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/concentration_01/search_final_joint_interval.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/concentration_01/search_replication_history.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/concentration_01/study.rds": {
+      "checksum": "cff036c9cbf510fc362676d84ca2590d"
+    },
+    "outputs/concentration_01/trajectories.pdf": {
+      "checksum": "f31670a1d6d28df682031168cf5457ff"
+    },
+    "outputs/concentration_01/trajectories.png": {
+      "checksum": "1a0929524f26bc7f13e6c8ce8bbe82e2"
+    },
+    "outputs/concentration_01/wait_replications.csv": {
+      "checksum": "90eac281990b922460c350b5a64f4201"
+    },
+    "outputs/concentration_01/wait_summary.csv": {
+      "checksum": "e2ae67a990413fa589dd6b35b123725a"
+    },
+    "outputs/concentration_01/warmup_diagnostics.csv": {
+      "checksum": "45ea618e62a9bca3d398d0af6e4708ab"
+    },
+    "outputs/main/cache_usage.csv": {
+      "checksum": "90814299cf2f0ebeb58c63cad5a6516b"
+    },
+    "outputs/main/daily_replications.csv": {
+      "checksum": "c18d1e9303987850a78d4ba1ab1338ee"
+    },
+    "outputs/main/daily_summary.csv": {
+      "checksum": "5453f37b5bb5f76523e53ce7eb817d3a"
+    },
+    "outputs/main/design.csv": {
+      "checksum": "dcecad491b73a7cb03f214894ef6998a"
+    },
+    "outputs/main/expansion.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/main/paired_comparisons.csv": {
+      "checksum": "4944b7955ca76a6ecb39a1ef85b7575e"
+    },
+    "outputs/main/resource_replications.csv": {
+      "checksum": "20c0d3b05cea803f80e2d41afccf238b"
+    },
+    "outputs/main/resource_summary.csv": {
+      "checksum": "cf4f971270d7035f8700dc2919c5f9b5"
+    },
+    "outputs/main/run_metadata.csv": {
+      "checksum": "bdaf291dfdf5dccf5e153990ae1a7703"
+    },
+    "outputs/main/search_evaluation_history.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/main/search_final_intervals.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/main/search_final_joint_interval.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/main/search_replication_history.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/main/study.rds": {
+      "checksum": "4337929b091bf7ff9bfe40fb664b7108"
+    },
+    "outputs/main/trajectories.pdf": {
+      "checksum": "2716ad602460b893f69cf09a4707e577"
+    },
+    "outputs/main/trajectories.png": {
+      "checksum": "b554f46a239c8d288b02f4c704975da5"
+    },
+    "outputs/main/wait_replications.csv": {
+      "checksum": "bb9b1dd285e7c2755d53c1cbda056e6a"
+    },
+    "outputs/main/wait_summary.csv": {
+      "checksum": "e81fd371726e119f6f5662e3205eb9bd"
+    },
+    "outputs/main/warmup_diagnostics.csv": {
+      "checksum": "c750daedcb35f24380ce622ee4248899"
+    },
+    "outputs/scenario_cache/12059d19ac0e0dc3639c5ea51b30580d_raw.rds": {
+      "checksum": "a3900747937200b10586ca90369f2a44"
+    },
+    "outputs/scenario_cache/12059d19ac0e0dc3639c5ea51b30580d_summary.rds": {
+      "checksum": "9f785fd33b4924ff0a125749ceac593f"
+    },
+    "outputs/scenario_cache/43152d33df103d009b358f5a75b106c4_raw.rds": {
+      "checksum": "4ef3430a1911ed01244c2a10a2e31f2e"
+    },
+    "outputs/scenario_cache/43152d33df103d009b358f5a75b106c4_summary.rds": {
+      "checksum": "56ddd4ecbcc18f7390a989fdbe459eb0"
+    },
+    "outputs/scenario_cache/4c55d231208413866b56ce98c73432f9_raw.rds": {
+      "checksum": "4ef3430a1911ed01244c2a10a2e31f2e"
+    },
+    "outputs/scenario_cache/4c55d231208413866b56ce98c73432f9_summary.rds": {
+      "checksum": "04a1365da49f7acceaa0f76eaabfa04f"
+    },
+    "outputs/scenario_cache/51b64d849ec2842425a2ce47391ea6d8_raw.rds": {
+      "checksum": "3d32f068ba527ee377263c4d282189bf"
+    },
+    "outputs/scenario_cache/51b64d849ec2842425a2ce47391ea6d8_summary.rds": {
+      "checksum": "c81b56aab57a0957eeac01ea65dd0e6c"
+    },
+    "outputs/scenario_cache/586c2dec4d725ac3f7ff13710c14080d_raw.rds": {
+      "checksum": "c16b491d4120e58476b827c0784a7feb"
+    },
+    "outputs/scenario_cache/586c2dec4d725ac3f7ff13710c14080d_summary.rds": {
+      "checksum": "217c4b5aaa4f6faf2fdb43c2349e9eb8"
+    },
+    "outputs/scenario_cache/60b70de41c3753f51d481ab2ea30e567_raw.rds": {
+      "checksum": "3d32f068ba527ee377263c4d282189bf"
+    },
+    "outputs/scenario_cache/60b70de41c3753f51d481ab2ea30e567_summary.rds": {
+      "checksum": "bbad229ada6dfecbc46507fe0b70be0c"
+    },
+    "outputs/scenario_cache/88c1877e53bb0223ce8ea944dbaa4bd5_raw.rds": {
+      "checksum": "a3900747937200b10586ca90369f2a44"
+    },
+    "outputs/scenario_cache/88c1877e53bb0223ce8ea944dbaa4bd5_summary.rds": {
+      "checksum": "51b6300af5a61f6e92efd1c07a2e60b6"
+    },
+    "outputs/scenario_cache/8c0c29826cb8ba77af4644512d34d633_raw.rds": {
+      "checksum": "8a21d3160dbe70510dcf74b1d3ef093d"
+    },
+    "outputs/scenario_cache/8c0c29826cb8ba77af4644512d34d633_summary.rds": {
+      "checksum": "6558ada21a27800ec81e3000cc8d1798"
+    },
+    "outputs/scenario_cache/9770efcd3f8f4c763bfb04b6f0f2a3df_raw.rds": {
+      "checksum": "a3900747937200b10586ca90369f2a44"
+    },
+    "outputs/scenario_cache/9770efcd3f8f4c763bfb04b6f0f2a3df_summary.rds": {
+      "checksum": "af076fa3f8f6eda4bb95211951e22df6"
+    },
+    "outputs/scenario_cache/9e42f85b3ac3df631129f7da18000096_raw.rds": {
+      "checksum": "be5f24420da5d8d3fe608028cf6d4627"
+    },
+    "outputs/scenario_cache/9e42f85b3ac3df631129f7da18000096_summary.rds": {
+      "checksum": "06f5601c802ae5e9c2e41248a842a921"
+    },
+    "outputs/scenario_cache/a921f8aab28fdae9979fb1c98fdbdde6_raw.rds": {
+      "checksum": "c16b491d4120e58476b827c0784a7feb"
+    },
+    "outputs/scenario_cache/a921f8aab28fdae9979fb1c98fdbdde6_summary.rds": {
+      "checksum": "a7332fe2b35cea76919c76dc7861b64f"
+    },
+    "outputs/scenario_cache/af76a868704ca4781d825cf206251bd1_raw.rds": {
+      "checksum": "1c60d8b7a04f62f00cb0d9610b8dded0"
+    },
+    "outputs/scenario_cache/af76a868704ca4781d825cf206251bd1_summary.rds": {
+      "checksum": "844fde2b1109af408d5edc671f8490cb"
+    },
+    "outputs/scenario_cache/ba18092a5cb0e5d202034457b469ba11_raw.rds": {
+      "checksum": "a2a7e0b7a27b41f8a2b23cb1fed76ade"
+    },
+    "outputs/scenario_cache/ba18092a5cb0e5d202034457b469ba11_summary.rds": {
+      "checksum": "b70f99de6094495864c972600902f667"
+    },
+    "outputs/scenario_cache/bd78f7587899b8c1d242d103e2444b99_raw.rds": {
+      "checksum": "3d32f068ba527ee377263c4d282189bf"
+    },
+    "outputs/scenario_cache/bd78f7587899b8c1d242d103e2444b99_summary.rds": {
+      "checksum": "03dc1e3996bba7c008399888903c10d2"
+    },
+    "outputs/scenario_cache/bfe1f8eb2f83f8fafe95a9be2dcd3468_raw.rds": {
+      "checksum": "4ef3430a1911ed01244c2a10a2e31f2e"
+    },
+    "outputs/scenario_cache/bfe1f8eb2f83f8fafe95a9be2dcd3468_summary.rds": {
+      "checksum": "3152b652b622baddd013cf3ad3e00514"
+    },
+    "outputs/scenario_cache/c4fd038a34beae46f55b41824360d602_raw.rds": {
+      "checksum": "1c60d8b7a04f62f00cb0d9610b8dded0"
+    },
+    "outputs/scenario_cache/c4fd038a34beae46f55b41824360d602_summary.rds": {
+      "checksum": "628e80e8de4a1f2351ca1d205c031d19"
+    },
+    "outputs/scenario_cache/d4d002ec255aab7df480f603b2709d84_raw.rds": {
+      "checksum": "4ef3430a1911ed01244c2a10a2e31f2e"
+    },
+    "outputs/scenario_cache/d4d002ec255aab7df480f603b2709d84_summary.rds": {
+      "checksum": "e22f72a7c2b88381f0393d347aa93102"
+    },
+    "outputs/scenario_cache/dde6ad106cc55c3a304bec6f9442dd6e_raw.rds": {
+      "checksum": "1c60d8b7a04f62f00cb0d9610b8dded0"
+    },
+    "outputs/scenario_cache/dde6ad106cc55c3a304bec6f9442dd6e_summary.rds": {
+      "checksum": "cadb065395a537a3e208404a6204f792"
+    },
+    "outputs/scenario_cache/de9dfcf8d95cde8db71241b303310850_raw.rds": {
+      "checksum": "be5f24420da5d8d3fe608028cf6d4627"
+    },
+    "outputs/scenario_cache/de9dfcf8d95cde8db71241b303310850_summary.rds": {
+      "checksum": "9c633315b351f893f8705976f6270113"
+    },
+    "outputs/scenario_cache/e7f781742f6382acf3aaf415843878d9_raw.rds": {
+      "checksum": "a2a7e0b7a27b41f8a2b23cb1fed76ade"
+    },
+    "outputs/scenario_cache/e7f781742f6382acf3aaf415843878d9_summary.rds": {
+      "checksum": "0f850d7c2c4b22976383782e0661e0b3"
+    },
+    "outputs/scenario_cache/e8c804fa853b8fea9bc63f83c55aeb80_raw.rds": {
+      "checksum": "8a21d3160dbe70510dcf74b1d3ef093d"
+    },
+    "outputs/scenario_cache/e8c804fa853b8fea9bc63f83c55aeb80_summary.rds": {
+      "checksum": "9f958f179af22c1d8ebdb75364907d1c"
+    },
+    "outputs/scenario_cache/f2949f35de68c24e24fbde07ec541eaf_raw.rds": {
+      "checksum": "a3900747937200b10586ca90369f2a44"
+    },
+    "outputs/scenario_cache/f2949f35de68c24e24fbde07ec541eaf_summary.rds": {
+      "checksum": "2c0c5c1e2d29d03b8c3c900b36f1ed92"
+    },
+    "outputs/volume_01/cache_usage.csv": {
+      "checksum": "aae546dfa4d0ba8743971ff206a758a1"
+    },
+    "outputs/volume_01/daily_replications.csv": {
+      "checksum": "1376071da81a768077aa5e4abd93f1fb"
+    },
+    "outputs/volume_01/daily_summary.csv": {
+      "checksum": "24a0c735b3d6479b817cb8b0103aad4c"
+    },
+    "outputs/volume_01/design.csv": {
+      "checksum": "319b5ff67efc654d1b3d7e1ac432c729"
+    },
+    "outputs/volume_01/expansion.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/volume_01/paired_comparisons.csv": {
+      "checksum": "f2efd5ff09f6d94e0dadf3f8b9e3e769"
+    },
+    "outputs/volume_01/resource_replications.csv": {
+      "checksum": "343f35840c0866619907c9d7be556f97"
+    },
+    "outputs/volume_01/resource_summary.csv": {
+      "checksum": "149180ce0f4b58d0748acab24bde802f"
+    },
+    "outputs/volume_01/run_metadata.csv": {
+      "checksum": "484d269920901a9f18abea12c650eec9"
+    },
+    "outputs/volume_01/search_evaluation_history.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/volume_01/search_final_intervals.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/volume_01/search_final_joint_interval.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/volume_01/search_replication_history.csv": {
+      "checksum": "0ae9bcd0c0b0aa5aab99d84beca26ce8"
+    },
+    "outputs/volume_01/study.rds": {
+      "checksum": "7cb63613a8259ba64feb1bc141a429d6"
+    },
+    "outputs/volume_01/trajectories.pdf": {
+      "checksum": "9b24c5cc9892a977b17fa775fa753622"
+    },
+    "outputs/volume_01/trajectories.png": {
+      "checksum": "feb145d264640d0687fd7adf6404a656"
+    },
+    "outputs/volume_01/wait_replications.csv": {
+      "checksum": "de35868367356aebe4f694a838fc7f02"
+    },
+    "outputs/volume_01/wait_summary.csv": {
+      "checksum": "cc7fc7214bac8929ff631f8517b9006d"
+    },
+    "outputs/volume_01/warmup_diagnostics.csv": {
+      "checksum": "e24aed6ac1b44c017078a57ba498e277"
+    },
+    "paper/benchmark_initialization.R": {
+      "checksum": "894bc9b4f3f5ebc086492b692b289f13"
+    },
+    "paper/manuscript/figure1.jpeg": {
+      "checksum": "bf4cda044b34ec1d9339040bd3f1ff22"
+    },
+    "paper/manuscript/figure1.png": {
+      "checksum": "849692a7142b527c41ed1c20a5ca8984"
+    },
+    "paper/manuscript/figure1_1.jpeg": {
+      "checksum": "51e31eb9905589896931efe04fe141d6"
+    },
+    "paper/manuscript/Flow.pdf": {
+      "checksum": "a87877976375c4a895cca389d5dedad3"
+    },
+    "paper/manuscript/Hospital_flow.pdf": {
+      "checksum": "b08780eb20d6d564488b6fc6dfee1c85"
+    },
+    "paper/manuscript/legacy_figures/data/hospital_civilian_only_2026-09-07.rds": {
+      "checksum": "3e449fe4c53eabc456a03cc95e8b3585"
+    },
+    "paper/manuscript/legacy_figures/Patien_trajectory_improved.R": {
+      "checksum": "f8bc47c088ed8cfecbe7c831d1ed19f2"
+    },
+    "paper/manuscript/legacy_figures/save_figs.R": {
+      "checksum": "79cb364fce62f888af827a84aadbaacd"
+    },
+    "paper/manuscript/main - Copy.pdf": {
+      "checksum": "814241e94e77431ab4825399f6a0b984"
+    },
+    "paper/manuscript/main.aux": {
+      "checksum": "7f0955c3a78a56a75d892bcc35a69e5b"
+    },
+    "paper/manuscript/main.bbl": {
+      "checksum": "80ef6aec3a5b5c94f33407188d32a085"
+    },
+    "paper/manuscript/main.blg": {
+      "checksum": "e76b0d439a4eade8e455aaec7424ad8a"
+    },
+    "paper/manuscript/main.log": {
+      "checksum": "dc7c58848e60068656bacd44a50b15be"
+    },
+    "paper/manuscript/main.out": {
+      "checksum": "bb423b7429c7496aaa693ea3de486cc3"
+    },
+    "paper/manuscript/main.pdf": {
+      "checksum": "8fc649b61b6724edde1f8ce8d8b307de"
+    },
+    "paper/manuscript/main.synctex.gz": {
+      "checksum": "d170e377e76b01ec4a57a7e8ad79e342"
+    },
+    "paper/manuscript/main.tex": {
+      "checksum": "ca339d20ac73ec2fde55153bafe32d2c"
+    },
+    "paper/manuscript/main_verify.aux": {
+      "checksum": "8cb1be078f68943822ede7378034755b"
+    },
+    "paper/manuscript/main_verify.log": {
+      "checksum": "f225b7b1f5e5f1ff2e65d436a3d42440"
+    },
+    "paper/manuscript/main_verify.out": {
+      "checksum": "177112b50def484517cefeb7e4a094b8"
+    },
+    "paper/manuscript/Pathway.png": {
+      "checksum": "e597f00bfe98af7448ee9ffcffb26e2a"
+    },
+    "paper/manuscript/references.bib": {
+      "checksum": "b879356e9ac386075c80c1d4ca7f9ba3"
+    },
+    "paper/README.md": {
+      "checksum": "45a45969aa497b8f82ad12c5bac09231"
+    },
+    "paper/run_light_studies.R": {
+      "checksum": "094f9af385a1e1b8e6ec18f225d4afb1"
+    },
+    "paper/run_manuscript_scenarios.R": {
+      "checksum": "96ee6b365087f986f29aab8d9fff573e"
+    },
     "R/00_packages.R": {
-      "checksum": "7cc03cde2940923f5bb07ab79a0eae0a"
+      "checksum": "dd82051c784da0ec974808461d8201aa"
     },
     "R/01_config.R": {
-      "checksum": "7032f9d7e228101edd7794b76728f640"
+      "checksum": "219def947a502728621cfd9d102794d3"
     },
-    "R/app_server.R": {
-      "checksum": "b3fe29c06f99a366bb98272b2eed88b5"
+    "R/app/app_server.R": {
+      "checksum": "5096c60f41a812d6af95618b26c9d819"
     },
-    "R/app_ui.R": {
+    "R/app/app_ui.R": {
       "checksum": "be83e46045c4da5052750f819e3ad983"
     },
-    "R/data/baseline_civilian_profiles.csv": {
-      "checksum": "195033af4a89a94df4df01b892717a71"
+    "R/app/mod_baseline.R": {
+      "checksum": "246614d6707c506ec49569464b6b5f64"
     },
-    "R/data/profiles_deloitte.R": {
-      "checksum": "11a3ca015c6477af5ce275dd61113afa"
+    "R/app/mod_profiles.R": {
+      "checksum": "cdd5f7d38199e38031b7ef733836f3f7"
     },
-    "R/helpers/report_functions.R": {
-      "checksum": "3d7e26943b23a0eac216c5bab168b1d3"
+    "R/app/report_functions.R": {
+      "checksum": "d05c6ccc168eac9b27aed9e0130d19b3"
     },
-    "R/helpers/simulation_metrics.R": {
-      "checksum": "aa801a617d5fab05a7b249957f2062fc"
+    "R/app/ui_main.R": {
+      "checksum": "f7f3447a3e406eea77d77f9ca6c462a3"
     },
-    "R/modules/mod_baseline.R": {
-      "checksum": "1d941a3af7fda4cbf7da588a52bf21ca"
+    "R/app/ui_sidebar.R": {
+      "checksum": "5d09823e9a83c1c2996768c624587015"
     },
-    "R/modules/mod_profiles.R": {
-      "checksum": "db8710b248c667827e6cf7cddd3c8bd0"
+    "R/core/baseline_flow.R": {
+      "checksum": "e685c22b24237f81e7ec937c31718798"
     },
-    "R/simulation/baseline_flow.R": {
-      "checksum": "5235b6423f56fd0f5b6f6b5fc5146479"
+    "R/core/hospital_trajectory.R": {
+      "checksum": "635ec12b0ad560e03802673681c99b70"
     },
-    "R/simulation/hospital_trajectory.R": {
-      "checksum": "3b4ee807462d1596ef65f5cf6ebb6124"
+    "R/core/run_scenarios.R": {
+      "checksum": "15a8b31fd40463a95e49fa39c515dbb4"
     },
-    "R/simulation/run_scenarios.R": {
-      "checksum": "02d2da2f705082d8b889031e60a62cae"
+    "R/shared/profiles_deloitte.R": {
+      "checksum": "825acd959e36fb10c5e9ab6103c54683"
     },
-    "R/ui/ui_main.R": {
-      "checksum": "cccab451fa9caaf64be3ab52ee6ff1c3"
-    },
-    "R/ui/ui_sidebar.R": {
-      "checksum": "6c4dce6304b128eb1328cfe2b4cbfe6b"
+    "R/shared/simulation_metrics.R": {
+      "checksum": "a6b363a3b28fead00d76d9ae9082518f"
     },
     "README.md": {
-      "checksum": "188f0f37e9f80baf4f4b3c41fef9d60a"
+      "checksum": "c2c6f5a9f3cc745465bdde1f8cd2a4ab"
+    },
+    "tests/benchmark_performance.R": {
+      "checksum": "9f8ddb5e249a9e67ea052a5f7be4a983"
+    },
+    "tests/test_development.R": {
+      "checksum": "b7ce483c57a4bea653a7d1bb8404f59e"
+    },
+    "tests/test_manuscript_scenarios.R": {
+      "checksum": "1775918d3b4b2b94d5851ea633aa7e3f"
+    },
+    "tests/test_unified_search.R": {
+      "checksum": "36b0e5774a157852ab172df8451350be"
     }
   },
   "users": null

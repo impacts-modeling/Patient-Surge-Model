@@ -63,6 +63,30 @@ with_simulation_seed <- function(seed, code) {
   force(code)
 }
 
+# Deterministic per-index RNG streams. Replication i draws the same numbers
+# whether it runs alone, in a full batch, or as part of any other grouping,
+# so stopping a search early never changes what the replications that do
+# run actually drew.
+make_replication_stream_seeds <- function(n, seed) {
+  previous_kind <- RNGkind()
+  had_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  if (had_seed) previous_seed <- get(".Random.seed", envir = .GlobalEnv)
+  on.exit({
+    do.call(RNGkind, as.list(previous_kind))
+    if (had_seed) assign(".Random.seed", previous_seed, envir = .GlobalEnv)
+    else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE))
+      rm(".Random.seed", envir = .GlobalEnv)
+  })
+  set.seed(seed, kind = "L'Ecuyer-CMRG")
+  state <- .Random.seed
+  seeds <- vector("list", n)
+  for (index in seq_len(n)) {
+    seeds[[index]] <- state
+    state <- parallel::nextRNGStream(state)
+  }
+  seeds
+}
+
 make_arrival_times <- function(rate, until, process = c("even", "poisson")) {
   process <- match.arg(process)
   stopifnot(length(rate) == 1L, is.finite(rate), rate >= 0,
@@ -605,6 +629,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
                           baseline = NULL, warmup_capacities = capacities,
                           arrival_process = "even", final_num_sims = 50L,
                           initialization = c("analytical", "incremental")) {
+  optimization_started <- proc.time()[["elapsed"]]
   # reliability_level is the required proportion of joint peak-compliant runs.
   # One fixed replication bank and exact queue limits for all candidate selection.
   # The independent final bank is never used to tune capacity.
@@ -711,15 +736,55 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       n_patients = n_patients, sim_days = sim_days, patient_profiles = patient_profiles,
       profile_prob = profile_prob, fallbacks = fallbacks, baseline = baseline,
       warmup_capacities = warmup_capacities, arrival_process = arrival_process)
-    resources <- future.apply::future_lapply(
-      seq_len(replications), capacity_replication,
-      simulation_args = simulation_args, units = c("GenMed", "ICU"),
-      future.globals = worker_dependencies$globals,
-      future.packages = worker_dependencies$packages,
-      future.seed = evaluation_seed,
-      future.chunk.size = replication_chunk_size(replications)
-    ) |>
-      dplyr::bind_rows()
+    thresholds <- c(GenMed = congestion_index_opt, ICU = congestion_index_opt_ICU)
+
+    run_batch <- function(batch_ids, batch_seed) {
+      future.apply::future_lapply(
+        batch_ids, capacity_replication,
+        simulation_args = simulation_args, units = c("GenMed", "ICU"),
+        future.globals = worker_dependencies$globals,
+        future.packages = worker_dependencies$packages,
+        future.seed = batch_seed,
+        future.chunk.size = replication_chunk_size(length(batch_ids))
+      ) |>
+        dplyr::bind_rows()
+    }
+    joint_successes_among <- function(rows) {
+      by_unit <- split(rows[c("replication", "maximum_queue")], rows$resource)
+      merged <- merge(by_unit[["GenMed"]], by_unit[["ICU"]], by = "replication",
+                       suffixes = c("_GenMed", "_ICU"))
+      sum(merged$maximum_queue_GenMed <= thresholds[["GenMed"]] &
+            merged$maximum_queue_ICU <= thresholds[["ICU"]])
+    }
+
+    required_successes <- ceiling(reliability_level * replications)
+    if (stage == "search") {
+      # Batches run in increasing chunks so the loop can stop as soon as the
+      # joint accept/reject decision is already sealed; replications that
+      # never run could not have changed it either way. Per-index streams
+      # (above) make this exactly reproducible for whichever replications do run.
+      stream_seeds <- make_replication_stream_seeds(replications, evaluation_seed)
+      batch_size <- max(1L, workers)
+      evaluated_replications <- 0L
+      resource_batches <- list()
+      repeat {
+        remaining <- replications - evaluated_replications
+        if (remaining <= 0L) break
+        take <- min(batch_size, remaining)
+        batch_ids <- seq.int(evaluated_replications + 1L, evaluated_replications + take)
+        resource_batches[[length(resource_batches) + 1L]] <-
+          run_batch(batch_ids, stream_seeds[batch_ids])
+        evaluated_replications <- evaluated_replications + take
+        successes_so_far <- joint_successes_among(dplyr::bind_rows(resource_batches))
+        remaining <- replications - evaluated_replications
+        if (successes_so_far >= required_successes ||
+            successes_so_far + remaining < required_successes) break
+      }
+      resources <- dplyr::bind_rows(resource_batches)
+    } else {
+      evaluated_replications <- replications
+      resources <- run_batch(seq_len(replications), evaluation_seed)
+    }
 
     maximum_occupancy <- stats::setNames(
       vapply(c("GenMed", "ICU"), function(unit_name) {
@@ -733,7 +798,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     queue_for <- function(unit_name, column = "maximum_queue") {
       unit_rows <- resources[resources$resource == unit_name, , drop = FALSE]
       replications_found <- unit_rows$replication
-      expected_replications <- seq_len(replications)
+      expected_replications <- seq_len(evaluated_replications)
       missing_replications <- setdiff(expected_replications, replications_found)
       unexpected_replications <- setdiff(replications_found, expected_replications)
 
@@ -747,7 +812,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
               "found %d. Missing: %s. Unexpected: %s."
             ),
             unit_name,
-            replications,
+            evaluated_replications,
             length(unique(replications_found)),
             if (length(missing_replications) == 0) "none" else paste(missing_replications, collapse = ", "),
             if (length(unexpected_replications) == 0) "none" else paste(unexpected_replications, collapse = ", ")
@@ -759,16 +824,12 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       unit_rows[[column]][match(expected_replications, replications_found)]
     }
     queue_matrix <- data.frame(
-      replication = seq_len(replications),
+      replication = seq_len(evaluated_replications),
       GenMed = queue_for("GenMed"),
       ICU = queue_for("ICU"),
       check.names = FALSE
     )
 
-    thresholds <- c(
-      GenMed = congestion_index_opt,
-      ICU = congestion_index_opt_ICU
-    )
     unit_pass <- data.frame(
       GenMed = queue_matrix$GenMed <= thresholds[["GenMed"]],
       ICU = queue_matrix$ICU <= thresholds[["ICU"]]
@@ -778,7 +839,10 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       GenMed = sum(unit_pass$GenMed),
       ICU = sum(unit_pass$ICU)
     )
-    unit_reliability <- unit_successful_replications / replications
+    # Observed proportion among replications actually run. When a search
+    # evaluation stops early this is the honest evidence available; the
+    # accept/reject decision below still uses the full target count.
+    unit_reliability <- unit_successful_replications / evaluated_replications
     # Acceptance counts simultaneous maximum-queue compliance. Retain
     # mean queues as complementary diagnostics over the same observation horizon.
     mean_queues <- c(GenMed = mean(queue_for("GenMed", "mean_queue")),
@@ -794,20 +858,21 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       reliability = safe_mean(as.numeric(joint_pass)),
       successful_replications = sum(joint_pass),
       unit_successful_replications = unit_successful_replications,
-      replications = replications,
+      replications = evaluated_replications,
       thresholds = thresholds,
-      passes = sum(joint_pass) >= ceiling(reliability_level * replications)
+      passes = sum(joint_pass) >= required_successes
     )
     evaluation_id <- length(evaluation_history) + 1L
     evaluation_history[[evaluation_id]] <<- data.frame(
       evaluation_id = evaluation_id, stage = stage, stage_evaluation = stage_evaluation,
-      seed = evaluation_seed, replications = replications,
+      seed = evaluation_seed, replications = evaluated_replications,
+      target_replications = replications,
       GenMed = candidate[["GenMed"]], ICU = candidate[["ICU"]],
       added_beds = sum(candidate - initial_capacities),
       GenMed_threshold = thresholds[["GenMed"]], ICU_threshold = thresholds[["ICU"]],
       acceptance_criterion = "joint_maximum_queue_GenMed_ICU",
       reliability_target = reliability_level,
-      required_successes = ceiling(reliability_level * replications),
+      required_successes = required_successes,
       GenMed_mean_queue = mean_queues[["GenMed"]], ICU_mean_queue = mean_queues[["ICU"]],
       GenMed_mcse = mean_intervals$mcse[match("GenMed", mean_intervals$resource)],
       ICU_mcse = mean_intervals$mcse[match("ICU", mean_intervals$resource)],
@@ -1122,7 +1187,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     )
   }
 
-  list(
+  optimization_result <- list(
     avg_congestion_index_GenMed = result$queues[["GenMed"]],
     avg_congestion_index_ICU = result$queues[["ICU"]],
     reliability_GenMed = result$unit_reliability[["GenMed"]],
@@ -1188,4 +1253,13 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     refinement_complete = frontier_complete,
     search_complete = isTRUE(result$passes)
   )
+  # Wall-clock duration includes setup, all candidate evaluations and holdout.
+  optimization_result$optimization_elapsed_seconds <-
+    proc.time()[["elapsed"]] - optimization_started
+  if (verbose) {
+    cat(sprintf("Total optimization time: %.2f seconds (%.2f minutes).\n",
+      optimization_result$optimization_elapsed_seconds,
+      optimization_result$optimization_elapsed_seconds / 60))
+  }
+  optimization_result
 }

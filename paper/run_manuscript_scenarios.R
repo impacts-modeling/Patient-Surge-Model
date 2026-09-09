@@ -4,9 +4,9 @@ load_study_functions <- function(project_dir = ".", envir = parent.frame()) {
   required <- c("simmer", "future.apply", "dplyr", "tidyr", "ggplot2")
   missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
   if (length(missing)) stop("Install required packages: ", paste(missing, collapse = ", "))
-  for (file in c("R/helpers/simulation_metrics.R", "R/simulation/hospital_trajectory.R",
-                 "R/simulation/baseline_flow.R", "R/simulation/run_scenarios.R",
-                 "R/data/profiles_deloitte.R")) {
+  for (file in c("R/shared/simulation_metrics.R", "R/core/hospital_trajectory.R",
+                 "R/core/baseline_flow.R", "R/core/run_scenarios.R",
+                 "R/shared/profiles_deloitte.R")) {
     sys.source(file.path(project_dir, file), envir = envir)
   }
   invisible(TRUE)
@@ -14,7 +14,7 @@ load_study_functions <- function(project_dir = ".", envir = parent.frame()) {
 
 make_study_config <- function(project_dir = ".",
                               capacities = c(ICU = 84, GenMed = 405, Surge = 15),
-                              civilian_file = file.path(project_dir, "R/data/baseline_civilian_profiles.csv"),
+                              civilian_file = file.path(project_dir, "data/baseline_civilian_profiles.csv"),
                               sim_days = 45, num_sims = 10L, seed = 2026L,
                               warmup = list(), search = list(), mode = c("paper", "development")) {
   mode <- match.arg(mode)
@@ -60,9 +60,9 @@ study_fingerprint <- function(object) {
 }
 
 study_engine_signature <- function(study) {
-  files <- file.path(study$project_dir, c("R/helpers/simulation_metrics.R",
-    "R/simulation/hospital_trajectory.R", "R/simulation/baseline_flow.R",
-    "R/simulation/run_scenarios.R"))
+  files <- file.path(study$project_dir, c("R/shared/simulation_metrics.R",
+    "R/core/hospital_trajectory.R", "R/core/baseline_flow.R",
+    "R/core/run_scenarios.R"))
   # Fingerprint loaded function definitions, not files that another editor can
   # change while this R session is still executing the previously loaded code.
   names <- unique(unlist(lapply(files, function(file) {
@@ -144,18 +144,18 @@ summarize_study_runs <- function(runs) {
     dplyr::group_modify(function(rows, key) study_mean_interval(rows$value)) |>
     dplyr::ungroup()
   waits <- lapply(runs, bed_wait_summary)
+  # Same daily-peak definition as the dashboard plot (make_resource_plot):
+  # one maximum per scenario/resource/replication/day, then the median and
+  # 10th-90th percentile band across replications. These are daily peaks,
+  # not daily means, and the band is between-replication spread, not a CI.
   daily <- dplyr::bind_rows(lapply(c("server", "queue"), function(variable) {
-    # Retain daily replication means before calculating Monte Carlo intervals.
-    dplyr::bind_rows(lapply(split(resources, interaction(resources$scenario_id, resources$replication,
-                                                         drop = TRUE)), function(rows) {
-      make_resource_summary(rows, variable) |>
-        dplyr::mutate(replication = rows$replication[1], metric = variable)
-    }))
+    daily_peak_by_replication(resources, variable) |>
+      dplyr::mutate(metric = variable)
   }))
-  daily_summary <- daily |>
-    dplyr::group_by(.data$scenario_id, .data$resource, .data$metric, .data$time1) |>
-    dplyr::group_modify(function(rows, key) study_mean_interval(rows$median_val)) |>
-    dplyr::ungroup()
+  daily_summary <- dplyr::bind_rows(lapply(c("server", "queue"), function(variable) {
+    make_daily_peak_summary(resources, var = variable) |>
+      dplyr::mutate(metric = variable)
+  }))
   list(resource_replications = metrics, resource_summary = summary,
        daily_replications = daily, daily_summary = daily_summary,
        wait_summary = dplyr::bind_rows(lapply(waits, `[[`, "summary")),
@@ -172,14 +172,16 @@ make_study_figures <- function(tables) {
                   setdiff(unique(daily$resource), c("GenMed", "ICU", "Surge")))
   daily$resource <- factor(daily$resource, levels = unit_order)
   figures <- list(trajectories = ggplot2::ggplot(daily,
-    ggplot2::aes(x = .data$time1 - 0.5, y = .data$mean, color = .data$scenario_id,
+    ggplot2::aes(x = .data$time1 - 0.5, y = .data$median_val, color = .data$scenario_id,
                  fill = .data$scenario_id)) +
     ggplot2::geom_ribbon(ggplot2::aes(ymin = .data$lower, ymax = .data$upper),
                          alpha = 0.12, color = NA, na.rm = TRUE) +
     ggplot2::geom_line() + ggplot2::facet_wrap(ggplot2::vars(measure, resource),
                                              ncol = length(unit_order), scales = "free_y") +
     ggplot2::labs(x = "Days after surge onset (daily interval midpoint)", y = NULL,
-      color = "Scenario", fill = "Scenario", caption = "Means and pointwise 95% Monte Carlo confidence intervals.") +
+      color = "Scenario", fill = "Scenario",
+      caption = paste("Median of daily maxima across replications; shaded band shows",
+                       "the 10th-90th percentiles. Daily peaks, not daily means.")) +
     ggplot2::theme_bw())
   waits <- tables$wait_summary
   if (nrow(waits)) {

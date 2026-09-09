@@ -120,12 +120,10 @@ build_body <- function() {
           shiny::tabPanel(
             "Simulation Results",
             shiny::uiOutput("baseline_run_status"),
-            shiny::downloadButton("download_run_data", "Download raw run data (.rds)"),
-            shiny::helpText("Raw tables include scenario and population labels, resource history, warm-up diagnostics, configuration and seed."),
             shiny::textOutput("patient_cohort_note"),
             shiny::fluidRow(
               shinydashboard::box(
-                title = "Average Resource Utilization Over Time", status = "success", solidHeader = TRUE, width = 6,
+                title = "Daily Maximum Occupied Beds", status = "success", solidHeader = TRUE, width = 6,
                 collapsible = TRUE,
                 rintrojs::introBox(
                   plotly::plotlyOutput("resource_plot"),
@@ -133,13 +131,16 @@ build_body <- function() {
                   data.intro = paste(
                     "<strong>Occupancy and queues over time</strong><br>",
                     "Use the interactive plots to compare occupied beds and",
-                    "patients waiting across hospital units and days."
+                    "patients waiting across hospital units and days. Each line shows the median",
+                    "of daily maxima across replications; the shaded band shows the 10th–90th",
+                    "percentiles.",
+                    "These are daily peaks, not daily averages."
                   ),
                   data.position = "left"
                 )
               ),
               shinydashboard::box(
-                title = "Queue Lengths Over Time", status = "success", solidHeader = TRUE, width = 6,
+                title = "Daily Maximum Queue Length", status = "success", solidHeader = TRUE, width = 6,
                 collapsible = TRUE,
                 plotly::plotlyOutput("queue_plot")
               )

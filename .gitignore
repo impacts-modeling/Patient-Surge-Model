@@ -4,7 +4,9 @@
 .Ruserdata
 AGENTS.md
 Patient-Surge-Model.Rproj
-2026_DES_Model
 outputs
 tests
-scenarios
+paper/manuscript
+paper/README.md
+paper/run_light_studies.R
+paper/benchmark_initialization.R

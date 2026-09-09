@@ -75,7 +75,7 @@ mod_baseline_ui <- function(id) {
       ),
       shiny::helpText(paste(
         "Loads the profiles supplied with the app from",
-        "R/data/baseline_civilian_profiles.csv and replaces the currently saved civilian profiles.",
+        "data/baseline_civilian_profiles.csv and replaces the currently saved civilian profiles.",
         "These predefined pathways use only GenMed, Surge and ICU; select all three units first.",
         "For other units, create or import civilian profiles. Review rates and stays for your hospital."
       )),
@@ -159,7 +159,7 @@ mod_baseline_server <- function(id, hospital_config) {
       hospital <- hospital_config()
       result <- tryCatch({
         if (is.null(hospital)) stop("Complete the hospital configuration before loading profiles.")
-        predefined_file <- file.path("R", "data", "baseline_civilian_profiles.csv")
+        predefined_file <- file.path("data", "baseline_civilian_profiles.csv")
         if (!file.exists(predefined_file)) {
           stop("The predefined baseline profile file is unavailable.")
         }

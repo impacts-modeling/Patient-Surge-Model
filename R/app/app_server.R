@@ -587,20 +587,6 @@ app_server <- function(input, output, session) {
         "Bed waits include zero waits for patients who completed their hospital trajectory; unfinished patients are excluded."
       } else "Bed waits are restricted to completed patients, separated by requested unit and population. Day-zero requests form a separate cohort."
     })
-    output$download_run_data <- shiny::downloadHandler(
-      filename = function() {
-        shiny::req(simulation_data())
-        paste0("hospital_", simulation_data()$scenario_id, "_", Sys.Date(), ".rds")
-      },
-      content = function(file) {
-        shiny::req(simulation_data())
-        data <- simulation_data()
-        waits <- bed_wait_summary(data)
-        data$bed_wait_summary <- waits$summary
-        data$bed_wait_replications <- waits$replications
-        saveRDS(data, file)
-      }
-    )
     output$download_report <- shiny::downloadHandler(
       filename = function() {
         paste0("patient_surge_model_report_", format(Sys.Date(), "%Y%m%d"), ".pdf")

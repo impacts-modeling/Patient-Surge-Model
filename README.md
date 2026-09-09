@@ -67,10 +67,10 @@ The same simulation environment continues after warm-up. Existing patients, bed 
 The dashboard and research scripts use `run_hospital_scenario()`. No Shiny session is required for the following example:
 
 ```r
-source("R/helpers/simulation_metrics.R")
-source("R/simulation/hospital_trajectory.R")
-source("R/simulation/baseline_flow.R")
-source("R/simulation/run_scenarios.R")
+source("R/shared/simulation_metrics.R")
+source("R/core/hospital_trajectory.R")
+source("R/core/baseline_flow.R")
+source("R/core/run_scenarios.R")
 
 config <- list(
   capacities = c(GenMed = 30, ICU = 10),
@@ -154,31 +154,37 @@ Patient-Surge-Model/
 |-- app.R                              # Entry point and source loading order
 |-- README.md                          # Project overview and setup
 |-- description.md                     # In-app user documentation
-|-- manifest.json                      # Deployment dependency manifest
+|-- manifest.json                      # Deployment dependency manifest (regenerate after moving files)
+|-- data/
+|   `-- baseline_civilian_profiles.csv # Built-in civilian profile input data
 |-- R/
 |   |-- 00_packages.R                  # Package loading
 |   |-- 01_config.R                    # Runtime and search settings
-|   |-- app_ui.R                       # Dashboard assembly
-|   |-- app_server.R                   # Reactive orchestration and outputs
-|   |-- data/
-|   |   `-- profiles_deloitte.R        # Built-in patient configurations
-|   |-- modules/
-|   |   |-- mod_profiles.R             # Hospital setup and surge Excel exchange
-|   |   `-- mod_baseline.R             # Civilian configuration UI and server
-|   |-- simulation/
+|   |-- core/                          # Simulation engine, shared by the app and paper/
 |   |   |-- hospital_trajectory.R      # Patient flow and capacity search
 |   |   |-- baseline_flow.R            # Civilian arrivals and warm-up functions
 |   |   `-- run_scenarios.R            # Standalone reproducible simulation runs
-|   |-- helpers/
+|   |-- shared/                        # Metrics and built-in profiles, shared by the app and paper/
 |   |   |-- simulation_metrics.R       # Resource metrics and plots
-|   |   `-- report_functions.R         # PDF report generation
-|   `-- ui/
+|   |   `-- profiles_deloitte.R        # Built-in patient configurations
+|   `-- app/                           # Shiny-only: UI, server, modules, PDF report
+|       |-- app_ui.R                   # Dashboard assembly
+|       |-- app_server.R               # Reactive orchestration and outputs
 |       |-- ui_sidebar.R               # Navigation and model inputs
-|       `-- ui_main.R                  # Results, documentation, and styling
+|       |-- ui_main.R                  # Results, documentation, and styling
+|       |-- mod_profiles.R             # Hospital setup and surge Excel exchange
+|       |-- mod_baseline.R             # Civilian configuration UI and server
+|       `-- report_functions.R         # PDF report generation
+|-- paper/                             # Manuscript scenarios and figures, no Shiny (see paper/README.md)
+|   |-- run_manuscript_scenarios.R     # Study orchestration; calls R/core and R/shared only
+|   |-- run_light_studies.R            # Light pilot runner
+|   |-- benchmark_initialization.R     # Analytical vs. incremental initialization benchmark
+|   `-- manuscript/                    # LaTeX source, figures, and the legacy figure pipeline
+|-- outputs/                           # Generated study results (figures, tables, caches)
 `-- rsconnect/                         # Deployment metadata
 ```
 
-`app.R` loads the configuration, data, helpers, simulation functions, profile module, and interface before launching Shiny. The profile module returns a reactive hospital configuration to `app_server.R`, which coordinates simulation runs, bed searches, and reporting.
+`app.R` loads the configuration, shared data/metrics, simulation engine, profile module, and interface before launching Shiny. The profile module returns a reactive hospital configuration to `app_server.R`, which coordinates simulation runs, bed searches, and reporting. `paper/run_manuscript_scenarios.R` sources only `R/core/` and `R/shared/`, never `R/app/`, so the same simulation engine drives both the dashboard and the manuscript scenarios without duplication.
 
 ## Interpretation and limitations
 

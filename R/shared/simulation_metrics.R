@@ -20,7 +20,6 @@ safe_median <- function(x, default = 0) {
     return(default)
   }
   median(finite_values)
-  #mean(finite_values)
 }
 
 safe_fraction <- function(numerator, denominator, default = 0) {
@@ -28,35 +27,6 @@ safe_fraction <- function(numerator, denominator, default = 0) {
     return(default)
   }
   numerator / denominator
-}
-
-make_resource_summary <- function(data, var = "server") {
-  stopifnot(var %in% names(data))
-  keys <- intersect(c("scenario_id", "resource", "replication"), names(data))
-  daily <- data |>
-    dplyr::group_by(dplyr::across(dplyr::all_of(keys))) |>
-    dplyr::group_modify(function(rows, key) {
-      rows <- rows[order(rows$time), , drop = FALSE]
-      start <- min(rows$time)
-      end <- max(rows$time)
-      if (end <= start) return(data.frame(time1 = numeric(), median_val = numeric()))
-      boundaries <- seq(floor(start), ceiling(end), by = 1)
-      grid <- sort(unique(c(rows$time, boundaries[boundaries > start & boundaries < end])))
-      index <- findInterval(grid, rows$time)
-      values <- rows[[var]][pmax(1L, index)]
-      intervals <- data.frame(time1 = floor(utils::head(grid, -1)) + 1,
-        value = utils::head(values, -1), dt = diff(grid))
-      intervals |>
-        dplyr::group_by(.data$time1) |>
-        dplyr::summarise(median_val = sum(.data$value * .data$dt) / sum(.data$dt),
-                         .groups = "drop")
-    }) |>
-    dplyr::ungroup()
-  # Retain the historical column name for plot consumers; it now holds a mean.
-  daily |>
-    dplyr::group_by(dplyr::across(dplyr::all_of(intersect(
-      c("scenario_id", "time1", "resource"), names(daily))))) |>
-    dplyr::summarise(median_val = safe_mean(.data$median_val), .groups = "drop")
 }
 
 # One logical resource visit is one bed request, attributed to its primary unit
@@ -198,8 +168,41 @@ compare_hospital_scenarios <- function(reference, comparison, confidence_level =
   list(pairs = decorate(pairs), summary = decorate(summary))
 }
 
-make_resource_data <- function(data, var = "server") {
-  make_resource_summary(data, var)
+# Daily intervals are [day - 1, day). Carry the state at the start of each
+# day forward, including days without events; exclude the terminal endpoint.
+# One row per scenario/resource/replication/day. Shared by the dashboard plot
+# and the manuscript figures so both report the same daily-peak definition.
+daily_peak_by_replication <- function(data, var = "server") {
+  stopifnot(all(c("time", "resource", "replication", var) %in% names(data)))
+  keys <- intersect(c("scenario_id", "resource", "replication"), names(data))
+  data |>
+    dplyr::group_by(dplyr::across(dplyr::all_of(keys))) |>
+    dplyr::group_modify(function(rows, key) {
+      rows <- rows[order(rows$time), , drop = FALSE]
+      start <- min(rows$time)
+      end <- max(rows$time)
+      if (end <= start) return(data.frame(time1 = numeric(), daily_max = numeric()))
+      boundaries <- seq(floor(start), ceiling(end), by = 1)
+      grid <- sort(unique(c(rows$time, boundaries[boundaries > start & boundaries < end])))
+      values <- rows[[var]][pmax(1L, findInterval(grid, rows$time))]
+      data.frame(time1 = floor(utils::head(grid, -1)) + 1,
+                 value = utils::head(values, -1)) |>
+        dplyr::group_by(.data$time1) |>
+        dplyr::summarise(daily_max = max(.data$value), .groups = "drop")
+    }) |>
+    dplyr::ungroup()
+}
+
+# Percentiles describe between-replication variability, not confidence intervals.
+make_daily_peak_summary <- function(data, var = "server") {
+  daily <- daily_peak_by_replication(data, var)
+  daily |>
+    dplyr::group_by(dplyr::across(dplyr::all_of(intersect(
+      c("scenario_id", "time1", "resource"), names(daily))))) |>
+    dplyr::summarise(median_val = stats::median(.data$daily_max),
+      lower = as.numeric(stats::quantile(.data$daily_max, .1, type = 7)),
+      upper = as.numeric(stats::quantile(.data$daily_max, .9, type = 7)),
+      replications = dplyr::n(), .groups = "drop")
 }
 
 
@@ -208,8 +211,8 @@ make_resource_plot <- function(data, var = "server") {
 
   title <- switch(
     var,
-    "server" = "Average Resource Utilization Over Time",
-    "queue"  = "Queue Lengths Over Time",
+    "server" = "Daily Maximum Occupied Beds",
+    "queue"  = "Daily Maximum Queue Length",
     paste("Plot of", var)
   )
 
@@ -220,19 +223,32 @@ make_resource_plot <- function(data, var = "server") {
     paste("Value of", var)
   )
 
-  plot_data <- make_resource_data(data, var = var)
-
-  p <- plotly::plot_ly(
-    plot_data,
-    x = ~time1, y = ~median_val,
-    color = ~resource,
-    type = "scatter", mode = "lines",
-    opacity = 1,
-    line = list(width = 2)
-  ) |>
+  plot_data <- make_daily_peak_summary(data, var = var)
+  plot_data$series <- if ("scenario_id" %in% names(plot_data) &&
+                           length(unique(plot_data$scenario_id)) > 1L) {
+    paste(plot_data$scenario_id, plot_data$resource, sep = " / ")
+  } else as.character(plot_data$resource)
+  series <- unique(plot_data$series)
+  colors <- grDevices::hcl.colors(max(3L, length(series)), "Dark 3")
+  p <- plotly::plot_ly()
+  for (i in seq_along(series)) {
+    rows <- plot_data[plot_data$series == series[[i]], ]
+    rows <- rows[order(rows$time1), ]
+    p <- p |>
+      plotly::add_ribbons(data = rows, x = ~time1, ymin = ~lower, ymax = ~upper,
+        name = paste(series[[i]], "P10–P90"), legendgroup = series[[i]],
+        fillcolor = colors[[i]], opacity = .18, line = list(color = "transparent"),
+        showlegend = FALSE, hoverinfo = "skip") |>
+      plotly::add_lines(data = rows, x = ~time1, y = ~median_val,
+        name = series[[i]], legendgroup = series[[i]], line = list(color = colors[[i]], width = 2),
+        text = ~paste0("Day: ", time1, "<br>Median daily maximum: ", median_val,
+          "<br>P10–P90: ", round(lower, 2), "–", round(upper, 2)),
+        hoverinfo = "text+name")
+  }
+  p |>
     plotly::layout(
       title = "",
-      xaxis = list(title = "Time (days)"),
+      xaxis = list(title = "Day — median daily maximum; band: P10–P90"),
       yaxis = list(title = yaxis_label) # ,
       # legend = list(
       #   orientation = "h", # horizontal legend
