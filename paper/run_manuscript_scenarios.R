@@ -12,11 +12,29 @@ load_study_functions <- function(project_dir = ".", envir = parent.frame()) {
   invisible(TRUE)
 }
 
+# Reads the app's own search-budget presets from R/01_config.R without its
+# side effects (no options(), no future::plan() change): evaluate only the
+# last top-level expression, which is the bed_search_configs <- list(...)
+# assignment. This is the same isolation trick tests/test_unified_search.R
+# uses, so the manuscript pipeline and the deployed app declare these numbers
+# exactly once and cannot silently drift apart.
+read_app_search_presets <- function(project_dir = ".") {
+  config_file <- file.path(project_dir, "R/01_config.R")
+  config_expressions <- parse(config_file)
+  presets <- new.env(parent = baseenv())
+  eval(config_expressions[[length(config_expressions)]], envir = presets)
+  if (!exists("bed_search_configs", envir = presets, inherits = FALSE)) {
+    stop("Could not find bed_search_configs as the last expression in ", config_file, ".")
+  }
+  presets$bed_search_configs
+}
+
 make_study_config <- function(project_dir = ".",
                               capacities = c(ICU = 84, GenMed = 405, Surge = 15),
                               civilian_file = file.path(project_dir, "data/baseline_civilian_profiles.csv"),
-                              sim_days = 45, num_sims = 10L, seed = 2026L,
-                              warmup = list(), search = list(), mode = c("paper", "development")) {
+                              sim_days = 50, num_sims = 40L, seed = 2026L,
+                              warmup = list(), search = list(), mode = c("paper", "development"),
+                              workers = 3L) {
   mode <- match.arg(mode)
   profiles <- deloitte_test_profile_config()
   civilian <- utils::read.csv(civilian_file, stringsAsFactors = FALSE)
@@ -35,11 +53,23 @@ make_study_config <- function(project_dir = ".",
                  fallbacks = profiles$fallbacks, baseline = baseline, arrival_process = "even")
   validate_patient_configuration(capacities, config$patient_profiles, config$profile_prob, config$fallbacks)
   validate_baseline_config(baseline, capacities, config$fallbacks)
-  # Budgets are starting values, not evidence of publication-level precision.
-  defaults <- list(num_sims = if (mode == "paper") 20L else 14L,
-    final_num_sims = if (mode == "paper") 50L else 20L, max_evaluations = 100L,
-    reliability_level = 0.70, congestion_index_opt = 5, congestion_index_opt_ICU = 5,
-    search_seed = seed + 300000L, workers = 1)
+  app_presets <- read_app_search_presets(project_dir)
+  if (!mode %in% names(app_presets)) {
+    stop("R/01_config.R has no bed_search_configs entry named '", mode, "'.")
+  }
+  # num_sims, max_evaluations, final_num_sims, minimum_step, demand_safety_factor
+  # and reliability_level come straight from R/01_config.R's bed_search_configs.
+  # Only two things are specific to this offline pipeline, not the deployed app:
+  # - search_seed is offset from the descriptive seed so search candidates use
+  #   an independent random-number bank (see the manuscript's methodology).
+  # - workers sizes local/offline parallel execution for this script; it is
+  #   unrelated to R/01_config.R's own `workers`, which sizes the deployed
+  #   app's future plan for its hosting platform.
+  # congestion_index_opt(_ICU) have no app-side default (they are interactive
+  # UI inputs in the dashboard), so they stay declared here.
+  defaults <- utils::modifyList(app_presets[[mode]],
+    list(search_seed = seed + 300000L, workers = workers,
+         congestion_index_opt = 5, congestion_index_opt_ICU = 5))
   retired <- intersect(names(search), c("search_num_sims", "max_validation_evaluations", "search_queue_tolerance"))
   if (length(retired)) stop("Retired search parameters: ", paste(retired, collapse = ", "),
     ". Use num_sims and max_evaluations for the unified search.")
@@ -122,7 +152,7 @@ compare_study_summaries <- function(reference, comparison) {
     }) |>
     dplyr::ungroup() |>
     dplyr::mutate(reference_scenario = a$scenario_id[1], comparison_scenario = b$scenario_id[1],
-                  confidence_level = 0.95)
+                  confidence_level = 0.90)
 }
 
 study_mean_interval <- function(x) {
@@ -130,7 +160,7 @@ study_mean_interval <- function(x) {
   n <- length(x)
   avg <- if (n) mean(x) else NA_real_
   se <- if (n > 1) stats::sd(x) / sqrt(n) else NA_real_
-  width <- if (n > 1) stats::qt(0.975, n - 1) * se else NA_real_
+  width <- if (n > 1) stats::qt(0.95, n - 1) * se else NA_real_
   data.frame(n = n, mean = avg, mcse = se, lower = avg - width, upper = avg + width)
 }
 
@@ -164,8 +194,34 @@ summarize_study_runs <- function(runs) {
        run_metadata = dplyr::bind_rows(lapply(runs, `[[`, "runs")))
 }
 
+# Turns "concentration_5" into "concentration_rate30_duration5" (and
+# "reference" into "reference_rate15_duration10"), using the design table's
+# rate/duration for that scenario, so the rate and duration behind a scenario
+# are readable directly from a legend or axis instead of a bare numeric
+# suffix that means "duration" for concentration_* but "rate" for volume_*.
+# "baseline" (no surge) and "_expanded" suffixes are preserved as-is.
+scenario_labels <- function(scenario_id, design) {
+  design_lookup <- rbind(
+    data.frame(scenario_id = "baseline", rate = 0L, duration = 0L),
+    design[c("scenario_id", "rate", "duration")]
+  )
+  expanded <- grepl("_expanded$", scenario_id)
+  base_id <- sub("_expanded$", "", scenario_id)
+  match_index <- match(base_id, design_lookup$scenario_id)
+  if (anyNA(match_index)) {
+    stop("No rate/duration found in the design table for: ",
+         paste(unique(base_id[is.na(match_index)]), collapse = ", "))
+  }
+  family <- ifelse(base_id == "baseline", "baseline", sub("_[0-9]+$", "", base_id))
+  label <- ifelse(base_id == "baseline", "baseline",
+    sprintf("%s_rate%d_duration%d", family,
+            design_lookup$rate[match_index], design_lookup$duration[match_index]))
+  ifelse(expanded, paste0(label, "_expanded"), label)
+}
+
 make_study_figures <- function(tables) {
   daily <- tables$daily_summary
+  daily$scenario_id <- scenario_labels(daily$scenario_id, tables$design)
   daily$measure <- factor(ifelse(daily$metric == "server", "Occupied beds", "Queue (patients)"),
                           levels = c("Occupied beds", "Queue (patients)"))
   unit_order <- c(intersect(c("GenMed", "ICU", "Surge"), unique(daily$resource)),
@@ -185,6 +241,7 @@ make_study_figures <- function(tables) {
     ggplot2::theme_bw())
   waits <- tables$wait_summary
   if (nrow(waits)) {
+    waits$scenario_id <- scenario_labels(waits$scenario_id, tables$design)
     figures$resolved_waits <- ggplot2::ggplot(waits,
       ggplot2::aes(x = .data$scenario_id, y = .data$mean_resolved_wait_days, fill = .data$population)) +
       ggplot2::geom_col(position = "dodge", na.rm = TRUE) +
@@ -203,11 +260,14 @@ make_study_figures <- function(tables) {
     additions <- tables$expansion |>
       dplyr::filter(.data$accepted) |>
       tidyr::pivot_longer(c("GenMed_added", "ICU_added"), names_to = "unit", values_to = "beds")
-    if (nrow(additions)) figures$expansion <- ggplot2::ggplot(additions,
-      ggplot2::aes(x = .data$scenario_id, y = .data$beds, fill = .data$unit)) +
-      ggplot2::geom_col(position = "dodge") + ggplot2::theme_bw() +
-      ggplot2::labs(x = NULL, y = "Additional beds", fill = "Unit",
-        caption = "Candidates passing independent final evaluation; global optimality is not established.")
+    if (nrow(additions)) {
+      additions$scenario_id <- scenario_labels(additions$scenario_id, tables$design)
+      figures$expansion <- ggplot2::ggplot(additions,
+        ggplot2::aes(x = .data$scenario_id, y = .data$beds, fill = .data$unit)) +
+        ggplot2::geom_col(position = "dodge") + ggplot2::theme_bw() +
+        ggplot2::labs(x = NULL, y = "Additional beds", fill = "Unit",
+          caption = "Candidates passing independent final evaluation; global optimality is not established.")
+    }
   }
   figures
 }
@@ -215,6 +275,7 @@ make_study_figures <- function(tables) {
 # General runner: one routine baseline plus arbitrary rate/duration combinations.
 # Expansion is activated only at day zero; warm-up capacity remains unchanged.
 run_scenario_study <- function(study, design, expand = FALSE, output_dir = NULL,
+                               reference_id = NULL,
                                cache_dir = file.path(study$project_dir, "outputs/scenario_cache")) {
   stopifnot(all(c("scenario_id", "rate", "duration") %in% names(design)), nrow(design) > 0,
     !anyNA(design), !anyDuplicated(design$scenario_id),
@@ -224,14 +285,25 @@ run_scenario_study <- function(study, design, expand = FALSE, output_dir = NULL,
     all(design$rate > 0 & design$rate == floor(design$rate)),
     all(design$duration > 0 & design$duration == floor(design$duration)),
     study$sim_days >= max(design$duration), study$config$arrival_process == "even",
-    study$config$baseline$arrival_process == "even")
+    study$config$baseline$arrival_process == "even",
+    is.null(reference_id) || (length(reference_id) == 1L && !is.na(reference_id) &&
+      reference_id %in% design$scenario_id))
   if (!is.null(output_dir) && dir.exists(output_dir) && length(list.files(output_dir, all.files = TRUE,
                                                                             no.. = TRUE))) {
     stop("Output directory is not empty; choose a new directory to preserve earlier results.")
   }
   old_plan <- future::plan()
   on.exit(future::plan(old_plan), add = TRUE)
-  future::plan(future::sequential)
+  # study$search$workers sizes local/offline parallel execution for this
+  # pipeline (see make_study_config). Sequential is kept as the safe default
+  # for workers <= 1, matching the deployed app's own fallback in 01_config.R.
+  requested_workers <- study$search$workers
+  if (is.null(requested_workers)) requested_workers <- 1L
+  if (requested_workers > 1L) {
+    future::plan(future::multisession, workers = requested_workers)
+  } else {
+    future::plan(future::sequential)
+  }
   dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
   cache_dir <- normalizePath(cache_dir, winslash = "/", mustWork = TRUE)
   engine <- study_engine_signature(study)
@@ -323,6 +395,17 @@ run_scenario_study <- function(study, design, expand = FALSE, output_dir = NULL,
     comparisons[[expanded_id]] <- compare_study_summaries(read_study_summary(runs[[id]]), read_study_summary(runs[[expanded_id]]))
     invisible(gc())
   }
+  # A second, optional reference (e.g. a rate/duration combination shared by
+  # two designs) adds cross-scenario comparisons alongside the always-present
+  # baseline (no-surge) comparisons already stored above. Both share the same
+  # paired_comparisons schema; reference_scenario identifies which was used.
+  if (!is.null(reference_id)) {
+    reference_summary <- read_study_summary(runs[[reference_id]])
+    for (id in setdiff(names(runs), c("baseline", reference_id))) {
+      comparisons[[paste0(id, "_vs_", reference_id)]] <-
+        compare_study_summaries(reference_summary, read_study_summary(runs[[id]]))
+    }
+  }
   # Assemble one table at a time from disk after all combinations finish.
   table_names <- names(read_study_summary(runs$baseline)$tables)
   invisible(gc())
@@ -379,18 +462,100 @@ run_main_example <- function(study, rate = 10, duration = 9, ...) {
   run_scenario_study(study, data.frame(scenario_id = "reference", rate = rate, duration = duration), ...)
 }
 
-run_volume_study <- function(study, rates = c(5, 10, 15), duration = 9, ...) {
+run_volume_study <- function(study, rates = c(10, 15, 20), duration = 10, ...) {
   run_scenario_study(study, data.frame(scenario_id = paste0("volume_", rates), rate = rates,
                                       duration = duration), ...)
 }
 
-run_concentration_study <- function(study, total = 90, durations = c(18, 9, 6), ...) {
+run_concentration_study <- function(study, total = 150, durations = c(5, 10, 15), ...) {
   rates <- total / durations
   if (any(!is.finite(rates)) || any(rates != floor(rates))) {
     stop("For deterministic arrivals, total/duration must be an integer rate.")
   }
   run_scenario_study(study, data.frame(scenario_id = paste0("concentration_", durations),
                                       rate = rates, duration = durations), ...)
+}
+
+# The manuscript's surge scenario set: volume analysis (fixed duration,
+# varying rate) and concentration analysis (fixed total patients, varying
+# duration). The rate/duration combination the two designs share (by default
+# rate = 15, duration = 10) is included once, under scenario_id =
+# reference_id, instead of twice under two different labels (e.g. "volume_15"
+# and "concentration_10"). Declared once here so run_volume_and_concentration_study
+# and run_unlimited_demand_study simulate exactly the same scenario set.
+manuscript_scenario_design <- function(volume_duration = 10, volume_rates = c(10, 15, 20),
+                                       concentration_total = 150,
+                                       concentration_durations = c(5, 10, 15),
+                                       reference_id = "reference") {
+  concentration_rates <- concentration_total / concentration_durations
+  if (any(!is.finite(concentration_rates)) || any(concentration_rates != floor(concentration_rates))) {
+    stop("For deterministic arrivals, total/duration must be an integer rate.")
+  }
+  volume <- data.frame(rate = volume_rates, duration = volume_duration)
+  concentration <- data.frame(rate = concentration_rates, duration = concentration_durations)
+  shared <- merge(volume, concentration)
+  if (nrow(shared) != 1L) {
+    stop("Expected exactly one rate/duration combination shared between the volume ",
+         "design (duration = ", volume_duration, ") and the concentration design ",
+         "(total = ", concentration_total, "); found ", nrow(shared), ". Adjust ",
+         "volume_rates/volume_duration or concentration_total/concentration_durations ",
+         "so exactly one combination coincides.")
+  }
+  design <- unique(rbind(volume, concentration))
+  is_shared <- design$rate == shared$rate & design$duration == shared$duration
+  design$scenario_id <- ifelse(is_shared, reference_id,
+    ifelse(design$duration == volume_duration, paste0("volume_", design$rate),
+           paste0("concentration_", design$duration)))
+  design <- design[order(design$duration, design$rate), c("scenario_id", "rate", "duration")]
+  rownames(design) <- NULL
+  design
+}
+
+# Combines the volume and concentration manuscript designs into a single run,
+# avoiding duplicate simulation and duplicate rows for their shared scenario
+# (see manuscript_scenario_design). The reference scenario is also used as the
+# comparison baseline for every other volume/concentration scenario (via
+# reference_id), on top of the existing baseline (no-surge) comparisons that
+# run_scenario_study always computes. The routine civilian baseline keeps
+# running in every scenario; "reference" here names a surge scenario, not a
+# no-surge run.
+run_volume_and_concentration_study <- function(study, volume_duration = 10,
+                                               volume_rates = c(10, 15, 20),
+                                               concentration_total = 150,
+                                               concentration_durations = c(5, 10, 15),
+                                               reference_id = "reference", ...) {
+  design <- manuscript_scenario_design(volume_duration, volume_rates,
+    concentration_total, concentration_durations, reference_id)
+  run_scenario_study(study, design, reference_id = reference_id, ...)
+}
+
+# Runs the same manuscript scenario set (see manuscript_scenario_design) with
+# every configured unit's bed capacity set to `capacity` beds, both during
+# warm-up and observation, so no patient -- civilian or surge -- ever queues.
+# Occupancy under this run is unconstrained demand: what would be admitted if
+# capacity were never a limiting factor, contrasted against the
+# capacity-constrained runs from run_volume_and_concentration_study. No
+# capacity search is run (there is nothing to search for when capacity
+# already exceeds any plausible need); expand is not exposed as a parameter.
+# `capacity` must comfortably exceed peak simultaneous demand in every unit,
+# or this stops being effectively unconstrained -- inspect resource_summary's
+# peak utilization/time-at-capacity to confirm no unit ever saturates.
+run_unlimited_demand_study <- function(study, capacity = 500L, volume_duration = 10,
+                                       volume_rates = c(10, 15, 20),
+                                       concentration_total = 150,
+                                       concentration_durations = c(5, 10, 15),
+                                       reference_id = "reference", output_dir = NULL,
+                                       cache_dir = file.path(study$project_dir, "outputs/scenario_cache")) {
+  stopifnot(length(capacity) == 1L, is.finite(capacity), capacity > 0,
+            capacity == floor(capacity))
+  design <- manuscript_scenario_design(volume_duration, volume_rates,
+    concentration_total, concentration_durations, reference_id)
+  unlimited <- stats::setNames(rep(as.integer(capacity), length(study$config$capacities)),
+    names(study$config$capacities))
+  study$config$capacities <- unlimited
+  study$config$warmup_capacities <- unlimited
+  run_scenario_study(study, design, expand = FALSE, output_dir = output_dir,
+                     reference_id = reference_id, cache_dir = cache_dir)
 }
 
 # Step 2: optimize only explicitly selected IDs from a completed first-stage study.
@@ -425,4 +590,39 @@ optimize_study_scenarios <- function(scenarios, scenario_ids, search = list(),
   # expansions are simulated; failed candidates remain recorded in the search cache.
   run_scenario_study(study, selected, expand = TRUE, output_dir = output_dir,
                      cache_dir = cache_dir)
+}
+
+# Combines the tables from several optimize_study_scenarios() output
+# directories -- each run separately, e.g. one scenario at a time to bound
+# memory use -- into one set of tables and figures, without re-simulating
+# anything. Every run must share the same routine-civilian baseline
+# (identical config and seed): its scenario_id ("baseline") is deduplicated
+# rather than plotted or averaged once per run. output_dirs order only
+# affects which run's copy of shared rows (e.g. baseline) is kept; their
+# values must already agree, or dplyr::distinct() will retain more than one.
+combine_optimized_studies <- function(output_dirs, out_file = NULL) {
+  if (!is.character(output_dirs) || !length(output_dirs)) {
+    stop("output_dirs must be one or more paths to optimize_study_scenarios() output directories.")
+  }
+  table_names <- c("daily_summary", "design", "expansion", "wait_summary",
+                   "resource_summary", "run_metadata", "warmup_diagnostics")
+  studies <- lapply(output_dirs, function(d) readRDS(file.path(d, "study.rds")))
+  tables <- stats::setNames(lapply(table_names, function(name) {
+    dplyr::distinct(dplyr::bind_rows(lapply(studies, function(s) s$tables[[name]])))
+  }), table_names)
+  key_cols <- list(daily_summary = c("scenario_id", "resource", "time1", "metric"),
+                   design = "scenario_id")
+  for (name in names(key_cols)) {
+    dup <- tables[[name]][key_cols[[name]]]
+    if (anyDuplicated(dup)) {
+      stop("Conflicting rows for the same ", paste(key_cols[[name]], collapse = "/"),
+           " across output_dirs in table '", name, "'. Runs must share an identical baseline.")
+    }
+  }
+  figures <- make_study_figures(tables)
+  if (!is.null(out_file)) {
+    ggplot2::ggsave(out_file, figures$trajectories, width = 12, height = 8,
+      units = "in", dpi = 300, limitsize = FALSE)
+  }
+  list(tables = tables, figures = figures)
 }

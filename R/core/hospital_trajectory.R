@@ -622,15 +622,23 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
                           patient_profiles, profile_prob, fallbacks = list(),
                           num_sims = 20,
                           max_evaluations = 100,
-                          minimum_step = 1, demand_safety_factor = 1.1,
-                          reliability_level = 0.80,
+                          minimum_step = 1, demand_safety_factor = 1.3,
+                          reliability_level = 0.70, refinement_margin = 0.10,
                           congestion_index_opt = 5, congestion_index_opt_ICU = 5,
                           workers = 1, search_seed = 2026, verbose = FALSE,
                           baseline = NULL, warmup_capacities = capacities,
                           arrival_process = "even", final_num_sims = 50L,
                           initialization = c("analytical", "incremental")) {
   optimization_started <- proc.time()[["elapsed"]]
-  # reliability_level is the required proportion of joint peak-compliant runs.
+  # reliability_level is the required proportion of joint peak-compliant runs;
+  # this is the criterion reported as the search's acceptance target and the
+  # one checked before triggering the independent holdout evaluation.
+  # refinement_margin makes growth and refinement (but not the reported
+  # criterion) target reliability_level + refinement_margin instead, so the
+  # search does not stop growing or shrink capacity right at the boundary
+  # where Monte Carlo noise makes the independent holdout evaluation likely
+  # to disagree. A selected candidate that meets the margin automatically
+  # meets the unmargined reliability_level as well.
   # One fixed replication bank and exact queue limits for all candidate selection.
   # The independent final bank is never used to tune capacity.
   arrival_process <- match.arg(arrival_process, c("even", "poisson"))
@@ -652,7 +660,9 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     demand_safety_factor >= 1,
     is.finite(reliability_level),
     reliability_level > 0,
-    reliability_level <= 1
+    reliability_level <= 1,
+    is.finite(refinement_margin),
+    refinement_margin >= 0
   )
 
   # Profiling found repeated dependency discovery dominated short evaluations.
@@ -758,11 +768,19 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     }
 
     required_successes <- ceiling(reliability_level * replications)
+    # The margin target is only used to decide when growth/refinement can
+    # stop early (see below); the reported passes/reliability always use
+    # required_successes above.
+    required_successes_margin <- ceiling(min(1, reliability_level + refinement_margin) * replications)
     if (stage == "search") {
       # Batches run in increasing chunks so the loop can stop as soon as the
       # joint accept/reject decision is already sealed; replications that
       # never run could not have changed it either way. Per-index streams
       # (above) make this exactly reproducible for whichever replications do run.
+      # Early acceptance requires clearing the margin target, not just the
+      # nominal one, so growth/refinement decisions (which use the margin)
+      # are not starved of replications by an early stop keyed to the looser
+      # nominal threshold.
       stream_seeds <- make_replication_stream_seeds(replications, evaluation_seed)
       batch_size <- max(1L, workers)
       evaluated_replications <- 0L
@@ -777,7 +795,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
         evaluated_replications <- evaluated_replications + take
         successes_so_far <- joint_successes_among(dplyr::bind_rows(resource_batches))
         remaining <- replications - evaluated_replications
-        if (successes_so_far >= required_successes ||
+        if (successes_so_far >= required_successes_margin ||
             successes_so_far + remaining < required_successes) break
       }
       resources <- dplyr::bind_rows(resource_batches)
@@ -860,7 +878,11 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       unit_successful_replications = unit_successful_replications,
       replications = evaluated_replications,
       thresholds = thresholds,
-      passes = sum(joint_pass) >= required_successes
+      passes = sum(joint_pass) >= required_successes,
+      # Internal-only: used to steer growth/refinement toward a capacity with
+      # some margin above reliability_level, not part of the reported/holdout
+      # acceptance criterion (result$passes, above, is unaffected).
+      passes_margin = sum(joint_pass) >= required_successes_margin
     )
     evaluation_id <- length(evaluation_history) + 1L
     evaluation_history[[evaluation_id]] <<- data.frame(
@@ -873,12 +895,14 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       acceptance_criterion = "joint_maximum_queue_GenMed_ICU",
       reliability_target = reliability_level,
       required_successes = required_successes,
+      required_successes_margin = required_successes_margin,
       GenMed_mean_queue = mean_queues[["GenMed"]], ICU_mean_queue = mean_queues[["ICU"]],
       GenMed_mcse = mean_intervals$mcse[match("GenMed", mean_intervals$resource)],
       ICU_mcse = mean_intervals$mcse[match("ICU", mean_intervals$resource)],
       joint_successes = sum(joint_pass), joint_reliability = result$reliability,
       GenMed_reliability = unit_reliability[["GenMed"]], ICU_reliability = unit_reliability[["ICU"]],
-      passes = result$passes, elapsed_seconds = proc.time()[["elapsed"]] - evaluation_started)
+      passes = result$passes, passes_margin = result$passes_margin,
+      elapsed_seconds = proc.time()[["elapsed"]] - evaluation_started)
     replication_history[[evaluation_id]] <<- resources |>
       dplyr::mutate(evaluation_id = evaluation_id, stage = stage, seed = evaluation_seed,
         threshold = unname(thresholds[.data$resource]),
@@ -890,14 +914,15 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       cat(sprintf(
         paste0(
           "%s evaluation %d: GenMed=%d (mean queue %.2f, %.0f%% peak compliance), ",
-          "ICU=%d (mean queue %.2f, %.0f%% peak compliance), joint peak compliance %.0f%%, pass=%s\n"
+          "ICU=%d (mean queue %.2f, %.0f%% peak compliance), joint peak compliance %.0f%%, ",
+          "pass=%s (margin pass=%s)\n"
         ),
         tools::toTitleCase(stage), stage_evaluation,
         candidate[["GenMed"]], result$queues[["GenMed"]],
         100 * result$unit_reliability[["GenMed"]],
         candidate[["ICU"]], result$queues[["ICU"]],
         100 * result$unit_reliability[["ICU"]],
-        100 * result$reliability, result$passes
+        100 * result$reliability, result$passes, result$passes_margin
       ))
     }
     result
@@ -936,9 +961,13 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
   frontier_complete <- FALSE
   current_capacity_validated <- FALSE
 
-  failing_units_for <- function(evaluation_result) {
+  # use_margin = TRUE drives growth/refinement toward reliability_level +
+  # refinement_margin (see evaluate()); use_margin = FALSE (default) reflects
+  # the reported/holdout-triggering criterion.
+  failing_units_for <- function(evaluation_result, use_margin = FALSE) {
     if (is.null(evaluation_result)) return(target_units)
-    if (isTRUE(evaluation_result$passes)) return(character())
+    pass_field <- if (use_margin) "passes_margin" else "passes"
+    if (isTRUE(evaluation_result[[pass_field]])) return(character())
     names(evaluation_result$unit_reliability)[evaluation_result$unit_reliability < 1]
   }
 
@@ -982,7 +1011,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
   # Current capacity is evaluated once on the same bank as every other candidate.
   capacities <- initial_capacities
   result <- evaluate(capacities)
-  current_capacity_validated <- !is.null(result) && isTRUE(result$passes)
+  current_capacity_validated <- !is.null(result) && isTRUE(result$passes_margin)
   if (current_capacity_validated) frontier_complete <- TRUE
 
   if (!current_capacity_validated) {
@@ -1034,6 +1063,21 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
           result <- trial_result
         }
       }
+    } else if (initialization == "incremental") {
+      # Seed near the simulated unconstrained-demand peak instead of growing
+      # from the current (typically much smaller) capacity one doubling step
+      # at a time. The refinement phase below still shrinks toward the true
+      # minimum from here; this only changes the starting point, not the
+      # acceptance criterion or the refinement logic.
+      trial <- pmin(safety_capacities,
+        pmax(initial_capacities, ceiling(demand_safety_factor * unlimited_reference_capacities)))
+      if (any(trial > capacities)) {
+        trial_result <- evaluate(trial)
+        if (!is.null(trial_result)) {
+          capacities <- trial
+          result <- trial_result
+        }
+      }
     }
     growth_steps <- stats::setNames(
       rep(as.integer(minimum_step), length(target_units)),
@@ -1042,8 +1086,8 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
 
     # Grow only units that currently fail. The increments double after each
     # evaluation and are clipped at demand observed with unlimited capacity.
-    while (!is.null(result) && !result$passes) {
-      failing_units <- failing_units_for(result)
+    while (!is.null(result) && !result$passes_margin) {
+      failing_units <- failing_units_for(result, use_margin = TRUE)
       active_units <- union(active_units, failing_units)
       failing_units <- intersect(
         failing_units,
@@ -1086,7 +1130,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
             complete <- FALSE
             break
           }
-          if (trial_result$passes) {
+          if (trial_result$passes_margin) {
             best_capacities <- trial
             best_result <- trial_result
             upper <- midpoint
@@ -1148,7 +1192,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
             local_complete <- FALSE
             break
           }
-          if (trial_result$passes && total_added(trial) < total_added(capacities)) {
+          if (trial_result$passes_margin && total_added(trial) < total_added(capacities)) {
             capacities <- trial
             result <- trial_result
           }
@@ -1241,7 +1285,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       num_sims = num_sims, final_num_sims = final_num_sims,
       max_evaluations = max_evaluations,
       minimum_step = minimum_step, demand_safety_factor = demand_safety_factor,
-      reliability_level = reliability_level,
+      reliability_level = reliability_level, refinement_margin = refinement_margin,
       congestion_index_opt = congestion_index_opt, congestion_index_opt_ICU = congestion_index_opt_ICU,
       workers = workers,
       rng_kind = RNGkind(), future_version = as.character(utils::packageVersion("future.apply"))),

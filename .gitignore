@@ -6,13 +6,5 @@ AGENTS.md
 Patient-Surge-Model.Rproj
 outputs
 tests
-paper/manuscript
-paper/README.md
-paper/run_light_studies.R
-paper/benchmark_initialization.R
-
-outputs/
-paper/
-tests/
-.git/
-.Rproj.user/
+paper
+.rscignore
