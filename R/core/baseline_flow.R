@@ -3,7 +3,7 @@ baseline_defaults <- function() {
   list(enabled = FALSE, profiles = list(), arrival_rates = numeric(),
        arrival_process = "even", warmup_mode = "fixed",
        warmup_min_days = 110, warmup_max_days = 360, window_days = 14,
-       occupancy_tolerance = 0.10, queue_tolerance = 0.5,
+       occupancy_tolerance = 0.1, queue_tolerance = 0.5,
        recheck_interval_days = 1)
 }
 

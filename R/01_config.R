@@ -18,13 +18,13 @@ app_development_config <- list(sim_days = 50L, num_sims = 10L, simulation_seed =
 # One exact-threshold search bank; final evaluation uses independent seeds.
 bed_search_configs <- list(
   development = list(
-    num_sims = 15L, max_evaluations = 50L, final_num_sims = 20L,
-    minimum_step = 1L, demand_safety_factor = 1.1,
+    num_sims = 10L, max_evaluations = 50L, final_num_sims = 15L,
+    minimum_step = 1L, demand_safety_factor = 1.15,
     reliability_level = 0.7, search_seed = 2026L
   ),
   paper = list(
     num_sims = 40L, max_evaluations = 50L, final_num_sims = 40L,
-    minimum_step = 1L, demand_safety_factor = 1.1,
+    minimum_step = 1L, demand_safety_factor = 1.15,
     reliability_level = 0.7, search_seed = 2026L
   )
 )

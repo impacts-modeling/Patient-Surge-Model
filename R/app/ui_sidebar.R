@@ -45,14 +45,14 @@ build_sidebar <- function() {
               shiny::column(
                 width = col1,
                 shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
-                  shiny::numericInput("n_patients", "Surge Patients per Day", min = 1, max = 100, value = 10, step = "any")),
-                shiny::numericInput("sim_days", "Observation Duration (days)", min = 1, max = 365, value = app_development_config$sim_days)
+                  shiny::numericInput("n_patients", "Surge Patients per Day", min = 1, max = 20, value = 10, step = "any")),
+                shiny::numericInput("sim_days", "Observation Duration (days)", min = 1, max = 50, value = app_development_config$sim_days)
               ),
               shiny::column(
                 width = col1,
                 shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
-                  shiny::numericInput("duration", "Surge Arrival Period (days)", min = 1, max = 100, value = 10)),
-                shiny::numericInput("num_sims", "Number of simulations", min = 1, max = 1000, value = app_development_config$num_sims)
+                  shiny::numericInput("duration", "Surge Arrival Period (days)", min = 1, max = 30, value = 10)),
+                shiny::numericInput("num_sims", "Number of simulations", min = 1, max = 20, value = app_development_config$num_sims)
               )
             ),
             shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
