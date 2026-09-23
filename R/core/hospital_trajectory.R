@@ -28,6 +28,11 @@ validate_patient_configuration <- function(capacities, patient_profiles, profile
           !is.numeric(profile$los) || any(!is.finite(profile$los)) || any(profile$los <= 0)))) {
       stop("Each pathway needs one positive finite mean stay for every ordered unit.")
     }
+    if (!is.null(profile$cv) &&
+        (length(profile$cv) != length(profile$unit) || !is.numeric(profile$cv) ||
+         any(!is.finite(profile$cv)) || any(profile$cv <= 0))) {
+      stop("Each pathway's coefficient of variation needs one positive finite value per ordered unit.")
+    }
   }
   profile_units <- unique(unlist(lapply(patient_profiles, `[[`, "unit"), use.names = FALSE))
   fallback_units <- unique(c(names(fallbacks), unlist(fallbacks, use.names = FALSE)))
@@ -115,42 +120,70 @@ make_surge_arrivals <- function(rate, duration, profile_prob, process = "even") 
                          replace = TRUE, prob = profile_prob) else character())
 }
 
+# profile$cv, when present, is one coefficient of variation per pathway step
+# (parallel to profile$los); a missing step's default is the cv argument.
 make_service_times <- function(n, profile, seed, cv = 0.1) {
   if (n == 0 || !length(profile$los)) return(matrix(numeric(), n, length(profile$los)))
+  step_cv <- profile$cv
+  if (is.null(step_cv)) step_cv <- rep(cv, length(profile$los))
+  stopifnot(length(step_cv) == length(profile$los), is.numeric(step_cv),
+            all(is.finite(step_cv)), all(step_cv > 0))
   with_simulation_seed(seed, {
-    sigma <- sqrt(log(1 + cv^2))
+    sigma <- sqrt(log(1 + step_cv^2))
     means <- rep(profile$los, times = n)
-    matrix(stats::rlnorm(length(means), log(means) - sigma^2 / 2, sigma),
+    sigma_rep <- rep(sigma, times = n)
+    matrix(stats::rlnorm(length(means), log(means) - sigma_rep^2 / 2, sigma_rep),
            nrow = n, ncol = length(profile$los), byrow = TRUE)
   })
 }
 
 logical_queue_prefix <- ".waiting_for__"
+boarding_prefix <- ".boarding_for__"
 
 logical_queue_resource <- function(primary) {
   paste0(logical_queue_prefix, primary)
 }
 
+boarding_resource <- function(primary) {
+  paste0(boarding_prefix, primary)
+}
 
-# A shared dispatcher preserves FIFO among requests that can use a free bed.
-# Reservations make selection and seize atomic across simultaneous events.
+
+# A shared dispatcher preserves FIFO among requests that can use a free bed,
+# with one priority tier above it: a patient who already holds a bed
+# elsewhere -- boarding between pathway steps, or occupying a fallback and
+# watching for its primary unit to free up -- is served ahead of a patient
+# with no bed at all making a fresh request for the same unit (only possible
+# on a pathway's first step). Reservations make selection and seize atomic
+# across simultaneous events.
 new_bed_dispatcher <- function(env, units) {
   state <- new.env(parent = emptyenv())
   state$requests <- list()
+  state$priority <- list()
   state$reservations <- list()
   signal_for <- function(patient) paste0(".bed_ready__", patient)
-  register <- function(candidates) {
+  register <- function(candidates, priority = FALSE) {
     patient <- simmer::get_name(env)
     state$requests[[patient]] <- candidates
+    state$priority[[patient]] <- isTRUE(priority)
     0
   }
   dispatch <- function() {
+    if (!length(state$requests)) return(".no_bed_allocated")
     available <- vapply(units, function(unit) {
       reserved <- sum(vapply(state$reservations, identical, logical(1), unit))
       max(0, simmer::get_capacity(env, unit) - simmer::get_server_count(env, unit) - reserved)
     }, numeric(1))
     signals <- character()
-    for (patient in names(state$requests)) {
+    # state$priority always holds clean TRUE/FALSE (set via isTRUE() once, in
+    # register()), so this can index/unlist directly instead of re-checking
+    # isTRUE() per patient via vapply -- dispatch() runs on every bed release
+    # and rescans every currently-waiting patient, so this was the dominant
+    # cost under congestion (profiled: millions of isTRUE() calls).
+    is_priority <- unlist(state$priority[names(state$requests)], use.names = FALSE)
+    # order() is stable: within each tier, FCFS (registration order) is kept.
+    ordered_patients <- names(state$requests)[order(!is_priority)]
+    for (patient in ordered_patients) {
       candidates <- state$requests[[patient]]
       free <- candidates[available[candidates] > 0]
       if (!length(free)) next
@@ -158,6 +191,7 @@ new_bed_dispatcher <- function(env, units) {
       available[[unit]] <- available[[unit]] - 1
       state$reservations[[patient]] <- unit
       state$requests[[patient]] <- NULL
+      state$priority[[patient]] <- NULL
       # The caller checks its reservation directly; only wake other patients.
       if (patient != simmer::get_name(env)) signals <- c(signals, signal_for(patient))
     }
@@ -171,35 +205,136 @@ new_bed_dispatcher <- function(env, units) {
        })
 }
 
-attempt_bed <- function(env, traj, primary, mean_stay, fallbacks,
-                        trajectory_step_id, recheck_interval_days = 1,
-                        service_time = function() random_stay(mean_stay)) {
-  # recheck_interval_days remains accepted for older callers; no polling is used.
+# Builds the trajectory for pathway step `step_index` through the end of the
+# pathway. `previous_unit` is the unit whose bed the patient currently holds
+# (already seized, not yet released) -- NULL only on a pathway's first step,
+# before anything has been seized. Waiting for this step's bed while
+# `previous_unit` is held is "boarding" (the .boarding_for__ resource, with
+# dispatcher priority); waiting with no bed held is a true, bed-less queue
+# (the .waiting_for__ resource, only possible on the first step). Once any
+# candidate bed is granted, `previous_unit` (if any) is released immediately,
+# before the new bed is seized. If the granted bed is a fallback rather than
+# this step's primary unit, the patient keeps watching for the primary while
+# being served in the fallback: if the primary frees before this step's
+# length of stay elapses, the patient transfers there (with dispatcher
+# priority over a fresh request for that same bed) and resumes with the
+# remaining stay, unchanged in total duration. Whichever unit the patient
+# ends this step in becomes `previous_unit` for the next step.
+run_pathway_step <- function(env, profile_name, profile, fallbacks,
+                             step_index, previous_unit, service_time_for) {
   dispatcher <- attr(env, "bed_dispatcher")
   if (is.null(dispatcher)) stop("The simulation needs a shared bed dispatcher.")
+  if (step_index > length(profile$unit)) {
+    finish <- simmer::trajectory(paste0(profile_name, "_finished"))
+    if (is.null(previous_unit)) return(finish)
+    return(finish |> simmer::release(previous_unit, 1) |> simmer::send(dispatcher$dispatch))
+  }
+  primary <- profile$unit[[step_index]]
   candidates <- unique(c(primary, fallbacks[[primary]]))
-  waiting_resource <- logical_queue_resource(primary)
+  held <- !is.null(previous_unit)
+  waiting_resource <- if (held) boarding_resource(primary) else logical_queue_resource(primary)
   my_signal <- function() dispatcher$signal_for(simmer::get_name(env))
-  branches <- lapply(candidates, function(unit) {
-    simmer::trajectory(paste0("use_", unit)) |>
-      simmer::seize(unit, dispatcher$claim) |>
-      simmer::timeout(service_time) |>
-      simmer::release(unit, 1) |>
-      simmer::send(dispatcher$dispatch)
+  step_service_time <- service_time_for(step_index)
+  id <- paste(profile_name, step_index, sep = "_")
+
+  continuation_for <- function(unit) {
+    if (identical(unit, primary)) {
+      # Already in the primary unit: no transfer to watch for.
+      simmer::trajectory(paste0(id, "_in_", unit)) |>
+        simmer::timeout(step_service_time) |>
+        simmer::join(run_pathway_step(env, profile_name, profile, fallbacks,
+                                      step_index + 1L, primary, service_time_for))
+    } else {
+      # simmer::trap(handler=X) semantics (confirmed against the package's own
+      # documentation for send()/trap()): on signal receipt, the arrival stops
+      # its current activity, runs X, THEN CONTINUES with whatever follows the
+      # interrupted activity in the surrounding pipe -- it does not replace
+      # the rest of the trajectory. So the interrupted timeout() below and its
+      # handler both funnel into the SAME shared continuation afterward
+      # (untrap, then branch on whether a transfer happened); the handler must
+      # NOT itself contain untrap/join, or that shared continuation runs a
+      # second time on top of the handler's (already-completed) actions.
+      dur_attr <- paste0(".", id, "_duration")
+      started_attr <- paste0(".", id, "_started")
+      transferred_attr <- paste0(".", id, "_transferred")
+      watch_signal <- function() dispatcher$signal_for(simmer::get_name(env))
+      transferred_next <- run_pathway_step(env, profile_name, profile, fallbacks,
+                                           step_index + 1L, primary, service_time_for)
+      stayed_next <- run_pathway_step(env, profile_name, profile, fallbacks,
+                                      step_index + 1L, unit, service_time_for)
+      remaining_time <- function() {
+        elapsed <- simmer::now(env) - simmer::get_attribute(env, started_attr)
+        max(simmer::get_attribute(env, dur_attr) - elapsed, .Machine$double.eps)
+      }
+      # Built fresh each call (used once as the trap's interrupt handler, once
+      # for an already-free primary at registration time); "elapsed" is ~0 in
+      # the latter case. Deliberately has no untrap/join of its own. Releases
+      # .boarding_for__<primary> the moment primary is actually seized --
+      # boarding ends there, not after the remaining stay in primary.
+      transfer_now <- function(label) {
+        simmer::trajectory(paste0(id, "_", label, "_", unit, "_to_", primary)) |>
+          simmer::set_attribute(transferred_attr, 1) |>
+          simmer::release(unit, 1) |>
+          simmer::send(dispatcher$dispatch) |>
+          simmer::seize(primary, dispatcher$claim) |>
+          simmer::release(boarding_resource(primary), 1) |>
+          simmer::timeout(remaining_time)
+      }
+      # Occupying a fallback while watching for the primary is boarding too
+      # (the patient holds a bed elsewhere -- here, the fallback itself --
+      # while wanting a different unit), so it is tracked on the very same
+      # .boarding_for__<primary> resource as boarding between pathway steps;
+      # both feed the same boarding-time statistics and search criterion.
+      simmer::trajectory(paste0(id, "_in_", unit)) |>
+        simmer::set_attribute(dur_attr, step_service_time) |>
+        simmer::set_attribute(started_attr, function() simmer::now(env)) |>
+        simmer::set_attribute(transferred_attr, 0) |>
+        simmer::seize(boarding_resource(primary), 1) |>
+        simmer::trap(watch_signal, handler = transfer_now("transferred")) |>
+        simmer::set_attribute(paste0(".", id, "_watch"),
+          function() dispatcher$register(primary, priority = TRUE)) |>
+        simmer::send(dispatcher$dispatch) |>
+        simmer::branch(function() if (is.null(dispatcher$assigned())) 1L else 2L,
+          continue = c(TRUE, TRUE),
+          simmer::trajectory(paste0(id, "_watching_", unit)) |>
+            simmer::timeout(function() simmer::get_attribute(env, dur_attr)),
+          transfer_now("immediate")) |>
+        simmer::untrap(watch_signal) |>
+        # A transfer (handler or immediate) already released
+        # .boarding_for__<primary> the moment it seized primary; a normal,
+        # never-transferred completion has not, so release it now. Interrupt
+        # resumption re-enters this shared point regardless of which path was
+        # taken (see the note above transfer_now()), so this must stay a
+        # single conditional release, not a second unconditional one.
+        simmer::release(boarding_resource(primary),
+          function() if (isTRUE(simmer::get_attribute(env, transferred_attr) == 1)) 0 else 1) |>
+        simmer::branch(function() if (isTRUE(simmer::get_attribute(env, transferred_attr) == 1)) 1L else 2L,
+          continue = c(TRUE, TRUE),
+          transferred_next,
+          stayed_next)
+    }
+  }
+
+  candidate_branches <- lapply(candidates, function(unit) {
+    prefix <- simmer::trajectory(paste0(id, "_go_", unit))
+    if (held) prefix <- prefix |> simmer::release(previous_unit, 1) |> simmer::send(dispatcher$dispatch)
+    prefix |> simmer::seize(unit, dispatcher$claim) |> simmer::join(continuation_for(unit))
   })
   take_bed <- do.call(simmer::branch, c(list(
-    .trj = simmer::trajectory("take_reserved_bed"),
+    .trj = simmer::trajectory(paste0(id, "_take")),
     option = function() match(dispatcher$assigned(), candidates),
-    continue = rep(TRUE, length(branches))), branches))
-  traj |>
+    continue = rep(TRUE, length(candidate_branches))), candidate_branches))
+
+  simmer::trajectory(paste0(id, "_request")) |>
     simmer::seize(waiting_resource, 1) |>
     simmer::trap(my_signal) |>
-    simmer::set_attribute(".bed_request", function() dispatcher$register(candidates)) |>
+    simmer::set_attribute(paste0(".", id, "_request"),
+      function() dispatcher$register(candidates, priority = held)) |>
     simmer::send(dispatcher$dispatch) |>
     simmer::branch(function() if (is.null(dispatcher$assigned())) 1L else 2L,
       continue = c(TRUE, TRUE),
-      simmer::trajectory("await_bed") |> simmer::wait(),
-      simmer::trajectory("bed_ready")) |>
+      simmer::trajectory(paste0(id, "_await")) |> simmer::wait(),
+      simmer::trajectory(paste0(id, "_ready"))) |>
     simmer::untrap(my_signal) |>
     simmer::release(waiting_resource, 1) |>
     simmer::join(take_bed)
@@ -208,36 +343,25 @@ attempt_bed <- function(env, traj, primary, mean_stay, fallbacks,
 profile_trajectory <- function(env, profile_name, patient_profiles, fallbacks,
                                recheck_interval_days = 1, service_times = NULL) {
   # Freeze loop arguments before simmer calls the service closures later.
+  # recheck_interval_days is accepted for older callers' positional arguments
+  # but unused: bed acquisition is fully event-driven, never polled.
   force(service_times)
   if (!profile_name %in% names(patient_profiles)) {
     stop("Unknown patient profile: ", profile_name)
   }
   profile <- patient_profiles[[profile_name]]
-  trajectory <- simmer::trajectory(profile_name)
   if (is.null(profile$unit) || length(profile$unit) == 0) {
-    return(trajectory |> simmer::timeout(0.1))
+    return(simmer::trajectory(profile_name) |> simmer::timeout(0.1))
   }
-  for (index in seq_along(profile$unit)) {
-    service_time <- local({
-      step <- index
-      function() {
-        if (is.null(service_times)) return(random_stay(profile$los[[step]]))
-        patient <- as.integer(sub("^.*_", "", simmer::get_name(env))) + 1L
-        service_times[patient, step]
-      }
-    })
-    trajectory <- attempt_bed(
-      env = env,
-      traj = trajectory,
-      primary = profile$unit[[index]],
-      mean_stay = profile$los[[index]],
-      fallbacks = fallbacks,
-      trajectory_step_id = paste(profile_name, index, sep = "_"),
-      recheck_interval_days = recheck_interval_days,
-      service_time = service_time
-    )
+  service_time_for <- function(step) {
+    step_cv <- if (!is.null(profile$cv)) profile$cv[[step]] else 0.1
+    function() {
+      if (is.null(service_times)) return(random_stay(profile$los[[step]], cv = step_cv))
+      patient <- as.integer(sub("^.*_", "", simmer::get_name(env))) + 1L
+      service_times[patient, step]
+    }
   }
-  trajectory
+  run_pathway_step(env, profile_name, profile, fallbacks, 1L, NULL, service_time_for)
 }
 
 sample_patient_profile <- function(profile_prob) {
@@ -281,6 +405,12 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
     hospital_sim <- simmer::add_resource(
       hospital_sim,
       logical_queue_resource(unit_name),
+      capacity = Inf,
+      queue_size = 0
+    )
+    hospital_sim <- simmer::add_resource(
+      hospital_sim,
+      boarding_resource(unit_name),
       capacity = Inf,
       queue_size = 0
     )
@@ -336,6 +466,12 @@ collect_hospital_resources <- function(simulation, include_resources = NULL) {
   )
   stopifnot(all(required_columns %in% names(resources)))
   if (nrow(resources) == 0) return(resources)
+
+  # Boarding episodes are reported from per-visit arrival records (see
+  # boarding_time_summary()), not from this state-level monitor; drop them
+  # here so they never appear as a spurious extra "resource" in state-based
+  # occupancy/queue reporting or plots.
+  resources <- resources[!startsWith(resources$resource, boarding_prefix), , drop = FALSE]
 
   if (!is.null(include_resources)) {
     include_resources <- unique(as.character(include_resources))
@@ -567,22 +703,60 @@ estimate_peak_unit_demand <- function(patient_profiles, profile_prob, n_patients
     )
   }))
 }
+# Per-unit mean boarding-episode duration within the observation window
+# [0, sim_days), read entirely from the .boarding_for__<unit> resource's own
+# STATE history (get_mon_resources()) -- no per-patient (arrival) monitoring
+# needed, so this works with monitor_patients = FALSE. This is an exact
+# identity, not an approximation: the time integral of that resource's
+# `server` count always equals the sum of every episode's duration (an
+# episode still open at the horizon contributes only its elapsed portion,
+# the same conservative treatment used elsewhere), and the number of
+# episodes started equals the number of times `server` increased (each
+# episode is exactly one seize/release pair). mean_boarding_days is that
+# integral divided by the episode count. Unlike the previous per-visit
+# criterion, this cannot recover the single longest episode -- only the mean.
+boarding_state_summary <- function(simulation, units, sim_days) {
+  metadata <- attr(simulation, "civilian_metadata")
+  raw <- simmer::get_mon_resources(simulation)
+  boarding <- raw[startsWith(raw$resource, boarding_prefix), , drop = FALSE]
+  boarding$resource <- substring(boarding$resource, nchar(boarding_prefix) + 1L)
+  boarding <- boarding[boarding$resource %in% units, , drop = FALSE]
+  inf_capacities <- stats::setNames(rep(Inf, length(units)), units)
+  history <- initialize_resource_history(boarding, inf_capacities)
+  start <- if (is.null(metadata)) 0 else metadata$surge_start
+  end <- if (is.null(metadata)) sim_days else metadata$observation_end
+  sliced <- slice_resource_history(history, start = start, end = end, shift = start)
+  dplyr::bind_rows(lapply(units, function(unit_name) {
+    rows <- sliced[sliced$resource == unit_name, , drop = FALSE]
+    rows <- rows[order(rows$time), , drop = FALSE]
+    if (nrow(rows) < 2) {
+      return(data.frame(resource = unit_name, mean_boarding_days = 0))
+    }
+    dt <- diff(rows$time)
+    person_days <- sum(utils::head(rows$server, -1) * dt)
+    episodes <- sum(pmax(0, diff(rows$server)))
+    data.frame(resource = unit_name, mean_boarding_days = safe_fraction(person_days, episodes))
+  }))
+}
+
 # Top-level worker avoids exporting the optimizer's cache and nested closures.
 capacity_replication <- function(replication_id, simulation_args, units) {
   replication_rng_state <- get(".Random.seed", envir = .GlobalEnv)
-  # Capacity selection uses resource histories, not individual arrival records.
+  # mean_boarding_days is read from resource state history alone (see
+  # boarding_state_summary()), so capacity selection still needs no
+  # individual arrival records, same as before boarding time replaced queue
+  # length as the acceptance criterion.
   simulation_args$monitor_patients <- FALSE
   simulation <- do.call(run_simulation, simulation_args)
   resources <- get_hospital_mon_resources(simulation, include_resources = units)
-  summary <- resource_state_intervals(resources) |>
+  occupancy <- resource_state_intervals(resources) |>
     dplyr::group_by(.data$resource) |>
-    dplyr::summarise(maximum_occupied = safe_max(.data$server),
-      maximum_queue = safe_max(.data$queue),
-      mean_queue = sum(.data$queue * .data$state_duration) / sum(.data$state_duration),
-      .groups = "drop")
-  summary <- dplyr::left_join(data.frame(resource = units), summary, by = "resource")
-  if (anyNA(summary$maximum_queue)) stop("Target resource monitoring is incomplete for optimization.")
-  if (any(!is.finite(summary$mean_queue))) stop("A positive observation duration is required for mean queues.")
+    dplyr::summarise(maximum_occupied = safe_max(.data$server), .groups = "drop")
+  boarding <- boarding_state_summary(simulation, units, simulation_args$sim_days)
+  summary <- dplyr::left_join(data.frame(resource = units), occupancy, by = "resource") |>
+    dplyr::left_join(boarding, by = "resource")
+  summary$mean_boarding_days[is.na(summary$mean_boarding_days)] <- 0
+  if (anyNA(summary$mean_boarding_days)) stop("Target resource monitoring is incomplete for optimization.")
   dplyr::mutate(summary, replication = replication_id,
     rng_state = rep(list(replication_rng_state), nrow(summary)))
 }
@@ -601,19 +775,21 @@ unlimited_demand_replication <- function(replication_id, simulation_args, units)
 }
 
 # Independent replication means; the t interval measures Monte Carlo error.
-# With one replication, uncertainty is unavailable rather than zero.
-summarize_queue_means <- function(resources, thresholds, confidence_level = 0.95) {
+# With one replication, uncertainty is unavailable rather than zero. Mean
+# boarding time is a complementary diagnostic, not the acceptance criterion
+# (which uses peak boarding time per replication; see find_n_needed()).
+summarize_boarding_means <- function(resources, thresholds, confidence_level = 0.95) {
   resources |>
     dplyr::group_by(.data$resource) |>
-    dplyr::summarise(replications = dplyr::n(), sd_queue = stats::sd(.data$mean_queue),
-      mean_queue = mean(.data$mean_queue), .groups = "drop") |>
-    dplyr::mutate(mcse = .data$sd_queue / sqrt(.data$replications),
+    dplyr::summarise(replications = dplyr::n(), sd_boarding = stats::sd(.data$mean_boarding_days),
+      mean_boarding_days = mean(.data$mean_boarding_days), .groups = "drop") |>
+    dplyr::mutate(mcse = .data$sd_boarding / sqrt(.data$replications),
       threshold = unname(thresholds[.data$resource]),
       confidence_level = confidence_level,
       critical_value = stats::qt((1 + confidence_level) / 2, pmax(1, .data$replications - 1)),
-      lower = .data$mean_queue - .data$critical_value * .data$mcse,
-      upper = .data$mean_queue + .data$critical_value * .data$mcse,
-      passes = .data$mean_queue <= .data$threshold,
+      lower = .data$mean_boarding_days - .data$critical_value * .data$mcse,
+      upper = .data$mean_boarding_days + .data$critical_value * .data$mcse,
+      passes = .data$mean_boarding_days <= .data$threshold,
       interval_crosses_threshold = .data$lower <= .data$threshold & .data$upper >= .data$threshold) |>
     dplyr::select(-"critical_value")
 }
@@ -623,8 +799,17 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
                           num_sims = 20,
                           max_evaluations = 100,
                           minimum_step = 1, demand_safety_factor = 1.3,
-                          reliability_level = 0.70, refinement_margin = 0.10,
-                          congestion_index_opt = 5, congestion_index_opt_ICU = 5,
+                          # rho = 0.5 with the default lower_ci rule (below) means: require
+                          # statistical confidence that the TRUE joint compliance
+                          # probability exceeds 50% (better than a coin flip), rather than
+                          # requiring a high observed proportion that could be a lucky draw.
+                          reliability_level = 0.5, refinement_margin = 0.10,
+                          # Boarding-time limits are in days (e.g. 1 = 24 hours), not the
+                          # patient-count limits the pre-boarding queue criterion used.
+                          boarding_time_limit_GenMed = 1, boarding_time_limit_ICU = 1,
+                          weight_GenMed = 1, weight_ICU = 1,
+                          acceptance_rule = c("lower_ci", "point_estimate"),
+                          acceptance_confidence = 0.95,
                           workers = 1, search_seed = 2026, verbose = FALSE,
                           baseline = NULL, warmup_capacities = capacities,
                           arrival_process = "even", final_num_sims = 50L,
@@ -639,15 +824,33 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
   # where Monte Carlo noise makes the independent holdout evaluation likely
   # to disagree. A selected candidate that meets the margin automatically
   # meets the unmargined reliability_level as well.
-  # One fixed replication bank and exact queue limits for all candidate selection.
+  # One fixed replication bank and exact boarding-time limits for all candidate selection.
   # The independent final bank is never used to tune capacity.
+  # weight_GenMed/weight_ICU only affect which feasible candidate the
+  # refinement step prefers (total_added below); they never change whether a
+  # candidate passes the joint criterion. Defaults (1, 1) reproduce the
+  # previous unweighted objective exactly.
+  # acceptance_rule = "lower_ci" (default) requires the lower bound of an
+  # exact binomial confidence interval (at acceptance_confidence) on the
+  # observed joint proportion to meet or exceed reliability_level -- a
+  # stricter, more conservative test than comparing the observed proportion
+  # itself. acceptance_rule = "point_estimate" instead accepts whenever the
+  # observed joint proportion alone meets required_successes. Growth/
+  # refinement still steer toward passes_margin (always point-estimate-based
+  # on reliability_level + refinement_margin); only the reported
+  # passes field, and therefore whether holdout evaluation is triggered, is
+  # affected by acceptance_rule.
   arrival_process <- match.arg(arrival_process, c("even", "poisson"))
   initialization <- match.arg(initialization)
+  acceptance_rule <- match.arg(acceptance_rule)
   stopifnot(final_num_sims >= 1, final_num_sims == floor(final_num_sims),
             is.finite(search_seed), search_seed >= 1,
             search_seed <= .Machine$integer.max - 200000L,
-            is.finite(congestion_index_opt), congestion_index_opt >= 0,
-            is.finite(congestion_index_opt_ICU), congestion_index_opt_ICU >= 0)
+            is.finite(boarding_time_limit_GenMed), boarding_time_limit_GenMed >= 0,
+            is.finite(boarding_time_limit_ICU), boarding_time_limit_ICU >= 0,
+            is.finite(weight_GenMed), weight_GenMed > 0,
+            is.finite(weight_ICU), weight_ICU > 0,
+            is.finite(acceptance_confidence), acceptance_confidence > 0, acceptance_confidence < 1)
   validate_patient_configuration(capacities, patient_profiles, profile_prob, fallbacks)
   if (!is.null(baseline) && isTRUE(baseline$enabled)) {
     validate_baseline_config(baseline, warmup_capacities, fallbacks)
@@ -746,7 +949,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       n_patients = n_patients, sim_days = sim_days, patient_profiles = patient_profiles,
       profile_prob = profile_prob, fallbacks = fallbacks, baseline = baseline,
       warmup_capacities = warmup_capacities, arrival_process = arrival_process)
-    thresholds <- c(GenMed = congestion_index_opt, ICU = congestion_index_opt_ICU)
+    thresholds <- c(GenMed = boarding_time_limit_GenMed, ICU = boarding_time_limit_ICU)
 
     run_batch <- function(batch_ids, batch_seed) {
       future.apply::future_lapply(
@@ -760,11 +963,11 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
         dplyr::bind_rows()
     }
     joint_successes_among <- function(rows) {
-      by_unit <- split(rows[c("replication", "maximum_queue")], rows$resource)
+      by_unit <- split(rows[c("replication", "mean_boarding_days")], rows$resource)
       merged <- merge(by_unit[["GenMed"]], by_unit[["ICU"]], by = "replication",
                        suffixes = c("_GenMed", "_ICU"))
-      sum(merged$maximum_queue_GenMed <= thresholds[["GenMed"]] &
-            merged$maximum_queue_ICU <= thresholds[["ICU"]])
+      sum(merged$mean_boarding_days_GenMed <= thresholds[["GenMed"]] &
+            merged$mean_boarding_days_ICU <= thresholds[["ICU"]])
     }
 
     required_successes <- ceiling(reliability_level * replications)
@@ -781,7 +984,21 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       # nominal one, so growth/refinement decisions (which use the margin)
       # are not starved of replications by an early stop keyed to the looser
       # nominal threshold.
+      # Under acceptance_rule = "lower_ci", a high point-estimate margin with
+      # few replications does NOT imply the (wider, small-n) confidence
+      # interval will clear reliability_level -- so early ACCEPT is disabled
+      # there; only early REJECT (already certain to fail, valid under either
+      # rule since a lower confidence bound never exceeds the point estimate)
+      # is kept, and the full replication count always runs otherwise. This
+      # keeps evaluated_replications large enough for a fair lower_ci check.
       stream_seeds <- make_replication_stream_seeds(replications, evaluation_seed)
+      # Batch size starts at one wave per worker (so a clearly bad candidate
+      # can still be pruned via certain_to_fail after the very first batch)
+      # and doubles each round after that. Under lower_ci, early accept is
+      # disabled (see above) so most candidates that don't fail outright run
+      # to the full replication count anyway; growing the batch geometrically
+      # cuts the number of future_lapply dispatch round-trips needed to get
+      # there without weakening the early-reject check.
       batch_size <- max(1L, workers)
       evaluated_replications <- 0L
       resource_batches <- list()
@@ -795,8 +1012,11 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
         evaluated_replications <- evaluated_replications + take
         successes_so_far <- joint_successes_among(dplyr::bind_rows(resource_batches))
         remaining <- replications - evaluated_replications
-        if (successes_so_far >= required_successes_margin ||
-            successes_so_far + remaining < required_successes) break
+        certain_to_fail <- successes_so_far + remaining < required_successes
+        certain_to_pass_margin <- acceptance_rule != "lower_ci" &&
+          successes_so_far >= required_successes_margin
+        if (certain_to_fail || certain_to_pass_margin) break
+        batch_size <- batch_size * 2L
       }
       resources <- dplyr::bind_rows(resource_batches)
     } else {
@@ -813,7 +1033,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       c("GenMed", "ICU")
     )
 
-    queue_for <- function(unit_name, column = "maximum_queue") {
+    boarding_for <- function(unit_name, column = "mean_boarding_days") {
       unit_rows <- resources[resources$resource == unit_name, , drop = FALSE]
       replications_found <- unit_rows$replication
       expected_replications <- seq_len(evaluated_replications)
@@ -841,16 +1061,16 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
 
       unit_rows[[column]][match(expected_replications, replications_found)]
     }
-    queue_matrix <- data.frame(
+    boarding_matrix <- data.frame(
       replication = seq_len(evaluated_replications),
-      GenMed = queue_for("GenMed"),
-      ICU = queue_for("ICU"),
+      GenMed = boarding_for("GenMed"),
+      ICU = boarding_for("ICU"),
       check.names = FALSE
     )
 
     unit_pass <- data.frame(
-      GenMed = queue_matrix$GenMed <= thresholds[["GenMed"]],
-      ICU = queue_matrix$ICU <= thresholds[["ICU"]]
+      GenMed = boarding_matrix$GenMed <= thresholds[["GenMed"]],
+      ICU = boarding_matrix$ICU <= thresholds[["ICU"]]
     )
     joint_pass <- unit_pass$GenMed & unit_pass$ICU
     unit_successful_replications <- c(
@@ -861,28 +1081,43 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     # evaluation stops early this is the honest evidence available; the
     # accept/reject decision below still uses the full target count.
     unit_reliability <- unit_successful_replications / evaluated_replications
-    # Acceptance counts simultaneous maximum-queue compliance. Retain
-    # mean queues as complementary diagnostics over the same observation horizon.
-    mean_queues <- c(GenMed = mean(queue_for("GenMed", "mean_queue")),
-                     ICU = mean(queue_for("ICU", "mean_queue")))
-    mean_intervals <- summarize_queue_means(resources, thresholds)
+    # Acceptance counts replications where mean boarding time (per replication,
+    # itself an exact per-replication average -- see boarding_state_summary())
+    # stays within the limit in both units simultaneously.
+    mean_boarding <- c(GenMed = mean(boarding_matrix$GenMed), ICU = mean(boarding_matrix$ICU))
+    mean_intervals <- summarize_boarding_means(resources, thresholds)
+
+    joint_successes <- sum(joint_pass)
+    # Exact binomial lower bound on the joint proportion at acceptance_confidence;
+    # always computed (cheap) so it is available for inspection/logging even
+    # under the point-estimate rule, which does not use it to decide passes.
+    joint_lower_ci <- stats::binom.test(joint_successes, evaluated_replications,
+      conf.level = acceptance_confidence)$conf.int[[1]]
+    passes <- if (acceptance_rule == "lower_ci") {
+      isTRUE(joint_lower_ci >= reliability_level)
+    } else {
+      joint_successes >= required_successes
+    }
 
     result <- list(
       capacities = candidate,
       maximum_occupancy = maximum_occupancy,
-      queues = mean_queues,
+      queues = mean_boarding,
       mean_intervals = mean_intervals,
       unit_reliability = unit_reliability,
       reliability = safe_mean(as.numeric(joint_pass)),
-      successful_replications = sum(joint_pass),
+      successful_replications = joint_successes,
       unit_successful_replications = unit_successful_replications,
       replications = evaluated_replications,
       thresholds = thresholds,
-      passes = sum(joint_pass) >= required_successes,
+      acceptance_rule = acceptance_rule,
+      joint_lower_ci = joint_lower_ci,
+      passes = passes,
       # Internal-only: used to steer growth/refinement toward a capacity with
       # some margin above reliability_level, not part of the reported/holdout
-      # acceptance criterion (result$passes, above, is unaffected).
-      passes_margin = sum(joint_pass) >= required_successes_margin
+      # acceptance criterion (result$passes, above, is unaffected by the margin;
+      # it is affected by acceptance_rule, as computed above).
+      passes_margin = joint_successes >= required_successes_margin
     )
     evaluation_id <- length(evaluation_history) + 1L
     evaluation_history[[evaluation_id]] <<- data.frame(
@@ -892,29 +1127,31 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       GenMed = candidate[["GenMed"]], ICU = candidate[["ICU"]],
       added_beds = sum(candidate - initial_capacities),
       GenMed_threshold = thresholds[["GenMed"]], ICU_threshold = thresholds[["ICU"]],
-      acceptance_criterion = "joint_maximum_queue_GenMed_ICU",
+      acceptance_criterion = "joint_maximum_boarding_time_GenMed_ICU",
       reliability_target = reliability_level,
       required_successes = required_successes,
       required_successes_margin = required_successes_margin,
-      GenMed_mean_queue = mean_queues[["GenMed"]], ICU_mean_queue = mean_queues[["ICU"]],
+      GenMed_mean_boarding_days = mean_boarding[["GenMed"]], ICU_mean_boarding_days = mean_boarding[["ICU"]],
       GenMed_mcse = mean_intervals$mcse[match("GenMed", mean_intervals$resource)],
       ICU_mcse = mean_intervals$mcse[match("ICU", mean_intervals$resource)],
-      joint_successes = sum(joint_pass), joint_reliability = result$reliability,
+      joint_successes = joint_successes, joint_reliability = result$reliability,
+      joint_lower_ci = joint_lower_ci, acceptance_rule = acceptance_rule,
+      acceptance_confidence = acceptance_confidence,
       GenMed_reliability = unit_reliability[["GenMed"]], ICU_reliability = unit_reliability[["ICU"]],
       passes = result$passes, passes_margin = result$passes_margin,
       elapsed_seconds = proc.time()[["elapsed"]] - evaluation_started)
     replication_history[[evaluation_id]] <<- resources |>
       dplyr::mutate(evaluation_id = evaluation_id, stage = stage, seed = evaluation_seed,
         threshold = unname(thresholds[.data$resource]),
-        unit_pass = .data$maximum_queue <= .data$threshold,
+        unit_pass = .data$mean_boarding_days <= .data$threshold,
         joint_pass = joint_pass[.data$replication])
     assign(key, result, envir = cache)
 
     if (verbose) {
       cat(sprintf(
         paste0(
-          "%s evaluation %d: GenMed=%d (mean queue %.2f, %.0f%% peak compliance), ",
-          "ICU=%d (mean queue %.2f, %.0f%% peak compliance), joint peak compliance %.0f%%, ",
+          "%s evaluation %d: GenMed=%d (mean boarding %.2fd, %.0f%% peak compliance), ",
+          "ICU=%d (mean boarding %.2fd, %.0f%% peak compliance), joint peak compliance %.0f%%, ",
           "pass=%s (margin pass=%s)\n"
         ),
         tools::toTitleCase(stage), stage_evaluation,
@@ -928,8 +1165,9 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     result
   }
 
+  objective_weights <- c(GenMed = weight_GenMed, ICU = weight_ICU)
   total_added <- function(candidate) {
-    sum(candidate[c("GenMed", "ICU")] - initial_capacities)
+    sum((candidate[c("GenMed", "ICU")] - initial_capacities) * objective_weights)
   }
 
   target_units <- c("GenMed", "ICU")
@@ -1111,8 +1349,9 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
         pmax(minimum_step, 2L * growth_steps[failing_units])
       )
     }
-    # Reduce each resource with bounded binary searches, then inspect a small
-    # two-dimensional neighborhood for useful GenMed/ICU trade-offs.
+    # Reduce each resource with bounded binary searches, then look for
+    # GenMed<->ICU trade-offs using an adaptive step (see search_minimal_unit
+    # and trade_direction below) instead of a small fixed neighborhood.
     if (!is.null(result) && result$passes) {
       refine_unit <- function(unit_name, current_capacities, current_result) {
         lower <- initial_capacities[[unit_name]]
@@ -1158,45 +1397,129 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
 
       local_complete <- all(refinement_status)
       if (local_complete) {
-        local_radius <- 1L
-        genmed_values <- seq.int(
-          max(initial_capacities[["GenMed"]], capacities[["GenMed"]] - local_radius),
-          min(safety_capacities[["GenMed"]], capacities[["GenMed"]] + local_radius)
-        )
-        icu_values <- seq.int(
-          max(initial_capacities[["ICU"]], capacities[["ICU"]] - local_radius),
-          min(safety_capacities[["ICU"]], capacities[["ICU"]] + local_radius)
-        )
-        candidates <- base::expand.grid(
-          GenMed = genmed_values,
-          ICU = icu_values,
-          KEEP.OUT.ATTRS = FALSE
-        ) |>
-          dplyr::mutate(
-            total_added = .data$GenMed - initial_capacities[["GenMed"]] +
-              .data$ICU - initial_capacities[["ICU"]],
-            distance = abs(.data$GenMed - capacities[["GenMed"]]) +
-              abs(.data$ICU - capacities[["ICU"]])
-          ) |>
-          dplyr::filter(.data$total_added <= total_added(capacities)) |>
-          dplyr::arrange(.data$total_added, .data$distance)
-
-        for (row_index in seq_len(nrow(candidates))) {
-          trial <- c(
-            GenMed = as.integer(candidates$GenMed[[row_index]]),
-            ICU = as.integer(candidates$ICU[[row_index]])
-          )
-          if (identical(as.integer(trial), as.integer(capacities))) next
-          trial_result <- evaluate(trial)
-          if (is.null(trial_result)) {
-            local_complete <- FALSE
-            break
+        # Exponential ("galloping") search for the smallest feasible
+        # `unit_name` capacity at or above floor_value, then bisect within
+        # the bracket found. Avoids probing near `ceiling` (safety_capacities,
+        # often far larger than needed) unless the search actually needs it.
+        search_minimal_unit <- function(unit_name, base_capacities, floor_value, ceiling_value) {
+          # Check the ceiling first: if even the maximum allowed `unit_name`
+          # capacity does not pass, every smaller value fails too (monotone
+          # in `unit_name`), so the exponential ramp-up below would only
+          # rediscover that after ~log2(ceiling - floor) wasted evaluations.
+          # This matters most from `trade_direction`, which calls this
+          # repeatedly for compensations that often cannot succeed at all.
+          if (ceiling_value > floor_value) {
+            ceiling_trial <- base_capacities
+            ceiling_trial[[unit_name]] <- ceiling_value
+            ceiling_result <- evaluate(ceiling_trial)
+            if (is.null(ceiling_result)) {
+              return(list(capacities = base_capacities, result = NULL, feasible = NA, complete = FALSE))
+            }
+            if (!ceiling_result$passes_margin) {
+              return(list(capacities = ceiling_trial, result = ceiling_result, feasible = FALSE, complete = TRUE))
+            }
           }
-          if (trial_result$passes_margin && total_added(trial) < total_added(capacities)) {
-            capacities <- trial
-            result <- trial_result
+          increment <- 1L
+          lo <- floor_value - 1L
+          hi <- NA_integer_
+          hi_result <- NULL
+          probe_value <- floor_value
+          repeat {
+            trial <- base_capacities
+            trial[[unit_name]] <- probe_value
+            probe_result <- evaluate(trial)
+            if (is.null(probe_result)) {
+              return(list(capacities = base_capacities, result = NULL, feasible = NA, complete = FALSE))
+            }
+            if (probe_result$passes_margin) {
+              hi <- probe_value
+              hi_result <- probe_result
+              break
+            }
+            lo <- probe_value
+            if (probe_value >= ceiling_value) {
+              return(list(capacities = trial, result = probe_result, feasible = FALSE, complete = TRUE))
+            }
+            increment <- increment * 2L
+            probe_value <- min(ceiling_value, probe_value + increment)
           }
+          best_capacities <- base_capacities
+          best_capacities[[unit_name]] <- hi
+          best_result <- hi_result
+          while (lo + 1L < hi) {
+            midpoint <- lo + (hi - lo) %/% 2L
+            trial <- base_capacities
+            trial[[unit_name]] <- midpoint
+            trial_result <- evaluate(trial)
+            if (is.null(trial_result)) {
+              return(list(capacities = best_capacities, result = best_result, feasible = TRUE, complete = FALSE))
+            }
+            if (trial_result$passes_margin) {
+              hi <- midpoint
+              best_capacities <- trial
+              best_result <- trial_result
+            } else {
+              lo <- midpoint
+            }
+          }
+          list(capacities = best_capacities, result = best_result, feasible = TRUE, complete = TRUE)
         }
+
+        # Reduces from_unit by a shrinking step (starting at the largest
+        # power of two within its current headroom above initial_capacities)
+        # and re-searches to_unit (upward from its current value) for the
+        # smallest capacity that compensates. A step is kept only when the
+        # resulting weighted total_added() is strictly lower; on success the
+        # same step size is retried (push further), otherwise it halves.
+        trade_direction <- function(from_unit, to_unit, current_capacities, current_result) {
+          best_capacities <- current_capacities
+          best_result <- current_result
+          complete <- TRUE
+          improved <- FALSE
+          headroom <- best_capacities[[from_unit]] - initial_capacities[[from_unit]]
+          if (headroom > 0) {
+            step <- 2L^floor(log2(headroom))
+            while (step >= 1L) {
+              candidate_from <- max(initial_capacities[[from_unit]], best_capacities[[from_unit]] - step)
+              if (candidate_from < best_capacities[[from_unit]]) {
+                base_capacities <- best_capacities
+                base_capacities[[from_unit]] <- candidate_from
+                search <- search_minimal_unit(to_unit, base_capacities,
+                  floor_value = best_capacities[[to_unit]], ceiling_value = safety_capacities[[to_unit]])
+                if (!search$complete) {
+                  complete <- FALSE
+                  break
+                }
+                if (isTRUE(search$feasible) &&
+                    total_added(search$capacities) < total_added(best_capacities)) {
+                  best_capacities <- search$capacities
+                  best_result <- search$result
+                  improved <- TRUE
+                  next
+                }
+              }
+              step <- step %/% 2L
+            }
+          }
+          list(capacities = best_capacities, result = best_result, complete = complete, improved = improved)
+        }
+
+        trade_complete <- TRUE
+        repeat {
+          pass_improved <- FALSE
+          for (pair in list(c("GenMed", "ICU"), c("ICU", "GenMed"))) {
+            traded <- trade_direction(pair[[1]], pair[[2]], capacities, result)
+            capacities <- traded$capacities
+            result <- traded$result
+            if (traded$improved) pass_improved <- TRUE
+            if (!traded$complete) {
+              trade_complete <- FALSE
+              break
+            }
+          }
+          if (!trade_complete || !pass_improved) break
+        }
+        local_complete <- trade_complete
       }
       frontier_complete <- all(refinement_status) && local_complete
     }
@@ -1227,18 +1550,20 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       queues = c(GenMed = NA_real_, ICU = NA_real_),
       unit_reliability = c(GenMed = NA_real_, ICU = NA_real_),
       reliability = NA_real_,
+      joint_lower_ci = NA_real_,
       passes = FALSE
     )
   }
 
   optimization_result <- list(
-    avg_congestion_index_GenMed = result$queues[["GenMed"]],
-    avg_congestion_index_ICU = result$queues[["ICU"]],
+    avg_boarding_days_GenMed = result$queues[["GenMed"]],
+    avg_boarding_days_ICU = result$queues[["ICU"]],
     reliability_GenMed = result$unit_reliability[["GenMed"]],
     reliability_ICU = result$unit_reliability[["ICU"]],
     joint_reliability = result$reliability,
+    joint_lower_ci = result$joint_lower_ci,
     reliability_level = reliability_level,
-    reliability_diagnostic = "maximum_queue_below_limit_per_replication",
+    reliability_diagnostic = "maximum_boarding_time_below_limit_per_replication",
     N_added = capacities[["GenMed"]] - initial_capacities[["GenMed"]],
     N_added_ICU = capacities[["ICU"]] - initial_capacities[["ICU"]],
     GenMed_N = capacities[["GenMed"]],
@@ -1267,9 +1592,9 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     final_intervals = final_intervals,
     final_joint_interval = final_joint_interval,
     final_mean_intervals = if (final_evaluation_count > 0L) result$mean_intervals else data.frame(),
-    acceptance_criterion = "joint_maximum_queue_GenMed_ICU",
-    mean_queue_GenMed = result$queues[["GenMed"]],
-    mean_queue_ICU = result$queues[["ICU"]],
+    acceptance_criterion = "joint_maximum_boarding_time_GenMed_ICU",
+    mean_boarding_days_GenMed = result$queues[["GenMed"]],
+    mean_boarding_days_ICU = result$queues[["ICU"]],
     evaluation_history = dplyr::bind_rows(evaluation_history),
     replication_history = dplyr::bind_rows(replication_history),
     auxiliary_history = dplyr::bind_rows(auxiliary_history),
@@ -1286,7 +1611,9 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       max_evaluations = max_evaluations,
       minimum_step = minimum_step, demand_safety_factor = demand_safety_factor,
       reliability_level = reliability_level, refinement_margin = refinement_margin,
-      congestion_index_opt = congestion_index_opt, congestion_index_opt_ICU = congestion_index_opt_ICU,
+      boarding_time_limit_GenMed = boarding_time_limit_GenMed, boarding_time_limit_ICU = boarding_time_limit_ICU,
+      weight_GenMed = weight_GenMed, weight_ICU = weight_ICU,
+      acceptance_rule = acceptance_rule, acceptance_confidence = acceptance_confidence,
       workers = workers,
       rng_kind = RNGkind(), future_version = as.character(utils::packageVersion("future.apply"))),
     selection_passed = !is.null(selection_result) && isTRUE(selection_result$passes),

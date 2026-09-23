@@ -30,7 +30,10 @@ read_app_search_presets <- function(project_dir = ".") {
 }
 
 make_study_config <- function(project_dir = ".",
-                              capacities = c(ICU = 84, GenMed = 405, Surge = 15),
+                              # ED = 999 is a practically-unlimited placeholder (hallway/chair
+                              # capacity is elastic in practice, not a hard bed count); boarding
+                              # time, not this capacity, is what constrains an ED patient.
+                              capacities = c(ICU = 84, GenMed = 405, Surge = 15, ED = 999),
                               civilian_file = file.path(project_dir, "data/baseline_civilian_profiles.csv"),
                               sim_days = 50, num_sims = 40L, seed = 2026L,
                               warmup = list(), search = list(), mode = c("paper", "development"),
@@ -40,12 +43,24 @@ make_study_config <- function(project_dir = ".",
   civilian <- utils::read.csv(civilian_file, stringsAsFactors = FALSE)
   stopifnot(all(c("Profile", "Patients_per_day", "Pathway", "Mean_stays_days") %in% names(civilian)),
             nrow(civilian) > 0, !anyDuplicated(civilian$Profile))
+  # CV_values is optional, mirroring the app's read_baseline_profiles_csv():
+  # a blank or absent entry defaults to default_cv_for_unit() (1 for ICU,
+  # 0.24 for every other unit), not the engine's own flat 0.1 fallback.
+  has_civilian_cv <- "CV_values" %in% names(civilian)
   baseline <- utils::modifyList(baseline_defaults(), warmup)
   baseline$enabled <- TRUE
   baseline$arrival_process <- "even"
   baseline$profiles <- stats::setNames(lapply(seq_len(nrow(civilian)), function(i) {
-    list(unit = trimws(strsplit(civilian$Pathway[i], ",", fixed = TRUE)[[1]]),
-         los = as.numeric(trimws(strsplit(civilian$Mean_stays_days[i], ",", fixed = TRUE)[[1]])))
+    units <- trimws(strsplit(civilian$Pathway[i], ",", fixed = TRUE)[[1]])
+    los <- as.numeric(trimws(strsplit(civilian$Mean_stays_days[i], ",", fixed = TRUE)[[1]]))
+    cv_entry <- if (has_civilian_cv) trimws(civilian$CV_values[i]) else NA_character_
+    cv <- if (is.na(cv_entry) || !nzchar(cv_entry)) {
+      default_cv_for_unit(units)
+    } else {
+      as.numeric(trimws(strsplit(cv_entry, ",", fixed = TRUE)[[1]]))
+    }
+    if (length(cv) == 1L && length(units) > 1L) cv <- rep(cv, length(units))
+    list(unit = units, los = los, cv = cv)
   }), civilian$Profile)
   baseline$arrival_rates <- stats::setNames(civilian$Patients_per_day, civilian$Profile)
   config <- list(capacities = capacities, warmup_capacities = capacities,
@@ -65,11 +80,11 @@ make_study_config <- function(project_dir = ".",
   # - workers sizes local/offline parallel execution for this script; it is
   #   unrelated to R/01_config.R's own `workers`, which sizes the deployed
   #   app's future plan for its hosting platform.
-  # congestion_index_opt(_ICU) have no app-side default (they are interactive
-  # UI inputs in the dashboard), so they stay declared here.
+  # boarding_time_limit_GenMed/ICU (days) have no app-side default (they are
+  # interactive UI inputs in the dashboard), so they stay declared here.
   defaults <- utils::modifyList(app_presets[[mode]],
     list(search_seed = seed + 300000L, workers = workers,
-         congestion_index_opt = 5, congestion_index_opt_ICU = 5))
+         boarding_time_limit_GenMed = 1, boarding_time_limit_ICU = 1))
   retired <- intersect(names(search), c("search_num_sims", "max_validation_evaluations", "search_queue_tolerance"))
   if (length(retired)) stop("Retired search parameters: ", paste(retired, collapse = ", "),
     ". Use num_sims and max_evaluations for the unified search.")
@@ -377,9 +392,12 @@ run_scenario_study <- function(study, design, expand = FALSE, output_dir = NULL,
     searches[[id]] <- search_path
     expansion[[id]] <- data.frame(scenario_id = id, rate = row$rate, duration = row$duration,
       GenMed_added = fit$N_added, ICU_added = fit$N_added_ICU,
-      joint_compliance = fit$joint_reliability, accepted = isTRUE(fit$converged),
+      joint_compliance = fit$joint_reliability, joint_lower_ci = fit$joint_lower_ci,
+      acceptance_rule = fit$search_configuration$acceptance_rule, accepted = isTRUE(fit$converged),
       refinement_complete = fit$refinement_complete, final_evaluations = fit$final_evaluations,
-      final_replications = fit$final_num_sims)
+      final_replications = fit$final_num_sims, search_evaluations = fit$search_evaluations,
+      workers = fit$search_configuration$workers,
+      optimization_elapsed_seconds = fit$optimization_elapsed_seconds)
     if (!isTRUE(fit$converged)) {
       warning("No accepted expansion for ", id, "; candidate retained as failed, not applied.")
       rm(fit)

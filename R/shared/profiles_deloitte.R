@@ -3,6 +3,13 @@ fallbacks_list_1 <- list(
   Surge = c("GenMed")
 )
 
+# Shared default: ICU stays are assumed far more variable than other units.
+# unit may be NULL (ambulatory), a single unit, or an ordered vector of units.
+default_cv_for_unit <- function(unit) {
+  if (is.null(unit)) return(NULL)
+  ifelse(unit == "ICU", 1, 0.24)
+}
+
 deloitte_test_profile_config <- function() {
   patient_profiles <- list(
     ambulatory = list(unit = NULL, los = NULL),
@@ -18,6 +25,11 @@ deloitte_test_profile_config <- function() {
     icu_10_medsurg_10 = list(unit = c("ICU", "GenMed"), los = c(10, 10)),
     icu_30 = list(unit = "ICU", los = 30)
   )
+  # CV = 1 for ICU steps, 0.24 for every other unit.
+  patient_profiles <- lapply(patient_profiles, function(profile) {
+    profile$cv <- default_cv_for_unit(profile$unit)
+    profile
+  })
 
   profile_counts <- c(
     ambulatory = 242,

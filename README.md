@@ -33,7 +33,7 @@ The application includes a guided tour and a **Documentation** tab. See [descrip
 Each patient is randomly assigned a profile using the configured arrival probabilities. The profile determines the sequence of hospital units visited and the mean length of stay at each step.
 
 - **Arrivals:** surge counts and spacing are deterministic; surge profile assignment is random. With civilian flow disabled, the existing empty-hospital model starts arrivals on day 1. With civilian flow enabled, surge arrivals start at event day 0 after warm-up. Each civilian profile has its own constant, evenly spaced arrival rate throughout warm-up and follow-up.
-- **Length of stay:** inpatient stays follow a lognormal distribution with the configured mean and a default coefficient of variation of 0.2.
+- **Length of stay:** inpatient stays follow a lognormal distribution with the configured mean and a per-step coefficient of variation (editable per profile; defaults to 1 for ICU steps and 0.24 for every other unit when left unset).
 - **Bed allocation:** patients use the primary unit if a bed is available, otherwise the first available configured fallback.
 - **Waiting:** when no candidate bed is available, patients enter a logical queue for the primary unit and recheck availability at a default interval of one day.
 - **Transfers:** patients release the bed from the completed step before seeking the next bed. They do not retain the previous bed while waiting for transfer.

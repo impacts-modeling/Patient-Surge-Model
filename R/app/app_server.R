@@ -342,8 +342,8 @@ app_server <- function(input, output, session) {
             demand_safety_factor = bed_search_config$demand_safety_factor,
             reliability_level = bed_search_config$reliability_level,
             search_seed = bed_search_config$search_seed,
-            congestion_index_opt = shiny::req(evaluation_signature$congestion_index),
-            congestion_index_opt_ICU = shiny::req(evaluation_signature$congestion_index_icu),
+            boarding_time_limit_GenMed = shiny::req(evaluation_signature$congestion_index),
+            boarding_time_limit_ICU = shiny::req(evaluation_signature$congestion_index_icu),
             workers = workers,
             verbose = TRUE
           )
@@ -406,7 +406,7 @@ app_server <- function(input, output, session) {
           class = "alert alert-warning",
           shiny::tags$strong("Outdated bed-expansion recommendation"),
           shiny::tags$br(),
-          "Hospital profiles, capacities, demand, queue limits, HxS inputs, or the number of simulations changed after this recommendation was calculated. Click Estimate Bed Expansion again before applying it."
+          "Hospital profiles, capacities, demand, boarding-time limits, HxS inputs, or the number of simulations changed after this recommendation was calculated. Click Estimate Bed Expansion again before applying it."
         ))
       }
   
@@ -457,8 +457,8 @@ app_server <- function(input, output, session) {
   
         Recommended Expansion:<br>
         <span style='font-size:14px; font-weight:normal;'>Mode: %s. Recommendation is additional beds beyond current capacity and HxS inputs.</span><br>
-        <span style='font-size:14px; font-weight:normal;'>Evaluated scenario: GenMed %d beds; ICU %d beds; queue limits %.2f and %.2f; %.6g patients/day; %d scenario simulations.</span><br>
-        <span style='font-size:14px; font-weight:normal;'>Both maximum queue limits met simultaneously in %.1f%% of final replications; target %.1f%%.</span><br>
+        <span style='font-size:14px; font-weight:normal;'>Evaluated scenario: GenMed %d beds; ICU %d beds; boarding-time limits %.2f and %.2f days; %.6g patients/day; %d scenario simulations.</span><br>
+        <span style='font-size:14px; font-weight:normal;'>Both maximum boarding-time limits met simultaneously in %.1f%% of final replications; target %.1f%%.</span><br>
         <span style='font-size:14px; font-weight:normal;'>%s</span><br>
   
         Add <span style='color:%s;'>%d</span> beds to <b>Med/Surg</b> and
@@ -562,6 +562,10 @@ app_server <- function(input, output, session) {
     output$bed_wait_table <- shiny::renderTable({
       shiny::req(simulation_data())
       bed_wait_table(simulation_data())
+    }, na = "Not estimable")
+    output$boarding_time_table <- shiny::renderTable({
+      shiny::req(simulation_data())
+      boarding_time_table(simulation_data())
     }, na = "Not estimable")
     output$baseline_run_status <- shiny::renderUI({
       data <- simulation_data()

@@ -130,6 +130,7 @@ run_baseline_simulation <- function(capacities, duration, n_patients, sim_days,
   for (unit in names(warmup_capacities)) {
     env <- simmer::add_resource(env, unit, capacity = as.integer(warmup_capacities[[unit]]), queue_size = Inf)
     env <- simmer::add_resource(env, logical_queue_resource(unit), capacity = Inf, queue_size = 0)
+    env <- simmer::add_resource(env, boarding_resource(unit), capacity = Inf, queue_size = 0)
   }
   seeds <- sample.int(.Machine$integer.max, 4L)
   schedule <- with_simulation_seed(seeds[[1]],

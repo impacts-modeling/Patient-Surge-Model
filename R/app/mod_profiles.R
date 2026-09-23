@@ -1,5 +1,6 @@
 # Names are display labels; values are stable internal resource identifiers.
 hospital_profile_units <- c(
+  "ED" = "ED",
   "Surge" = "Surge",
   "GenMed" = "GenMed",
   "ICU" = "ICU",
@@ -9,6 +10,12 @@ hospital_profile_units <- c(
   "Psychiatric" = "Psychiatric",
   "TransitionalCare" = "TransitionalCare"
 )
+# ED beds are modeled as practically unlimited (hallway/chair capacity is
+# elastic in practice): a large finite value, not literal Inf, because
+# validate_patient_configuration() and the resource setup require finite
+# capacities throughout. Boarding is what actually constrains an ED patient,
+# not this bed count.
+unlimited_capacity_placeholder <- 999L
 
 profile_excel_sheet_columns <- list(
   Profiles = c("Profile", "Arrival_percent", "Ambulatory"),
@@ -16,14 +23,17 @@ profile_excel_sheet_columns <- list(
   Fallbacks = c("Primary_unit", "Priority", "Fallback_unit"),
   Hospital = c("Unit", "Available_beds")
 )
-
+# CV is an optional Trajectories column: always written, but only required on
+# read when the uploaded workbook already includes it (older templates omit
+# it and default to 1 for ICU steps, 0.24 for every other unit).
 profile_config_to_excel_tables <- function(profile_config) {
   profile_names <- names(profile_config$patient_profiles)
   trajectory_rows <- lapply(profile_names, function(profile_name) {
     profile <- profile_config$patient_profiles[[profile_name]]
     if (is.null(profile$unit) || length(profile$unit) == 0) return(NULL)
+    step_cv <- if (!is.null(profile$cv)) profile$cv else default_cv_for_unit(profile$unit)
     data.frame(Profile = profile_name, Step = seq_along(profile$unit),
-               Unit = profile$unit, LOS_days = profile$los, check.names = FALSE)
+               Unit = profile$unit, LOS_days = profile$los, CV = step_cv, check.names = FALSE)
   })
   trajectory_rows <- Filter(Negate(is.null), trajectory_rows)
   fallback_rows <- lapply(names(profile_config$fallbacks), function(primary_unit) {
@@ -44,7 +54,8 @@ profile_config_to_excel_tables <- function(profile_config) {
       check.names = FALSE
     ),
     Trajectories = if (length(trajectory_rows) == 0) {
-      data.frame(Profile = character(), Step = integer(), Unit = character(), LOS_days = numeric())
+      data.frame(Profile = character(), Step = integer(), Unit = character(),
+                 LOS_days = numeric(), CV = numeric())
     } else do.call(rbind, trajectory_rows),
     Fallbacks = if (length(fallback_rows) == 0) {
       data.frame(Primary_unit = character(), Priority = integer(), Fallback_unit = character())
@@ -67,7 +78,7 @@ write_profile_config_xlsx <- function(profile_config, file) {
   editable_style <- openxlsx::createStyle(fgFill = "#FFF2CC")
   formats <- list(
     Profiles = list(column = 2, format = "0.00"),
-    Trajectories = list(column = 4, format = "0.00"),
+    Trajectories = list(column = c(4, 5), format = "0.00"),
     Fallbacks = list(column = 2, format = "0"),
     Hospital = list(column = 2, format = "0")
   )
@@ -127,7 +138,9 @@ read_profile_config_xlsx <- function(file) {
       stop("Sheet '", sheet_name, "' is missing column(s): ",
            paste(missing_columns, collapse = ", "), call. = FALSE)
     }
-    value[, profile_excel_sheet_columns[[sheet_name]], drop = FALSE]
+    # CV is optional: older templates without it default every step to 0.1.
+    optional_columns <- if (sheet_name == "Trajectories" && "CV" %in% names(value)) "CV" else character()
+    value[, c(profile_excel_sheet_columns[[sheet_name]], optional_columns), drop = FALSE]
   })
   names(tables) <- names(profile_excel_sheet_columns)
 
@@ -175,6 +188,12 @@ read_profile_config_xlsx <- function(file) {
   trajectories$Step <- suppressWarnings(as.numeric(trajectories$Step))
   trajectories$Unit <- trimws(as.character(trajectories$Unit))
   trajectories$LOS_days <- suppressWarnings(as.numeric(trajectories$LOS_days))
+  has_cv_column <- "CV" %in% names(trajectories)
+  trajectories$CV <- if (has_cv_column) {
+    suppressWarnings(as.numeric(trajectories$CV))
+  } else {
+    default_cv_for_unit(trajectories$Unit)
+  }
   if (nrow(trajectories) > 0) {
     if (any(!trajectories$Profile %in% profiles$Profile)) {
       stop("Every trajectory must reference a profile listed in 'Profiles'.", call. = FALSE)
@@ -188,6 +207,10 @@ read_profile_config_xlsx <- function(file) {
     }
     if (any(!is.finite(trajectories$LOS_days)) || any(trajectories$LOS_days <= 0)) {
       stop("'LOS_days' must contain positive numbers.", call. = FALSE)
+    }
+    if (any(!is.finite(trajectories$CV)) || any(trajectories$CV <= 0)) {
+      stop("'CV' must contain positive numbers, or be left out entirely to default to 1 for ICU ",
+           "steps and 0.24 for every other unit.", call. = FALSE)
     }
   }
 
@@ -208,7 +231,7 @@ read_profile_config_xlsx <- function(file) {
       if (!identical(as.integer(rows$Step), seq_len(nrow(rows)))) {
         stop("Trajectory steps for '", profile_name, "' must be unique and sequential from 1.", call. = FALSE)
       }
-      patient_profiles[[profile_name]] <- list(unit = rows$Unit, los = rows$LOS_days)
+      patient_profiles[[profile_name]] <- list(unit = rows$Unit, los = rows$LOS_days, cv = rows$CV)
     }
   }
 
@@ -308,7 +331,7 @@ hospital_profiles_ui <- function(id) {
                 ns("hospital_units"),
                 "Hospital units",
                 choices = hospital_profile_units,
-                selected = c("GenMed", "ICU")
+                selected = c("ED","GenMed", "ICU")
               )
             ),
             shiny::column(
@@ -341,8 +364,9 @@ hospital_profiles_ui <- function(id) {
             shiny::textInput(ns("profile_name"), "Patient profile name", "profile_1"),
             shiny::checkboxInput(ns("ambulatory_profile"), "Ambulatory (no inpatient beds)", FALSE),
             shiny::fluidRow(
-              shiny::column(6, shiny::uiOutput(ns("trajectory_units_ui"))),
-              shiny::column(6, shiny::uiOutput(ns("trajectory_los_ui")))
+              shiny::column(4, shiny::uiOutput(ns("trajectory_units_ui"))),
+              shiny::column(4, shiny::uiOutput(ns("trajectory_los_ui"))),
+              shiny::column(4, shiny::uiOutput(ns("trajectory_cv_ui")))
             ),
             shiny::actionButton(
               ns("add_trajectory_unit"),
@@ -365,7 +389,8 @@ hospital_profiles_ui <- function(id) {
             "<strong>Define each patient trajectory.</strong><br>",
             "Load a saved profile or enter a unique name and the ordered units",
             "visited by the patient. Enter the mean length of stay for every",
-            "unit and use Add unit when another care step is needed."
+            "unit, and its coefficient of variation (defaults to 1 for ICU,",
+            "0.24 otherwise), then use Add unit when another care step is needed."
           ),
           data.position = "bottom"
         )
@@ -470,7 +495,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
     loaded_probabilities <- shiny::reactiveVal(numeric())
     loaded_capacities <- shiny::reactiveVal(c(GenMed = 15, ICU = 7))
     pending_loaded_units <- shiny::reactiveVal(NULL)
-    trajectory_draft <- shiny::reactiveVal(list(unit = character(), los = numeric()))
+    trajectory_draft <- shiny::reactiveVal(list(unit = character(), los = numeric(), cv = numeric()))
 
     configuration_input_id <- function(prefix, name) {
       paste(prefix, configuration_version(), name, sep = "_")
@@ -517,8 +542,8 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       shiny::req(input$profile_source)
       test_config <- selected_test_config()
       if (is.null(test_config)) {
-        test_config <- list(units = c("GenMed", "ICU"),
-                            capacities = c(GenMed = 15, ICU = 7),
+        test_config <- list(units = c("ED","GenMed", "ICU"),
+                            capacities = c(ED = unlimited_capacity_placeholder, GenMed = 15, ICU = 7),
                             patient_profiles = list(), profile_prob = numeric(), fallbacks = list())
       }
       pending_loaded_units(test_config$units)
@@ -530,13 +555,13 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       confirmed_profile_probabilities(if (length(test_config$profile_prob)) test_config$profile_prob else NULL)
       pending_profile_replacement(NULL)
       pending_profile_removal(NULL)
-      trajectory_draft(list(unit = character(), los = numeric()))
+      trajectory_draft(list(unit = character(), los = numeric(), cv = numeric()))
       trajectory_unit_count(1L)
       trajectory_form_version(trajectory_form_version() + 1L)
       shiny::removeModal()
       shiny::updateTextInput(session, "profile_name", value = "profile_1")
       shiny::updateCheckboxInput(session, "ambulatory_profile", value = FALSE)
-      shiny::updateCheckboxGroupInput(session, "hospital_units", selected = test_config$units)
+      shiny::updateCheckboxGroupInput(session, "hospital_units", selected = union("ED", test_config$units))
       shiny::updateSelectInput(session, "fallback_unit", selected = "")
       shiny::updateSelectizeInput(session, "fallback_options", choices = test_config$units,
                                   selected = character(), server = TRUE)
@@ -562,12 +587,12 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
               configured_capacity
             } else if (unit_name == "GenMed") {
               405
+            } else if (unit_name == "ICU") {
+              84
+            } else if (unit_name == "ED") {
+              unlimited_capacity_placeholder
             } else {
-              if (unit_name == "ICU") {
-                84
-              } else {
-                15
-              }
+              15
             }
             if (!is.null(current_capacity)) default_capacity <- current_capacity
             shiny::column(
@@ -576,7 +601,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
                 session$ns(input_id),
                 unit_name,
                 min = 0,
-                max = 500,
+                max = if (unit_name == "ED") unlimited_capacity_placeholder else 500,
                 value = default_capacity
               )
             )
@@ -672,6 +697,35 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       }))
     })
 
+    output$trajectory_cv_ui <- shiny::renderUI({
+      version <- trajectory_form_version()
+      count <- trajectory_unit_count()
+      shiny::tagList(lapply(seq_len(count), function(index) {
+        input_id <- trajectory_input_id("cv", index, version)
+        cv_value <- shiny::isolate(input[[input_id]])
+        if (is.null(cv_value)) {
+          draft <- trajectory_draft()
+          if (index <= length(draft$cv)) {
+            cv_value <- draft$cv[[index]]
+          } else {
+            unit_id <- trajectory_input_id("unit", index, version)
+            selected_unit <- shiny::isolate(input[[unit_id]])
+            if (is.null(selected_unit)) {
+              selected_unit <- if (index <= length(draft$unit)) draft$unit[[index]] else "None"
+            }
+            cv_value <- default_cv_for_unit(selected_unit)
+          }
+        }
+        shiny::numericInput(
+          session$ns(input_id),
+          paste("CV unit", index),
+          value = cv_value,
+          min = 0.01,
+          step = 0.01
+        )
+      }))
+    })
+
     shiny::observeEvent(input$add_trajectory_unit, {
       trajectory_unit_count(trajectory_unit_count() + 1L)
     })
@@ -684,6 +738,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       profile_name <- input$remove_profile_name
       shiny::req(profile_name %in% names(patient_profiles()))
       profile <- patient_profiles()[[profile_name]]
+      if (is.null(profile$cv)) profile$cv <- default_cv_for_unit(profile$unit)
       trajectory_draft(profile)
       trajectory_unit_count(max(1L, length(profile$unit)))
       trajectory_form_version(trajectory_form_version() + 1L)
@@ -695,7 +750,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       profiles <- patient_profiles()
       profiles[[profile_name]] <- profile
       patient_profiles(profiles)
-      trajectory_draft(list(unit = character(), los = numeric()))
+      trajectory_draft(list(unit = character(), los = numeric(), cv = numeric()))
       trajectory_unit_count(1L)
       trajectory_form_version(trajectory_form_version() + 1L)
       shiny::updateCheckboxInput(session, "ambulatory_profile", value = FALSE)
@@ -718,19 +773,24 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
         value <- input[[trajectory_input_id("los", index, version)]]
         if (is.null(value)) NA_real_ else value
       }, numeric(1))
+      cv <- vapply(seq_len(count), function(index) {
+        value <- input[[trajectory_input_id("cv", index, version)]]
+        if (is.null(value)) NA_real_ else value
+      }, numeric(1))
       keep <- !is.na(units) & units != "None"
       if (isTRUE(input$ambulatory_profile)) {
-        new_profile <- list(unit = NULL, los = NULL)
+        new_profile <- list(unit = NULL, los = NULL, cv = NULL)
       } else {
         shiny::validate(
           shiny::need(any(keep), "A profile must contain at least one unit with a positive LOS."),
           shiny::need(all(is.finite(los[keep]) & los[keep] > 0), "Enter a positive LOS for each selected unit."),
+          shiny::need(all(is.finite(cv[keep]) & cv[keep] > 0), "Enter a positive CV for each selected unit."),
           shiny::need(
             all(units[keep] %in% selected_units()),
             "All trajectory units must be selected hospital units."
           )
         )
-        new_profile <- list(unit = units[keep], los = los[keep])
+        new_profile <- list(unit = units[keep], los = los[keep], cv = cv[keep])
       }
       if (profile_name %in% names(patient_profiles())) {
         pending_profile_replacement(list(
@@ -1082,6 +1142,18 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
           profiles,
           function(profile) {
             if (is.null(profile$los)) "-" else paste(profile$los, collapse = " -> ")
+          },
+          character(1)
+        ),
+        CV = vapply(
+          profiles,
+          function(profile) {
+            if (is.null(profile$los)) {
+              "-"
+            } else {
+              step_cv <- if (!is.null(profile$cv)) profile$cv else default_cv_for_unit(profile$unit)
+              paste(step_cv, collapse = " -> ")
+            }
           },
           character(1)
         ),

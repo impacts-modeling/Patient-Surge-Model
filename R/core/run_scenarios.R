@@ -59,6 +59,7 @@ run_hospital_scenario <- function(config, duration, n_patients, sim_days,
       activity$profile <- sub("_[0-9]+$", "", sub("^patient_", "", activity$name))
     }
     activity$is_logical_wait <- startsWith(activity$resource, logical_queue_prefix)
+    activity$is_boarding <- startsWith(activity$resource, boarding_prefix)
     activity <- dplyr::arrange(activity, .data$start_time, .data$name, .data$resource, .data$end_time)
     # Consolidate the raw resource monitor only once, then slice the observation.
     history <- get_hospital_mon_resources(sim, include_warmup = TRUE)

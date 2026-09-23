@@ -128,7 +128,7 @@ workbook for future simulations. Both files use four required sheets:
 | Sheet | Required columns | Purpose |
 |---|---|---|
 | **Profiles** | `Profile`, `Arrival_percent`, `Ambulatory` | Profile names, patient mix, and ambulatory status. |
-| **Trajectories** | `Profile`, `Step`, `Unit`, `LOS_days` | Ordered care steps and mean LOS values. |
+| **Trajectories** | `Profile`, `Step`, `Unit`, `LOS_days` (`CV` optional) | Ordered care steps, mean LOS, and optional per-step coefficient of variation (defaults to 1 for ICU steps and 0.24 for every other unit when omitted). |
 | **Fallbacks** | `Primary_unit`, `Priority`, `Fallback_unit` | Ordered substitute-bed rules. |
 | **Hospital** | `Unit`, `Available_beds` | Selected units and baseline bed capacity. |
 
@@ -142,10 +142,12 @@ underscores, or hyphens.
 
 The **Routine Civilian Flow** panel in Hospital Setup optionally adds continuous
 civilian demand. Save a separate list of civilian profiles with constant arrival
-rates in patients/day, ordered unit IDs separated by commas, and one positive
-mean stay per step. These profiles share hospital beds and fallback rules with
-surge patients. Fractional rates are supported. Profile lists are retained for
-each hospital source and unit selection during the current session.
+rates in patients/day, ordered unit IDs separated by commas, one positive
+mean stay per step, and, optionally, one coefficient of variation (CV) per step
+(comma-separated, or a single value applied to every step). Leaving the CV field
+blank defaults to 1 for ICU steps and 0.24 for every other unit. These profiles share hospital beds and fallback
+rules with surge patients. Fractional rates are supported. Profile lists are
+retained for each hospital source and unit selection during the current session.
 
 Before the surge, the model runs civilian arrivals alone. The default warm-up
 starts checking after 90 days and can extend to 365 days. It compares time-weighted
@@ -214,7 +216,9 @@ percentages, then follows the profile's ordered trajectory.
 LOS at each inpatient step follows a log-normal distribution with:
 
 - mean equal to the LOS entered for that trajectory step; and
-- coefficient of variation (CV) fixed at **0.20**.
+- coefficient of variation (CV) entered for that step, defaulting to **1 for
+  ICU steps and 0.24 for every other unit** when left blank (both surge and
+  civilian profiles support a per-step CV).
 
 The model converts the arithmetic mean and CV to log-normal parameters:
 
@@ -346,7 +350,7 @@ unit. A value of zero means no observed queue for that unit on that day.
 | Column | Interpretation |
 |---|---|
 | **Average Queue Length (Patients)** | Mean queue length across recorded time points and simulations. |
-| **Average Maximum Queue Length (Patients)** | Median of the maximum queue length observed in each simulation. |
+| **Mean Maximum Queue Length (Patients)** | Mean, across replications, of each replication's maximum queue length. |
 | **Average Congestion Index** | Mean fraction of recorded time points with a queue greater than zero. |
 | **Average Waiting Time Fraction** | Mean ratio of queued demand to total queued plus occupied demand. |
 
@@ -386,7 +390,8 @@ when the recommendation passes.
 
 - Patient arrivals use a fixed daily rate during the arrival period.
 - Profile probabilities remain constant throughout a scenario.
-- LOS variability uses a fixed CV of 0.20.
+- LOS variability defaults to a CV of 1 for ICU steps and 0.24 for every other
+  unit; it is editable per profile step.
 - Queues are unlimited and patients do not leave while waiting.
 - Bed capacity is constant during a simulation.
 - Staffing, equipment, acuity changes, transfers outside the modeled hospital,

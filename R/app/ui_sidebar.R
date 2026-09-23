@@ -3,7 +3,7 @@ build_sidebar <- function() {
   col1 <- 6
   search_config <- bed_search_configs$development
   compliance_note <- sprintf(
-    "In at least %.1f%% of replications, the maximum queues of GenMed and ICU must both stay within their limits during the full observation period.",
+    "In at least %.1f%% of replications, the peak boarding time of GenMed and ICU must both stay within their limits (days) during the full observation period.",
     100 * search_config$reliability_level)
   sidebar <- dashboardSidebar(
     width = 305,
@@ -96,10 +96,10 @@ build_sidebar <- function() {
           shiny::tags$details(
             class = "sidebar-section", open = NA,
             shiny::tags$summary("Calculate HxS Expansion"),
-            shiny::h4("Maximum Queue Limits (Patients):"),
+            shiny::h4("Maximum Boarding-Time Limits (Days):"),
             shiny::fluidRow(
-              shiny::column(width = 6, shiny::numericInput("congestion_index", "Med/Surg", min = 1, max = 100, value = 10, step = 5)),
-              shiny::column(width = 6, shiny::numericInput("congestion_index_icu", "ICU", min = 1, max = 100, value = 10, step = 5))
+              shiny::column(width = 6, shiny::numericInput("congestion_index", "Med/Surg (days)", min = 0.01, max = 30, value = 1, step = 0.5)),
+              shiny::column(width = 6, shiny::numericInput("congestion_index_icu", "ICU (days)", min = 0.01, max = 30, value = 1, step = 0.5))
             ),
             shiny::helpText(paste(
               compliance_note
@@ -117,7 +117,7 @@ build_sidebar <- function() {
           data.step = 10,
           data.intro = paste(
             "<strong>Estimate additional capacity.</strong><br>",
-            "Enter acceptable GenMed and ICU queue limits. The optimizer first checks current capacity",
+            "Enter acceptable GenMed and ICU maximum boarding-time limits (days). The optimizer first checks current capacity",
             "and, if needed, estimates demand with at least 500 beds in every unit.",
             "It then grows only failing resources exponentially; this can exceed primary",
             "demand when fallbacks route patients into GenMed or ICU.", compliance_note,

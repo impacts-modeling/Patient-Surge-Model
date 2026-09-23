@@ -170,12 +170,27 @@ build_body <- function() {
             ),
             shiny::fluidRow(
               shinydashboard::box(
-                title = "Bed Waiting Times", status = "success", solidHeader = TRUE, width = 12,
+                title = "Boarding Times", status = "success", solidHeader = TRUE, width = 6,
                 collapsible = TRUE,
                 collapsed = FALSE,
-                rintrojs::introBox(shiny::tableOutput("bed_wait_table"), data.step = 13, data.intro = paste("<strong>Bed waiting times: completed patients only.</strong><br>", "Mean wait includes zero waits and is averaged across replications. The 95% CI describes uncertainty in that mean, not the range containing 95% of patient waits; at least two contributing replications are needed.", "Observed waiting (%) is the percentage of bed requests with a positive wait. Rows distinguish unit, population and cohort. Unfinished patients are excluded, so delays may be understated."), data.position = "top"), shiny::helpText("Only patients who completed their hospital trajectory are included. Means include zero waits and average replication-specific bed-request means; 95% CIs require at least two contributing replications. Results exclude unfinished patients and may understate delays. Day-zero waits include waiting before observation."), style = "overflow-x: auto;"
+                shiny::tableOutput("boarding_time_table"),
+                shiny::helpText(
+                  "Time a patient held a bed elsewhere while waiting to reach the listed unit -- ",
+                  "either boarding between pathway steps or occupying a fallback while watching ",
+                  "to transfer back to it. \"Mean of replication maxima\" averages each replication's ",
+                  "longest boarding episode; \"Mean boarding time\" averages every episode. Both are in days."
+                ),
+                style = "overflow-x: auto;"
+              ),
+              
+              shinydashboard::box(
+                title = "Bed Waiting Times", status = "success", solidHeader = TRUE, width = 6,
+                collapsible = TRUE,
+                collapsed = FALSE,
+                rintrojs::introBox(shiny::tableOutput("bed_wait_table"), data.step = 13, data.intro = paste("<strong>Bed waiting times: completed patients only.</strong><br>", "Mean wait includes zero waits and is averaged across replications. The 95% CI describes uncertainty in that mean, not the range containing 95% of patient waits; at least two contributing replications are needed.", "Observed waiting (%) is the percentage of bed requests with a positive wait. Rows distinguish unit, population and cohort. Unfinished patients are excluded, so delays may be understated."), data.position = "top"), shiny::helpText("Only patients who completed their hospital trajectory are included. Means include zero waits and average replication-specific bed-request means; 95% CIs require at least two contributing replications. Results exclude unfinished patients and may understate delays. Day-zero waits include waiting before observation."), shiny::helpText("This table only covers bed-less waits at a pathway's first step (no bed held yet). If civilian profiles start with ED, and ED has enough capacity, civilian rows here will be near zero -- that wait now shows as boarding (see \"Boarding Times\" above) instead, since the patient holds the ED bed while waiting. This table remains meaningful for populations that do not pass through ED first (e.g. surge patients requesting their first bed directly)."), style = "overflow-x: auto;"
               )
             ),
+
             shiny::fluidRow(
               shinydashboard::box(
                 title = "Export Report", status = "primary", solidHeader = TRUE, width = 12,

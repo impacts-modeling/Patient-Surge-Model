@@ -33,9 +33,9 @@ make_expansion_table <- function(n_result) {
       "Validated total ICU capacity",
       "Unified search evaluations",
       "Independent final evaluations",
-      "Joint maximum-queue compliance target met",
-      "Final mean GenMed queue (patients)",
-      "Final mean ICU queue (patients)"
+      "Joint maximum-boarding-time compliance target met",
+      "Final mean GenMed boarding time (days)",
+      "Final mean ICU boarding time (days)"
     ),
     Value = c(
       n_result$N_added %||% NA_integer_,
@@ -45,8 +45,8 @@ make_expansion_table <- function(n_result) {
       n_result$search_evaluations %||% NA_integer_,
       n_result$final_evaluations %||% NA_integer_,
       isTRUE(n_result$converged),
-      n_result$mean_queue_GenMed %||% NA_real_,
-      n_result$mean_queue_ICU %||% NA_real_
+      n_result$mean_boarding_days_GenMed %||% NA_real_,
+      n_result$mean_boarding_days_ICU %||% NA_real_
     ),
     stringsAsFactors = FALSE
   )
@@ -338,8 +338,8 @@ build_report_params <- function(input, profile_config) {
          `Simulation seed` = input$simulation_seed),
     capacity_params,
     list(
-      `Maximum Allowed Med/Surg Queue Length` = input$congestion_index,
-      `Maximum Allowed ICU Queue Length` = input$congestion_index_icu,
+      `Maximum Allowed Med/Surg Boarding Time (days)` = input$congestion_index,
+      `Maximum Allowed ICU Boarding Time (days)` = input$congestion_index_icu,
       `HxS Med/Surg Additional Beds Entered` = input$genmed_msf,
       `HxS ICU Additional Beds Entered` = input$icu_msf
     )
@@ -434,6 +434,8 @@ generate_simulation_pdf_report <- function(file, params, simulation_data, profil
   add_resource_plot_page(simulation_data$resources, var = "server")
   add_resource_plot_page(simulation_data$resources, var = "queue")
   add_report_table_page("Bed waiting times (days; completed patients only)", bed_wait_table(simulation_data))
+  add_report_table_page("Boarding times (days; time holding a bed while awaiting the next unit)",
+                        boarding_time_table(simulation_data))
 
   invisible(file)
 }

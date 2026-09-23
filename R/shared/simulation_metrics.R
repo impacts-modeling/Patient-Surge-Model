@@ -14,14 +14,6 @@ safe_max <- function(x, default = 0) {
   max(finite_values)
 }
 
-safe_median <- function(x, default = 0) {
-  finite_values <- x[is.finite(x)]
-  if (length(finite_values) == 0) {
-    return(default)
-  }
-  median(finite_values)
-}
-
 safe_fraction <- function(numerator, denominator, default = 0) {
   if (!is.finite(numerator) || !is.finite(denominator) || denominator <= 0) {
     return(default)
@@ -98,6 +90,55 @@ bed_wait_table <- function(run) {
       `95% CI` = ifelse(is.finite(.data$lower), sprintf("%.3f to %.3f", .data$lower, .data$upper),
                         "Requires at least 2 replications with completed patients"),
       `Observed waiting (%)` = round(.data$percent_observed_waiting, 1))
+}
+
+# One boarding episode = one visit to a .boarding_for__<unit> logical
+# resource: the time a patient held some other bed while waiting to reach
+# `unit` -- either boarding between pathway steps, or occupying a fallback
+# and watching for the primary unit. This is bed-held wait time, distinct
+# from bed_wait_summary()'s bed-less queue time (.waiting_for__, now only
+# possible on a pathway's first step). An episode still open at the horizon
+# contributes its elapsed duration so far (a conservative lower bound),
+# flagged as pending rather than treated as a resolved, shorter episode.
+boarding_time_summary <- function(run) {
+  activity <- run$patient_resource_activity
+  required <- c("name", "resource", "start_time", "end_time", "population", "replication", "scenario_id")
+  stopifnot(all(required %in% names(activity)))
+  prefix <- ".boarding_for__"
+  episodes <- activity |>
+    dplyr::filter(startsWith(.data$resource, prefix)) |>
+    dplyr::left_join(run$runs[c("scenario_id", "replication", "sim_days")],
+                     by = c("scenario_id", "replication")) |>
+    dplyr::mutate(resource = substring(.data$resource, nchar(prefix) + 1L),
+      resolved = is.finite(.data$end_time) & .data$end_time >= .data$start_time &
+        .data$end_time <= .data$sim_days) |>
+    dplyr::filter(.data$start_time < .data$sim_days,
+      .data$start_time >= 0 | !.data$resolved | .data$end_time > 0) |>
+    dplyr::mutate(boarding_days = dplyr::if_else(.data$resolved, .data$end_time - .data$start_time,
+      .data$sim_days - .data$start_time))
+  if (!nrow(episodes)) return(list(episodes = episodes, replications = data.frame(), summary = data.frame()))
+  replications <- episodes |>
+    dplyr::group_by(.data$scenario_id, .data$replication, .data$resource, .data$population) |>
+    dplyr::summarise(episodes = dplyr::n(), pending = sum(!.data$resolved),
+      maximum_boarding_days = safe_max(.data$boarding_days),
+      mean_boarding_days = safe_mean(.data$boarding_days), .groups = "drop")
+  summary <- replications |>
+    dplyr::group_by(.data$scenario_id, .data$resource, .data$population) |>
+    dplyr::summarise(replications_with_episodes = dplyr::n(),
+      total_episodes = sum(.data$episodes), pending_episodes = sum(.data$pending),
+      mean_maximum_boarding_days = safe_mean(.data$maximum_boarding_days),
+      mean_boarding_days = safe_mean(.data$mean_boarding_days), .groups = "drop")
+  list(episodes = episodes, replications = replications, summary = summary)
+}
+
+boarding_time_table <- function(run) {
+  data <- boarding_time_summary(run)$summary
+  if (!nrow(data)) return(data.frame(Status = "No boarding episodes recorded in the observation period."))
+  data |>
+    dplyr::transmute(Unit = .data$resource, Population = .data$population,
+      `Mean of replication maxima (days)` = round(.data$mean_maximum_boarding_days, 3),
+      `Mean boarding time (days)` = round(.data$mean_boarding_days, 3),
+      `Total episodes` = .data$total_episodes, `Pending at horizon` = .data$pending_episodes)
 }
 
 # Unrounded, one observation per scenario/resource/replication/metric.
@@ -199,7 +240,7 @@ make_daily_peak_summary <- function(data, var = "server") {
   daily |>
     dplyr::group_by(dplyr::across(dplyr::all_of(intersect(
       c("scenario_id", "time1", "resource"), names(daily))))) |>
-    dplyr::summarise(median_val = stats::median(.data$daily_max),
+    dplyr::summarise(median_val = mean(.data$daily_max, na.rm = TRUE),
       lower = as.numeric(stats::quantile(.data$daily_max, .1, type = 7)),
       upper = as.numeric(stats::quantile(.data$daily_max, .9, type = 7)),
       replications = dplyr::n(), .groups = "drop")
@@ -241,14 +282,14 @@ make_resource_plot <- function(data, var = "server") {
         showlegend = FALSE, hoverinfo = "skip") |>
       plotly::add_lines(data = rows, x = ~time1, y = ~median_val,
         name = series[[i]], legendgroup = series[[i]], line = list(color = colors[[i]], width = 2),
-        text = ~paste0("Day: ", time1, "<br>Median daily maximum: ", median_val,
+        text = ~paste0("Day: ", time1, "<br>Mean daily maximum: ", median_val,
           "<br>P10–P90: ", round(lower, 2), "–", round(upper, 2)),
         hoverinfo = "text+name")
   }
   p |>
     plotly::layout(
       title = "",
-      xaxis = list(title = "Day — median daily maximum; band: P10–P90"),
+      xaxis = list(title = "Day — mean daily maximum; band: P10–P90"),
       yaxis = list(title = yaxis_label) # ,
       # legend = list(
       #   orientation = "h", # horizontal legend
@@ -361,7 +402,7 @@ summary_queue <- function(data, by_replication = FALSE) {
     dplyr::group_by(dplyr::across(dplyr::all_of(intersect(c("scenario_id", "resource"), names(data))))) |>
     dplyr::summarise(
       avg_queue_length = safe_mean(avg_queue_length),
-      avg_max_queue_length = safe_median(max_queue_length),
+      avg_max_queue_length = safe_mean(max_queue_length),
       avg_congestion_index = safe_mean(avg_congestion_index),
       avg_wait_time_per_patient = safe_mean(avg_wait_time_per_patient),
       .groups = "drop"
@@ -370,7 +411,7 @@ summary_queue <- function(data, by_replication = FALSE) {
   queue_analysis <- dplyr::mutate(queue_analysis, dplyr::across(where(is.numeric), ~round(.x, 2)))
   colnames(queue_analysis) <- c(
     intersect("scenario_id", names(data)), "Resource", "Average Queue Length (Patients)",
-    "Median Maximum Queue Length (Patients)", "Fraction of Time with a Queue",
+    "Mean Maximum Queue Length (Patients)", "Fraction of Time with a Queue",
     "Queued Patient-Time Fraction"
   )
   queue_analysis

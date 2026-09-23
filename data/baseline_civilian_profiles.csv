@@ -1,10 +1,4 @@
-Profile,Patients_per_day,Pathway,Mean_stays_days
-S_alta,7.5,Surge,1
-S_I_alta,0.47,"Surge, ICU","1,5"
-M_alta,46,GenMed,7
-M_I_alta,1,"GenMed, ICU","7,6"
-M_I_S,0.001781054,"GenMed, ICU, Surge","7,6, 1"
-M_I_M,1,"GenMed, ICU, GenMed","7, 6, 7"
-I_alta,5.2,ICU,6
-I_S,0.1,"ICU, Surge","6, 1"
-I_M,5.2,"ICU, GenMed","6, 7"
+Profile,Patients_per_day,Pathway,Mean_stays_days,CV_values
+ED_ICU,10,"ED, ICU","0.0598,7.5","0.44,1.0636"
+ED_GenMed,48,"ED, GenMed","0.0598,7","0.44,0.2401"
+ED_Surge,8.3444,"ED, Surge","0.0598,1.1493","0.44,0.2694"

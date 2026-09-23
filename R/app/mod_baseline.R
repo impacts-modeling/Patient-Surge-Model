@@ -1,30 +1,39 @@
-# CSV pathways and stays use comma-separated values inside quoted CSV fields.
+# CSV pathways, stays and CVs use comma-separated values inside quoted CSV
+# fields. CV_values is optional; a blank or absent CV_values entry defaults
+# every step to 1 for ICU, 0.24 for every other unit (default_cv_for_unit()
+# from R/shared/profiles_deloitte.R).
 baseline_profiles_to_table <- function(profiles) {
   if (!length(profiles)) {
     return(data.frame(Profile = character(), Patients_per_day = numeric(),
-                      Pathway = character(), Mean_stays_days = character()))
+                      Pathway = character(), Mean_stays_days = character(),
+                      CV_values = character()))
   }
   do.call(rbind, lapply(names(profiles), function(name) {
     profile <- profiles[[name]]
+    step_cv <- if (!is.null(profile$cv)) profile$cv else default_cv_for_unit(profile$unit)
     data.frame(Profile = name, Patients_per_day = profile$rate,
                Pathway = paste(profile$unit, collapse = ", "),
                Mean_stays_days = paste(format(profile$los, digits = 15, trim = TRUE),
-                                       collapse = ", "))
+                                       collapse = ", "),
+               CV_values = paste(format(step_cv, digits = 15, trim = TRUE), collapse = ", "))
   }))
 }
 
 read_baseline_profiles_csv <- function(file, hospital) {
-  columns <- names(baseline_profiles_to_table(list()))
+  required_columns <- c("Profile", "Patients_per_day", "Pathway", "Mean_stays_days")
   rows <- utils::read.csv(file, check.names = FALSE, colClasses = "character",
                           fileEncoding = "UTF-8-BOM", na.strings = "",
                           strip.white = TRUE, fill = FALSE)
-  if (anyDuplicated(names(rows)) || !all(columns %in% names(rows))) {
-    stop("CSV must contain unique columns: ", paste(columns, collapse = ", "), call. = FALSE)
+  if (anyDuplicated(names(rows)) || !all(required_columns %in% names(rows))) {
+    stop("CSV must contain unique columns: ", paste(required_columns, collapse = ", "), call. = FALSE)
   }
   if (!nrow(rows)) stop("CSV must contain at least one civilian profile.", call. = FALSE)
-  rows <- rows[, columns, drop = FALSE]
-  rows[] <- lapply(rows, trimws)
-  if (anyNA(rows) || any(vapply(rows, function(column) any(!nzchar(column)), logical(1)))) {
+  has_cv_column <- "CV_values" %in% names(rows)
+  rows <- rows[, c(required_columns, if (has_cv_column) "CV_values"), drop = FALSE]
+  rows[required_columns] <- lapply(rows[required_columns], trimws)
+  if (has_cv_column) rows$CV_values <- trimws(rows$CV_values)
+  if (anyNA(rows[required_columns]) ||
+      any(vapply(rows[required_columns], function(column) any(!nzchar(column)), logical(1)))) {
     stop("Every profile needs a name, arrival rate, pathway, and mean stays.", call. = FALSE)
   }
   if (anyDuplicated(rows$Profile)) stop("CSV profile names must be unique.", call. = FALSE)
@@ -34,7 +43,7 @@ read_baseline_profiles_csv <- function(file, hospital) {
   }
   split_steps <- function(value) {
     if (grepl("(^|,)\\s*(,|$)", value)) {
-      stop("Pathway and Mean_stays_days cannot contain empty steps.", call. = FALSE)
+      stop("Pathway, Mean_stays_days and CV_values cannot contain empty steps.", call. = FALSE)
     }
     trimws(strsplit(value, ",", fixed = TRUE)[[1]])
   }
@@ -45,16 +54,28 @@ read_baseline_profiles_csv <- function(file, hospital) {
       stop("Profile '", rows$Profile[[index]], "' needs one positive mean stay per pathway step.",
            call. = FALSE)
     }
+    cv_entry <- if (has_cv_column) rows$CV_values[[index]] else NA_character_
+    cv <- if (is.na(cv_entry) || !nzchar(cv_entry)) {
+      default_cv_for_unit(units)
+    } else {
+      suppressWarnings(as.numeric(split_steps(cv_entry)))
+    }
+    if (length(cv) == 1L && length(units) > 1L) cv <- rep(cv, length(units))
+    if (length(cv) != length(units) || any(!is.finite(cv)) || any(cv <= 0)) {
+      stop("Profile '", rows$Profile[[index]], "' needs one positive CV per pathway step, ",
+           "or leave CV_values blank to default to 1 for ICU steps and 0.24 for other steps.",
+           call. = FALSE)
+    }
     unknown <- setdiff(units, hospital$units)
     if (length(unknown)) {
       stop("Profile '", rows$Profile[[index]], "' uses unselected units: ",
            paste(unknown, collapse = ", "), ". Select these hospital units first.", call. = FALSE)
     }
-    list(unit = units, los = stays, rate = rates[[index]])
+    list(unit = units, los = stays, cv = cv, rate = rates[[index]])
   }), rows$Profile)
   candidate <- baseline_defaults()
   candidate$enabled <- TRUE
-  candidate$profiles <- lapply(profiles, function(profile) profile[c("unit", "los")])
+  candidate$profiles <- lapply(profiles, function(profile) profile[c("unit", "los", "cv")])
   candidate$arrival_rates <- stats::setNames(rates, rows$Profile)
   validate_baseline_config(candidate, hospital$capacities, hospital$fallbacks)
   profiles
@@ -82,9 +103,11 @@ mod_baseline_ui <- function(id) {
       shiny::tags$hr(),
       shiny::fileInput(ns("profile_csv"), "Civilian profiles CSV", accept = ".csv"),
       shiny::helpText(paste(
-        "Columns: Profile, Patients_per_day, Pathway, Mean_stays_days. Use decimal points.",
-        "Separate pathway units and stays with commas inside each cell",
+        "Columns: Profile, Patients_per_day, Pathway, Mean_stays_days, and optional CV_values.",
+        "Use decimal points. Separate pathway units, stays and CVs with commas inside each cell",
         "(for example: ICU, GenMed and 8.294710, 0.142857).",
+        "CV_values may be left blank, or omitted entirely, to default to 1 for ICU steps",
+        "and 0.24 for every other unit.",
         "Import adds profiles and updates matching names; other saved profiles are kept.",
         "Select the hospital units before importing. Beds and warm-up settings are configured separately."
       )),
@@ -104,6 +127,8 @@ mod_baseline_ui <- function(id) {
           shiny::numericInput(ns("rate"), "Arrival rate (patients/day)", 1, min = 0, step = "any"),
           shiny::textInput(ns("units"), "Ordered pathway (unit IDs separated by commas)", "GenMed"),
           shiny::textInput(ns("los"), "Mean stay at each step (days, separated by commas)", "3"),
+          shiny::textInput(ns("cv"), "Coefficient of variation at each step (comma-separated)", ""),
+          shiny::helpText("Leave blank to default to 1 for ICU steps and 0.24 for every other unit; or enter one value to apply it to every step."),
           shiny::textOutput(ns("available_units")),
           shiny::actionButton(ns("save"), "Save civilian profile", class = "btn-primary"),
           shiny::selectInput(ns("selected"), "Saved civilian profile", choices = character()),
@@ -240,9 +265,16 @@ mod_baseline_server <- function(id, hospital_config) {
       name <- trimws(input$name)
       units <- trimws(strsplit(input$units, ",", fixed = TRUE)[[1]])
       los <- suppressWarnings(as.numeric(trimws(strsplit(input$los, ",", fixed = TRUE)[[1]])))
+      cv_text <- trimws(if (is.null(input$cv)) "" else input$cv)
+      cv <- if (!nzchar(cv_text)) {
+        default_cv_for_unit(units)
+      } else {
+        suppressWarnings(as.numeric(trimws(strsplit(cv_text, ",", fixed = TRUE)[[1]])))
+      }
+      if (length(cv) == 1L && length(units) > 1L) cv <- rep(cv, length(units))
       candidate <- baseline_defaults()
       candidate$enabled <- TRUE
-      candidate$profiles <- stats::setNames(list(list(unit = units, los = los)), name)
+      candidate$profiles <- stats::setNames(list(list(unit = units, los = los, cv = cv)), name)
       candidate$arrival_rates <- stats::setNames(input$rate, name)
       error <- tryCatch({
         if (!nzchar(name)) stop("Enter a civilian profile name.")
@@ -255,16 +287,18 @@ mod_baseline_server <- function(id, hospital_config) {
       }
       all <- saved()
       current <- profiles()
-      current[[name]] <- list(unit = units, los = los, rate = input$rate)
+      current[[name]] <- list(unit = units, los = los, cv = cv, rate = input$rate)
       all[[key()]] <- current
       saved(all)
     })
     shiny::observeEvent(input$edit, {
       profile <- profiles()[[input$selected]]
       shiny::req(profile)
+      step_cv <- if (!is.null(profile$cv)) profile$cv else default_cv_for_unit(profile$unit)
       shiny::updateTextInput(session, "name", value = input$selected)
       shiny::updateTextInput(session, "units", value = paste(profile$unit, collapse = ", "))
       shiny::updateTextInput(session, "los", value = paste(profile$los, collapse = ", "))
+      shiny::updateTextInput(session, "cv", value = paste(step_cv, collapse = ", "))
       shiny::updateNumericInput(session, "rate", value = profile$rate)
     })
     shiny::observeEvent(input$remove, {
@@ -279,7 +313,11 @@ mod_baseline_server <- function(id, hospital_config) {
       config <- baseline_defaults()
       config$enabled <- isTRUE(input$enabled)
       if (!config$enabled) return(config)
-      config$profiles <- lapply(profiles(), function(profile) profile[c("unit", "los")])
+      config$profiles <- lapply(profiles(), function(profile) {
+        cv <- profile$cv
+        if (is.null(cv)) cv <- default_cv_for_unit(profile$unit)
+        list(unit = profile$unit, los = profile$los, cv = cv)
+      })
       config$arrival_rates <- vapply(profiles(), `[[`, numeric(1), "rate")
       config$arrival_process <- if (is.null(input$arrival_process)) "even" else input$arrival_process
       config$warmup_mode <- if (is.null(input$warmup_mode)) "fixed" else input$warmup_mode
@@ -293,9 +331,11 @@ mod_baseline_server <- function(id, hospital_config) {
     output$profiles <- shiny::renderTable({
       dplyr::bind_rows(lapply(names(profiles()), function(name) {
         profile <- profiles()[[name]]
+        step_cv <- if (!is.null(profile$cv)) profile$cv else default_cv_for_unit(profile$unit)
         data.frame(Profile = name, Patients_per_day = profile$rate,
                    Pathway = paste(profile$unit, collapse = " -> "),
-                   Mean_stays_days = paste(profile$los, collapse = " -> "))
+                   Mean_stays_days = paste(profile$los, collapse = " -> "),
+                   CV_values = paste(step_cv, collapse = " -> "))
       }))
     })
     output$status <- shiny::renderUI({
