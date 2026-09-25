@@ -48,7 +48,9 @@ decision tool.
 |---|---|
 | **Create profiles manually** | Build a custom hospital configuration and custom patient trajectories. |
 | **Use Deloitte profiles (completed)** | Load the complete built-in example configuration. |
-| **Use Deloitte profiles (reduced)** | Load the smaller built-in example configuration. |
+| **Use Deloitte profiles (reduced)** | Load the smaller built-in example configuration (UC Davis units; Surge relabeled to TransitionalCare). |
+| **Use Deloitte profiles (Regional hospital)** | Load a UC Davis Regional hospital example, adapted from the Deloitte proportions (no BurnBed/Psychiatric unit). |
+| **Use Deloitte profiles (Tertiary hospital)** | Load a UC Davis Tertiary hospital example, adapted from the Deloitte proportions (CardiacICU relabeled to Cardiology). |
 | **Upload profiles from Excel** | Complete the empty Excel template or restore a configuration previously downloaded from the application. |
 
 Selecting a built-in or uploaded example automatically populates the hospital
@@ -65,6 +67,7 @@ available in each selected unit. Supported units are:
 - **ICU**
 - **BurnBed**
 - **Cardiac ICU**
+- **Cardiology**
 - **PhysicalMed**
 - **Psychiatric**
 - **TransitionalCare**
@@ -265,35 +268,44 @@ to this fallback-safe ceiling. A unit that already passes remains fixed until a
 capacity interaction causes it to fail later. The internal demand scenario is not
 displayed in the dashboard and is not a bed recommendation.
 
-The recommendation applies the reliability requirement independently to each
-target unit:
-
-- the maximum GenMed queue must be at or below the Med/Surg limit in at least
-  **70% of validation simulations**; and
-- the maximum ICU queue must be at or below the ICU limit in at least **70% of
-  validation simulations**.
-
-For example, with 20 validation simulations, GenMed must pass in at least 16 and
-ICU must pass in at least 16. They do not have to be the same 16 simulations.
-Joint reliability is still reported as a diagnostic, but it does not determine
-whether a candidate passes.
+The recommendation applies the reliability requirement **jointly** to both
+target units: a replication only counts as compliant when the maximum GenMed
+queue and the maximum ICU queue are *both* at or below their limits in that
+same replication. With the dashboard's current search settings
+(`bed_search_configs$development` in `R/01_config.R`), a candidate must clear
+this joint check in at least **70%** of **20** replications per candidate (14
+of 20) to pass. Each unit's own compliance rate is still reported next to the
+joint result, but it is a diagnostic only: a unit can clear 100% of
+replications on its own while the candidate still fails overall, because its
+failures and the other unit's failures do not have to land on the same
+replications for the joint check. The acceptance check itself is a plain
+observed proportion (not a statistical confidence bound), so it can be sensitive
+to sampling noise when the number of replications is small.
 
 All candidate capacities use common seeds and replications, and previously
-evaluated combinations are read from a cache. After exponential growth finds a
-passing combination, coordinate-wise binary searches reduce ICU and GenMed. A
-small ordered neighborhood search then checks nearby trade-offs without testing
-every possible combination. The precise search permits up to 30 candidate
-evaluations. If that optional minimum-bed refinement reaches its budget after a
-validated solution has already been found, the app still returns the solution and
-labels it as potentially conservative instead of reporting non-convergence.
+evaluated combinations are read from a cache. Growth first targets a looser
+margin above the reliability target (so growth does not stop right at the
+boundary); once a candidate clears the stricter joint criterion above,
+coordinate-wise binary searches reduce ICU and GenMed, and a trade-off search
+then checks whether shifting beds between GenMed and ICU lowers the total
+weighted bed count further, without testing every possible combination. The
+search stops after at most **50 candidate evaluations** (`max_evaluations`). If
+that optional minimum-bed refinement reaches its budget after a validated
+solution has already been found, the app still returns the solution and labels
+it as potentially conservative instead of reporting non-convergence.
 
-The search stage uses a small queue tolerance to locate promising capacities
-efficiently. Final validation uses a separate common seed bank and exact queue
-limits with no tolerance. If the first validation candidate passes, validation
-checks local one-bed reductions. If validation must increase capacity, the last
-failing and first passing values become a binary-search interval. No candidate
-exceeds the fallback-safe ceiling equal to the total number of arrivals, while
-unlimited-capacity demand remains available as a primary-demand reference.
+Once a candidate clears the joint criterion during the search, it is evaluated
+exactly once more on an independent replication bank that was never used to
+tune the capacity (**20** replications by default, `final_num_sims`). This
+holdout result -- not the search-stage estimate -- is what the dashboard
+reports and what "Apply Recommended Expansion" copies into the HxS fields.
+Because the holdout bank is independent, a candidate that looked strong while
+search was actively growing or shrinking beds can still fail holdout; when
+that happens, the dashboard reports that the search did not find a passing
+capacity even though some intermediate search evaluations looked promising. No
+candidate exceeds the fallback-safe ceiling equal to the total number of
+arrivals, while unlimited-capacity demand remains available as a
+primary-demand reference.
 
 To reduce memory during optimization, each replica returns only the maximum
 GenMed and ICU queue and occupancy metrics needed by the search. The full resource
@@ -309,8 +321,8 @@ recommendation becomes outdated and must be recalculated.
 1. Enter the two queue limits.
 2. Click **Estimate Bed Expansion**.
 3. Confirm that you want to start the calculation.
-4. Review the evaluated scenario, each unit's validated reliability, and the
-   joint diagnostic.
+4. Review the evaluated scenario, the joint reliability that determines
+   pass/fail, and each unit's own compliance rate as a diagnostic.
 5. Click **Apply Recommended Expansion**.
 6. Confirm that the recommendation was copied to the two HxS fields.
 7. Click **Run Simulation** to refresh all plots and tables.
@@ -381,10 +393,11 @@ stable summaries:
 - focus on patterns across metrics rather than one isolated value; and
 - rerun important scenarios to assess sensitivity.
 
-An 70% reliability target means that, for each unit separately, up to 30% of
-validation simulations may exceed that unit's queue limit. Because failures can
-occur in different replications, the joint diagnostic can be below 70% even
-when the recommendation passes.
+A 70% reliability target means that, in at least 70% of validation replications,
+the GenMed and ICU queues must *both* stay within their limits in that same
+replication. A single unit's own compliance rate can look higher or lower than
+70% in isolation -- it is diagnostic only. What determines whether a candidate
+passes is the joint rate across both units together.
 
 ## 8. Assumptions and limitations
 

@@ -67,6 +67,13 @@ bed_wait_summary <- function(run, confidence_level = 0.95, completed_only = TRUE
       sd_mean_wait = stats::sd(.data$mean_wait_days),
       mean_wait_days = mean(.data$mean_wait_days),
       percent_observed_waiting = mean(.data$percent_observed_waiting),
+      # Unlike mean_wait_days (NA for the whole replication if even one
+      # request in it is unresolved), this drops only the individual
+      # unresolved requests, keeping every replication that has at least one
+      # resolved request -- so it does not require completed_only = TRUE to
+      # avoid frequent NAs.
+      replications_with_resolved = sum(!is.na(.data$mean_resolved_wait_days)),
+      sd_resolved_wait = stats::sd(.data$mean_resolved_wait_days, na.rm = TRUE),
       mean_resolved_wait_days = safe_mean(.data$mean_resolved_wait_days, NA_real_),
       mean_resolved_positive_wait_days = safe_mean(.data$mean_resolved_positive_wait_days, NA_real_),
       mean_p90_resolved_wait_days = safe_mean(.data$p90_resolved_wait_days, NA_real_), .groups = "drop") |>
@@ -75,20 +82,38 @@ bed_wait_summary <- function(run, confidence_level = 0.95, completed_only = TRUE
         pmax(1, .data$replications_with_requests - 1)) * .data$mcse,
       upper = .data$mean_wait_days + stats::qt((1 + confidence_level) / 2,
         pmax(1, .data$replications_with_requests - 1)) * .data$mcse,
+      mcse_resolved = .data$sd_resolved_wait / sqrt(.data$replications_with_resolved),
+      lower_resolved = .data$mean_resolved_wait_days - stats::qt((1 + confidence_level) / 2,
+        pmax(1, .data$replications_with_resolved - 1)) * .data$mcse_resolved,
+      upper_resolved = .data$mean_resolved_wait_days + stats::qt((1 + confidence_level) / 2,
+        pmax(1, .data$replications_with_resolved - 1)) * .data$mcse_resolved,
       confidence_level = confidence_level)
   # No zero is invented for a replica with no requests. Pending requests make
   # the full-cohort mean/CI unavailable; resolved-only metrics are labelled.
   list(requests = requests, replications = replications, summary = summary)
 }
 
+# Uses every request that itself resolved (found a bed), whether or not the
+# patient's whole hospital trajectory had finished by the simulation horizon
+# -- completed_only = FALSE, unlike the strict mean_wait_days field above,
+# which blanks an entire replication whenever any one request in it is still
+# unresolved. This resolved-only mean is the closer match to the per-
+# replication mean_wait_days find_n_needed() computes from the .waiting_for__
+# resource's state history (see waiting_state_summary()), since that reads
+# every episode touching the observation window regardless of whether the
+# patient's trajectory had finished.
 bed_wait_table <- function(run) {
-  data <- bed_wait_summary(run)$summary
-  if (!nrow(data)) return(data.frame(Status = "No completed patients with bed requests in the observation period."))
+  data <- bed_wait_summary(run, completed_only = FALSE)$summary
+  # A group with zero requests has nothing to estimate a mean/CI from --
+  # "Not estimable" there is correct but reads like missing data, so it is
+  # dropped rather than shown as a row.
+  data <- data[data$total_requests > 0, , drop = FALSE]
+  if (!nrow(data)) return(data.frame(Status = "No bed requests with a resolved wait in the observation period."))
   data |>
     dplyr::transmute(Unit = .data$resource, Population = .data$population, Cohort = .data$cohort,
-      `Mean wait (days)` = round(.data$mean_wait_days, 3),
-      `95% CI` = ifelse(is.finite(.data$lower), sprintf("%.3f to %.3f", .data$lower, .data$upper),
-                        "Requires at least 2 replications with completed patients"),
+      `Mean wait (days)` = round(.data$mean_resolved_wait_days, 3),
+      `95% CI` = ifelse(is.finite(.data$lower_resolved), sprintf("%.3f to %.3f", .data$lower_resolved, .data$upper_resolved),
+                        "Requires at least 2 replications with a resolved request"),
       `Observed waiting (%)` = round(.data$percent_observed_waiting, 1))
 }
 
@@ -211,7 +236,8 @@ compare_hospital_scenarios <- function(reference, comparison, confidence_level =
 
 # Daily intervals are [day - 1, day). Carry the state at the start of each
 # day forward, including days without events; exclude the terminal endpoint.
-# One row per scenario/resource/replication/day. Shared by the dashboard plot
+# One row per scenario/resource/replication/day (time-weighted daily mean).
+# Shared by the dashboard plot
 # and the manuscript figures so both report the same daily-peak definition.
 daily_peak_by_replication <- function(data, var = "server") {
   stopifnot(all(c("time", "resource", "replication", var) %in% names(data)))
@@ -222,14 +248,14 @@ daily_peak_by_replication <- function(data, var = "server") {
       rows <- rows[order(rows$time), , drop = FALSE]
       start <- min(rows$time)
       end <- max(rows$time)
-      if (end <= start) return(data.frame(time1 = numeric(), daily_max = numeric()))
+      if (end <= start) return(data.frame(time1 = numeric(), daily_mean = numeric()))
       boundaries <- seq(floor(start), ceiling(end), by = 1)
       grid <- sort(unique(c(rows$time, boundaries[boundaries > start & boundaries < end])))
       values <- rows[[var]][pmax(1L, findInterval(grid, rows$time))]
       data.frame(time1 = floor(utils::head(grid, -1)) + 1,
                  value = utils::head(values, -1)) |>
         dplyr::group_by(.data$time1) |>
-        dplyr::summarise(daily_max = max(.data$value), .groups = "drop")
+        dplyr::summarise(daily_mean = mean(.data$value), .groups = "drop")
     }) |>
     dplyr::ungroup()
 }
@@ -240,9 +266,9 @@ make_daily_peak_summary <- function(data, var = "server") {
   daily |>
     dplyr::group_by(dplyr::across(dplyr::all_of(intersect(
       c("scenario_id", "time1", "resource"), names(daily))))) |>
-    dplyr::summarise(median_val = mean(.data$daily_max, na.rm = TRUE),
-      lower = as.numeric(stats::quantile(.data$daily_max, .1, type = 7)),
-      upper = as.numeric(stats::quantile(.data$daily_max, .9, type = 7)),
+    dplyr::summarise(median_val = mean(.data$daily_mean, na.rm = TRUE),
+      lower = as.numeric(stats::quantile(.data$daily_mean, .1, type = 7)),
+      upper = as.numeric(stats::quantile(.data$daily_mean, .9, type = 7)),
       replications = dplyr::n(), .groups = "drop")
 }
 
@@ -252,8 +278,8 @@ make_resource_plot <- function(data, var = "server") {
 
   title <- switch(
     var,
-    "server" = "Daily Maximum Occupied Beds",
-    "queue"  = "Daily Maximum Queue Length",
+    "server" = "Daily Mean Occupied Beds",
+    "queue"  = "Daily Mean Queue Length",
     paste("Plot of", var)
   )
 
@@ -264,6 +290,7 @@ make_resource_plot <- function(data, var = "server") {
     paste("Value of", var)
   )
 
+  data <- data[data$resource != "ED", , drop = FALSE]
   plot_data <- make_daily_peak_summary(data, var = var)
   plot_data$series <- if ("scenario_id" %in% names(plot_data) &&
                            length(unique(plot_data$scenario_id)) > 1L) {
@@ -282,14 +309,14 @@ make_resource_plot <- function(data, var = "server") {
         showlegend = FALSE, hoverinfo = "skip") |>
       plotly::add_lines(data = rows, x = ~time1, y = ~median_val,
         name = series[[i]], legendgroup = series[[i]], line = list(color = colors[[i]], width = 2),
-        text = ~paste0("Day: ", time1, "<br>Mean daily maximum: ", median_val,
+        text = ~paste0("Day: ", time1, "<br>Mean of daily means: ", median_val,
           "<br>P10–P90: ", round(lower, 2), "–", round(upper, 2)),
         hoverinfo = "text+name")
   }
   p |>
     plotly::layout(
       title = "",
-      xaxis = list(title = "Day — mean daily maximum; band: P10–P90"),
+      xaxis = list(title = "Day — mean of daily means; band: P10–P90"),
       yaxis = list(title = yaxis_label) # ,
       # legend = list(
       #   orientation = "h", # horizontal legend

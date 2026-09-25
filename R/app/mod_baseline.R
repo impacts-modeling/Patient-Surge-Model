@@ -97,7 +97,7 @@ mod_baseline_ui <- function(id) {
       shiny::helpText(paste(
         "Loads the profiles supplied with the app from",
         "data/baseline_civilian_profiles.csv and replaces the currently saved civilian profiles.",
-        "These predefined pathways use only GenMed, Surge and ICU; select all three units first.",
+        "These predefined pathways use only GenMed, IP Surge, and ICU; select all three units first.",
         "For other units, create or import civilian profiles. Review rates and stays for your hospital."
       )),
       shiny::tags$hr(),
@@ -152,7 +152,7 @@ mod_baseline_ui <- function(id) {
     data.intro = paste(
       "<strong>Routine civilian operation and warm-up.</strong><br>",
       "Enable this flow for a populated hospital before the surge. Civilian arrivals continue during the event.",
-      "Predefined profiles require GenMed, Surge and ICU only; other units need manual or imported profiles.",
+      "Predefined profiles require GenMed, IP Surge and ICU only; other units need manual or imported profiles.",
       "Enter a rate and an ordered pathway with one mean stay per step, for example GenMed, ICU and 3, 3 days.",
       "Choose evenly spaced or Poisson arrivals. Fixed warm-up continues even if its diagnostic fails; adaptive mode must pass.",
       "Patients and queues remain at day zero. Additional beds activate then. Review baseline stability before comparing surge effects."

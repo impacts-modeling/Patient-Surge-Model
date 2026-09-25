@@ -1,14 +1,15 @@
 # Names are display labels; values are stable internal resource identifiers.
 hospital_profile_units <- c(
   "ED" = "ED",
-  "Surge" = "Surge",
-  "GenMed" = "GenMed",
+  "Inpatient Surge" = "Surge",
+  "General Medicine" = "GenMed",
   "ICU" = "ICU",
-  "BurnBed" = "BurnBed",
+  "Burn Bed" = "BurnBed",
   "Cardiac ICU" = "CardiacICU",
-  "PhysicalMed" = "PhysicalMed",
+  "Cardiology" = "Cardiology",
+  "Physical Medicine" = "PhysicalMed",
   "Psychiatric" = "Psychiatric",
-  "TransitionalCare" = "TransitionalCare"
+  "Transitional Care" = "TransitionalCare"
 )
 # ED beds are modeled as practically unlimited (hallway/chair capacity is
 # elastic in practice): a large finite value, not literal Inf, because
@@ -295,6 +296,9 @@ hospital_profiles_ui <- function(id) {
               "Create profiles manually" = "manual",
               "Use Deloitte profiles (completed)" = "injury_path_test",
               "Use Deloitte profiles (reduced)" = "deloitte_test",
+              "Use Deloitte profiles (Regional hospital)" = "regional_hospital_test",
+              "Use Deloitte profiles (Tertiary hospital)" = "tertiary_hospital_test",
+              "Use UC Davis calibrated profiles" = "uc_davis_test",
               "Upload profiles from Excel" = "excel_upload"
             ),
             selected = "manual",
@@ -486,6 +490,13 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
     confirmed_profile_probabilities <- shiny::reactiveVal(NULL)
     deloitte_config <- deloitte_test_profile_config()
     injury_path_config <- injury_path_test_profile_config(wia_prob = 0.67)
+    regional_hospital_config <- regional_hospital_test_profile_config(wia_prob = 0.67)
+    tertiary_hospital_config <- tertiary_hospital_test_profile_config(wia_prob = 0.67)
+    # Built from data/baseline_civilian_profiles_uc_davis.csv (see
+    # paper/Cleaning.Rmd); that file is generated, not checked in by default,
+    # so a missing/unreadable CSV falls back to NULL instead of breaking
+    # module startup for every other profile source.
+    uc_davis_config <- tryCatch(uc_davis_profile_config(), error = function(error) NULL)
     trajectory_unit_count <- shiny::reactiveVal(1L)
     trajectory_form_version <- shiny::reactiveVal(1L)
     pending_profile_replacement <- shiny::reactiveVal(NULL)
@@ -507,6 +518,9 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
         input$profile_source,
         deloitte_test = deloitte_config,
         injury_path_test = injury_path_config,
+        regional_hospital_test = regional_hospital_config,
+        tertiary_hospital_test = tertiary_hospital_config,
+        uc_davis_test = uc_davis_config,
         excel_upload = uploaded_config(),
         NULL
       )

@@ -80,11 +80,11 @@ make_study_config <- function(project_dir = ".",
   # - workers sizes local/offline parallel execution for this script; it is
   #   unrelated to R/01_config.R's own `workers`, which sizes the deployed
   #   app's future plan for its hosting platform.
-  # boarding_time_limit_GenMed/ICU (days) have no app-side default (they are
+  # wait_time_limit_GenMed/ICU (days) have no app-side default (they are
   # interactive UI inputs in the dashboard), so they stay declared here.
   defaults <- utils::modifyList(app_presets[[mode]],
     list(search_seed = seed + 300000L, workers = workers,
-         boarding_time_limit_GenMed = 1, boarding_time_limit_ICU = 1))
+         wait_time_limit_GenMed = 1, wait_time_limit_ICU = 1))
   retired <- intersect(names(search), c("search_num_sims", "max_validation_evaluations", "search_queue_tolerance"))
   if (length(retired)) stop("Retired search parameters: ", paste(retired, collapse = ", "),
     ". Use num_sims and max_evaluations for the unified search.")
@@ -126,15 +126,6 @@ study_engine_signature <- function(study) {
                          function(p) as.character(utils::packageVersion(p)), character(1)))
 }
 
-study_initial_signature <- function(run) {
-  rows <- run$resource_history
-  rows <- rows[rows$time < 0, setdiff(names(rows), c("scenario_id", "scenario_mode")), drop = FALSE]
-  rows <- rows[order(rows$replication, rows$resource, rows$time), , drop = FALSE]
-  rownames(rows) <- NULL
-  study_fingerprint(list(rows, run$configuration$baseline,
-    run$runs[c("replication", "seed", "sim_days", "warmup_days")]))
-}
-
 # Cached summaries retain neutral scenario labels so identical combinations can
 # be reused across studies. Relabel only the single summary currently needed.
 read_study_summary <- function(reference) {
@@ -146,26 +137,40 @@ read_study_summary <- function(reference) {
   }
   compact
 }
+# Independent-samples (Welch) comparison. Same-timestamp event tie-breaking
+# in the DES depends on which generators are registered in the simmer
+# environment (civilian-only vs civilian+surge), so two scenarios sharing a
+# random-number seed do not actually realize identical warm-up trajectories
+# once GenMed/ICU approach capacity during warm-up -- a common-random-numbers
+# paired difference is therefore not valid here. Each scenario's replications
+# are instead treated as an independent sample, and the difference in means
+# gets its own (wider) two-sample Welch confidence interval.
 compare_study_summaries <- function(reference, comparison) {
-  if (!identical(reference$initial_signature, comparison$initial_signature)) {
-    stop("Paired comparisons require identical warm-up histories and replication settings.")
-  }
   a <- reference$tables$resource_replications
   b <- comparison$tables$resource_replications
-  keys <- c("replication", "resource", "metric")
-  stopifnot(!anyDuplicated(a[keys]), !anyDuplicated(b[keys]),
-            nrow(dplyr::anti_join(a, b, by = keys)) == 0,
-            nrow(dplyr::anti_join(b, a, by = keys)) == 0)
-  pairs <- dplyr::inner_join(a, b, by = keys, suffix = c("_reference", "_comparison")) |>
-    dplyr::mutate(difference = .data$value_comparison - .data$value_reference)
-  pairs |>
-    dplyr::group_by(.data$resource, .data$metric) |>
-    dplyr::group_modify(function(rows, key) {
-      ci <- study_mean_interval(rows$difference)
-      data.frame(reference_mean = mean(rows$value_reference), comparison_mean = mean(rows$value_comparison),
-        n_pairs = ci$n, mean_difference = ci$mean, mcse = ci$mcse, lower = ci$lower, upper = ci$upper)
-    }) |>
-    dplyr::ungroup() |>
+  keys <- c("resource", "metric")
+  summarize_side <- function(df) {
+    df |>
+      dplyr::group_by(.data$resource, .data$metric) |>
+      dplyr::summarise(n = dplyr::n(), mean = mean(.data$value), var = stats::var(.data$value), .groups = "drop")
+  }
+  merged <- dplyr::inner_join(summarize_side(a), summarize_side(b), by = keys,
+                              suffix = c("_reference", "_comparison"))
+  merged |>
+    dplyr::mutate(
+      mean_difference = .data$mean_comparison - .data$mean_reference,
+      mcse = sqrt(.data$var_reference / .data$n_reference + .data$var_comparison / .data$n_comparison),
+      valid = .data$n_reference > 1 & .data$n_comparison > 1 & is.finite(.data$mcse) & .data$mcse > 0,
+      welch_df = ifelse(.data$valid,
+        (.data$var_reference / .data$n_reference + .data$var_comparison / .data$n_comparison)^2 /
+          ((.data$var_reference / .data$n_reference)^2 / (.data$n_reference - 1) +
+           (.data$var_comparison / .data$n_comparison)^2 / (.data$n_comparison - 1)),
+        NA_real_),
+      lower = ifelse(.data$valid, .data$mean_difference - stats::qt(0.95, .data$welch_df) * .data$mcse, NA_real_),
+      upper = ifelse(.data$valid, .data$mean_difference + stats::qt(0.95, .data$welch_df) * .data$mcse, NA_real_),
+      reference_mean = .data$mean_reference, comparison_mean = .data$mean_comparison) |>
+    dplyr::select("resource", "metric", "reference_mean", "comparison_mean",
+                  "n_reference", "n_comparison", "mean_difference", "mcse", "lower", "upper") |>
     dplyr::mutate(reference_scenario = a$scenario_id[1], comparison_scenario = b$scenario_id[1],
                   confidence_level = 0.90)
 }
@@ -189,10 +194,18 @@ summarize_study_runs <- function(runs) {
     dplyr::group_modify(function(rows, key) study_mean_interval(rows$value)) |>
     dplyr::ungroup()
   waits <- lapply(runs, bed_wait_summary)
-  # Same daily-peak definition as the dashboard plot (make_resource_plot):
-  # one maximum per scenario/resource/replication/day, then the median and
-  # 10th-90th percentile band across replications. These are daily peaks,
-  # not daily means, and the band is between-replication spread, not a CI.
+  # Civilian patients board (hold some other bed, or an ED bed between
+  # pathway steps) rather than generate a bed-less GenMed/ICU wait request in
+  # this model; bed_wait_summary()'s wait_summary above is populated only for
+  # surge requests. boarding_time_summary() (R/shared/simulation_metrics.R)
+  # is the civilian-relevant counterpart, and the app's dashboard already
+  # reports it -- the manuscript pipeline had not exported it until now.
+  boardings <- lapply(runs, boarding_time_summary)
+  # Same daily-mean definition as the dashboard plot (make_resource_plot):
+  # one time-weighted mean per scenario/resource/replication/day, then the
+  # mean and 10th-90th percentile band across replications. These are daily
+  # means, not daily peaks, and the band is between-replication spread, not
+  # a CI. ED is excluded from the dashboard plots but retained here.
   daily <- dplyr::bind_rows(lapply(c("server", "queue"), function(variable) {
     daily_peak_by_replication(resources, variable) |>
       dplyr::mutate(metric = variable)
@@ -205,6 +218,8 @@ summarize_study_runs <- function(runs) {
        daily_replications = daily, daily_summary = daily_summary,
        wait_summary = dplyr::bind_rows(lapply(waits, `[[`, "summary")),
        wait_replications = dplyr::bind_rows(lapply(waits, `[[`, "replications")),
+       boarding_summary = dplyr::bind_rows(lapply(boardings, `[[`, "summary")),
+       boarding_replications = dplyr::bind_rows(lapply(boardings, `[[`, "replications")),
        warmup_diagnostics = dplyr::bind_rows(lapply(runs, `[[`, "warmup_diagnostics")),
        run_metadata = dplyr::bind_rows(lapply(runs, `[[`, "runs")))
 }
@@ -235,13 +250,15 @@ scenario_labels <- function(scenario_id, design) {
 }
 
 make_study_figures <- function(tables) {
-  daily <- tables$daily_summary
+  daily <- tables$daily_summary |>
+    dplyr::filter(resource != "ED")
   daily$scenario_id <- scenario_labels(daily$scenario_id, tables$design)
   daily$measure <- factor(ifelse(daily$metric == "server", "Occupied beds", "Queue (patients)"),
                           levels = c("Occupied beds", "Queue (patients)"))
   unit_order <- c(intersect(c("GenMed", "ICU", "Surge"), unique(daily$resource)),
                   setdiff(unique(daily$resource), c("GenMed", "ICU", "Surge")))
   daily$resource <- factor(daily$resource, levels = unit_order)
+
   figures <- list(trajectories = ggplot2::ggplot(daily,
     ggplot2::aes(x = .data$time1 - 0.5, y = .data$median_val, color = .data$scenario_id,
                  fill = .data$scenario_id)) +
@@ -253,8 +270,10 @@ make_study_figures <- function(tables) {
       color = "Scenario", fill = "Scenario",
       caption = paste("Median of daily maxima across replications; shaded band shows",
                        "the 10th-90th percentiles. Daily peaks, not daily means.")) +
-    ggplot2::theme_bw())
-  waits <- tables$wait_summary
+    ggplot2::theme_bw() + ggplot2::theme(legend.position = "top"))
+  
+  waits <- tables$wait_summary |>
+    dplyr::filter(resource != "ED")
   if (nrow(waits)) {
     waits$scenario_id <- scenario_labels(waits$scenario_id, tables$design)
     figures$resolved_waits <- ggplot2::ggplot(waits,
@@ -263,13 +282,15 @@ make_study_figures <- function(tables) {
       ggplot2::facet_wrap(ggplot2::vars(resource, cohort), scales = "free_y") +
       ggplot2::labs(x = NULL, y = "Mean resolved-request wait (days)", fill = "Population",
         caption = "Resolved requests only; consult pending-request counts in the accompanying table.") +
-      ggplot2::theme_bw() + ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 35, hjust = 1))
+      ggplot2::theme_bw() +
+      ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 35, hjust = 1), legend.position = "top")
     figures$pending_requests <- ggplot2::ggplot(waits,
       ggplot2::aes(x = .data$scenario_id, y = .data$pending_requests, fill = .data$population)) +
       ggplot2::geom_col(position = "dodge") +
       ggplot2::facet_wrap(ggplot2::vars(resource, cohort), scales = "free_y") +
       ggplot2::labs(x = NULL, y = "Pending requests (sum across replications)", fill = "Population") +
-      ggplot2::theme_bw() + ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 35, hjust = 1))
+      ggplot2::theme_bw() +
+      ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 35, hjust = 1), legend.position = "top")
   }
   if (nrow(tables$expansion)) {
     additions <- tables$expansion |>
@@ -280,6 +301,7 @@ make_study_figures <- function(tables) {
       figures$expansion <- ggplot2::ggplot(additions,
         ggplot2::aes(x = .data$scenario_id, y = .data$beds, fill = .data$unit)) +
         ggplot2::geom_col(position = "dodge") + ggplot2::theme_bw() +
+        ggplot2::theme(legend.position = "top") +
         ggplot2::labs(x = NULL, y = "Additional beds", fill = "Unit",
           caption = "Candidates passing independent final evaluation; global optimality is not established.")
     }
@@ -340,8 +362,7 @@ run_scenario_study <- function(study, design, expand = FALSE, output_dir = NULL,
       run <- run_hospital_scenario(config, duration, rate, study$sim_days, study$num_sims, study$seed,
                                    paste0("rate_", rate, "_days_", duration))
       saveRDS(run, raw_path)
-      compact <- list(tables = summarize_study_runs(list(run)), raw_path = raw_path,
-                       initial_signature = study_initial_signature(run))
+      compact <- list(tables = summarize_study_runs(list(run)), raw_path = raw_path)
       saveRDS(compact, summary_path)
       rm(run, compact)
       invisible(gc())

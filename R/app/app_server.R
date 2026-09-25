@@ -341,9 +341,15 @@ app_server <- function(input, output, session) {
             minimum_step = bed_search_config$minimum_step,
             demand_safety_factor = bed_search_config$demand_safety_factor,
             reliability_level = bed_search_config$reliability_level,
+            refinement_margin = bed_search_config$refinement_margin,
+            acceptance_rule = bed_search_config$acceptance_rule,
+            acceptance_confidence = bed_search_config$acceptance_confidence,
+            weight_GenMed = bed_search_config$weight_GenMed,
+            weight_ICU = bed_search_config$weight_ICU,
+            initialization = bed_search_config$initialization,
             search_seed = bed_search_config$search_seed,
-            boarding_time_limit_GenMed = shiny::req(evaluation_signature$congestion_index),
-            boarding_time_limit_ICU = shiny::req(evaluation_signature$congestion_index_icu),
+            wait_time_limit_GenMed = shiny::req(evaluation_signature$congestion_index),
+            wait_time_limit_ICU = shiny::req(evaluation_signature$congestion_index_icu),
             workers = workers,
             verbose = TRUE
           )
@@ -410,16 +416,28 @@ app_server <- function(input, output, session) {
         ))
       }
   
-      shiny::validate(
-        shiny::need(
-          isTRUE(n_opt$converged),
-          if (isTRUE(n_opt$selection_passed)) sprintf(
-            "The selected capacity failed joint maximum-queue compliance in %d independent final replications (joint compliance %.1f%%; target %.1f%%). It is not offered as a recommendation. Review demand, capacity limits or replication precision.",
-            n_opt$final_num_sims, 100 * n_opt$joint_reliability, 100 * n_opt$reliability_level)
-          else sprintf("The bed search did not find a passing capacity after %d evaluations.", n_opt$evaluations)
-        )
-      )
-  
+      if (!isTRUE(n_opt$converged)) {
+        if (isTRUE(n_opt$selection_passed)) {
+          return(shiny::div(
+            class = "alert alert-warning",
+            sprintf(
+              "The search found GenMed=%d, ICU=%d (+%d GenMed, +%d ICU) during its search-stage replications, but that capacity failed joint maximum-wait compliance in %d independent final replications (joint compliance %.1f%%; target %.1f%%). It is not offered as a recommendation and was not re-validated. Review demand, capacity limits or replication precision.",
+              n_opt$GenMed_N, n_opt$ICU_N, n_opt$N_added, n_opt$N_added_ICU,
+              n_opt$final_num_sims, 100 * n_opt$joint_reliability, 100 * n_opt$reliability_level),
+            shiny::tags$br(), shiny::tags$br(),
+            shiny::actionButton("use_search_capacity",
+              sprintf("Use GenMed=%d, ICU=%d as a starting point", n_opt$GenMed_N, n_opt$ICU_N),
+              class = "btn-secondary"),
+            shiny::tags$br(),
+            shiny::helpText("This does not re-validate that capacity -- it only fills in the HxS fields so a new search starts closer to it instead of from the current capacity.")
+          ))
+        }
+        return(shiny::div(
+          class = "alert alert-warning",
+          sprintf("The bed search did not find a passing capacity after %d evaluations.", n_opt$evaluations)
+        ))
+      }
+
       evaluated <- bed_result_signature()
       N_added <- n_opt$N_added
       N_added_ICU <- n_opt$N_added_ICU
@@ -521,6 +539,25 @@ app_server <- function(input, output, session) {
       shiny::updateNumericInput(session, "icu_msf", value = new_icu_msf)
       shiny::showNotification(
         "Recommended beds were applied to the HxS fields. Click Run Simulation to update the results; no second optimization is needed.",
+        type = "message",
+        duration = 10
+      )
+    })
+    # Unlike apply_recommended_expansion above, this candidate failed
+    # independent final evaluation -- it is a starting point for a new
+    # search, not a validated recommendation, so applied_recommendation()
+    # is deliberately left untouched.
+    shiny::observeEvent(input$use_search_capacity, {
+      n_opt <- current_find_result()
+      shiny::req(!is.null(n_opt), isTRUE(n_opt$selection_passed))
+      evaluated <- bed_result_signature()
+      new_genmed_msf <- evaluated$genmed_msf + n_opt$N_added
+      new_icu_msf <- evaluated$icu_msf + n_opt$N_added_ICU
+      simulation_data(NULL)
+      shiny::updateNumericInput(session, "genmed_msf", value = new_genmed_msf)
+      shiny::updateNumericInput(session, "icu_msf", value = new_icu_msf)
+      shiny::showNotification(
+        "HxS fields set to the search's unvalidated candidate. Click Estimate Bed Expansion again to search from here.",
         type = "message",
         duration = 10
       )

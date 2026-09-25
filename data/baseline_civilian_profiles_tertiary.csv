@@ -1,0 +1,8 @@
+Profile,Patients_per_day,Pathway,Mean_stays_days,CV_values
+ED_GenMed,56.67,"ED, GenMed","0.0598,6","0.44,0.24"
+ED_ICU,10.20,"ED, ICU","0.0598,6","0.44,1"
+ED_BurnBed,1.02,"ED, BurnBed","0.0598,10","0.44,0.24"
+ED_Cardiology,3.06,"ED, Cardiology","0.0598,5","0.44,0.24"
+ED_PhysicalMed,3.40,"ED, PhysicalMed","0.0598,6","0.44,0.24"
+ED_Psychiatric,1.42,"ED, Psychiatric","0.0598,12","0.44,0.24"
+ED_TransitionalCare,3.40,"ED, TransitionalCare","0.0598,6","0.44,0.24"

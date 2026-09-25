@@ -1,4 +1,8 @@
-Profile,Patients_per_day,Pathway,Mean_stays_days,CV_values
-ED_ICU,10,"ED, ICU","0.0598,7.5","0.44,1.0636"
-ED_GenMed,48,"ED, GenMed","0.0598,7","0.44,0.2401"
-ED_Surge,8.3444,"ED, Surge","0.0598,1.1493","0.44,0.2694"
+"Profile","Patients_per_day","Pathway","Mean_stays_days","CV_values"
+"ED_ICU_Surge",0.0108635238239604,"ED, ICU, Surge","0.0598,3.241,1.1493","0.4396,1,0.24"
+"ED_ICU_GenMed",10.3746652518822,"ED, ICU, GenMed","0.0598,3.241,6.8556","0.4396,1,0.24"
+"ED_ICU",1.55891566873832,"ED, ICU","0.0598,3.241","0.4396,1"
+"ED_GenMed_ICU",3.39524739583333,"ED, GenMed, ICU","0.0598,5.77,8.1136","0.4396,0.24,1"
+"ED_GenMed",45.0047526041667,"ED, GenMed","0.0598,5.77","0.4396,0.24"
+"ED_Surge_ICU",2.3461191626409,"ED, Surge, ICU","0.0598,1.9826,8.1136","0.4396,0.24,1"
+"ED_Surge",5.99832528180354,"ED, Surge","0.0598,1.9826","0.4396,0.24"

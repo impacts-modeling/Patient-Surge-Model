@@ -49,6 +49,18 @@ run_hospital_scenario <- function(config, duration, n_patients, sim_days,
     }
     activity <- simmer::get_mon_arrivals(sim, per_resource = TRUE, ongoing = TRUE) |>
       dplyr::filter(.data$start_time >= 0)
+    # ongoing = TRUE re-emits every resource an still-active arrival has ever
+    # visited as an extra "in progress" row with end_time = NA, even one it
+    # already released earlier in its trajectory (its real, already-closed
+    # visit stays too). Left uncorrected, that phantom row double-counts the
+    # visit and misreports an already-resolved wait/boarding episode as still
+    # pending. Drop the NA duplicate whenever a finite-end_time row already
+    # covers the same (name, resource, start_time) visit; a single NA row
+    # with no such match is a genuine still-open visit and is kept as-is.
+    activity <- activity |>
+      dplyr::group_by(.data$name, .data$resource, .data$start_time) |>
+      dplyr::filter(!(is.na(.data$end_time) & any(is.finite(.data$end_time)))) |>
+      dplyr::ungroup()
     if (!is.null(metadata)) {
       activity <- activity |>
         dplyr::left_join(metadata$patients[c("name", "profile", "population")], by = "name") |>

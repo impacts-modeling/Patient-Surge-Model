@@ -14,7 +14,7 @@ The project supports hospital capacity planning and scenario analysis. Users can
 - **Bed-expansion estimates:** search for additional GenMed and ICU beds and simulate the expanded scenario.
 - **Import and export:** exchange hospital configurations through Excel and download simulation reports as PDF.
 
-Supported units are Surge, GenMed, ICU, BurnBed, Cardiac ICU, PhysicalMed, Psychiatric, and TransitionalCare. Expansion controls display GenMed as Med/Surg.
+Supported units are Surge, GenMed, ICU, BurnBed, Cardiac ICU, Cardiology, PhysicalMed, Psychiatric, and TransitionalCare. Expansion controls display GenMed as Med/Surg.
 
 ## Typical workflow
 

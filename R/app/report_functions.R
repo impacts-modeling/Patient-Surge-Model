@@ -33,9 +33,9 @@ make_expansion_table <- function(n_result) {
       "Validated total ICU capacity",
       "Unified search evaluations",
       "Independent final evaluations",
-      "Joint maximum-boarding-time compliance target met",
-      "Final mean GenMed boarding time (days)",
-      "Final mean ICU boarding time (days)"
+      "Joint maximum-wait-time compliance target met",
+      "Final mean GenMed wait time (days)",
+      "Final mean ICU wait time (days)"
     ),
     Value = c(
       n_result$N_added %||% NA_integer_,
@@ -45,8 +45,8 @@ make_expansion_table <- function(n_result) {
       n_result$search_evaluations %||% NA_integer_,
       n_result$final_evaluations %||% NA_integer_,
       isTRUE(n_result$converged),
-      n_result$mean_boarding_days_GenMed %||% NA_real_,
-      n_result$mean_boarding_days_ICU %||% NA_real_
+      n_result$mean_wait_days_GenMed %||% NA_real_,
+      n_result$mean_wait_days_ICU %||% NA_real_
     ),
     stringsAsFactors = FALSE
   )
@@ -214,9 +214,10 @@ add_report_table_page <- function(title, table_data, rows_per_page = 16) {
 }
 
 add_resource_plot_page <- function(resources, var = "server") {
-  # Same daily-peak definition as the dashboard plot and the manuscript
-  # figures: median of daily maxima across replications, 10th-90th
+  # Same daily-mean definition as the dashboard plot and the manuscript
+  # figures: mean of daily means across replications, 10th-90th
   # percentile band. See make_daily_peak_summary in simulation_metrics.R.
+  resources <- resources[resources$resource != "ED", , drop = FALSE]
   plot_data <- make_daily_peak_summary(resources, var = var)
   y_label <- switch(
     var,
@@ -226,8 +227,8 @@ add_resource_plot_page <- function(resources, var = "server") {
   )
   title <- switch(
     var,
-    "server" = "Daily Maximum Occupied Beds",
-    "queue" = "Daily Maximum Queue Length",
+    "server" = "Daily Mean Occupied Beds",
+    "queue" = "Daily Mean Queue Length",
     paste("Plot of", var)
   )
 
@@ -239,7 +240,7 @@ add_resource_plot_page <- function(resources, var = "server") {
                          alpha = 0.15, color = NA, na.rm = TRUE) +
     ggplot2::geom_line(linewidth = 0.9) +
     ggplot2::labs(title = title, x = "Time (days)", y = y_label, color = "Resource", fill = "Resource",
-      caption = "Median of daily maxima across replications; shaded band shows the 10th-90th percentiles.") +
+      caption = "Mean of daily means across replications; shaded band shows the 10th-90th percentiles.") +
     ggplot2::theme_minimal(base_size = 12) +
     ggplot2::theme(legend.position = "bottom")
 
@@ -433,7 +434,7 @@ generate_simulation_pdf_report <- function(file, params, simulation_data, profil
 
   add_resource_plot_page(simulation_data$resources, var = "server")
   add_resource_plot_page(simulation_data$resources, var = "queue")
-  add_report_table_page("Bed waiting times (days; completed patients only)", bed_wait_table(simulation_data))
+  add_report_table_page("Bed waiting times (days; requests with a resolved wait)", bed_wait_table(simulation_data))
   add_report_table_page("Boarding times (days; time holding a bed while awaiting the next unit)",
                         boarding_time_table(simulation_data))
 
