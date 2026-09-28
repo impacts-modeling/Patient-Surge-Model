@@ -273,15 +273,9 @@ make_daily_peak_summary <- function(data, var = "server") {
 }
 
 
+# Callers choose which resources to plot (the app hides internal units such as ED).
 make_resource_plot <- function(data, var = "server") {
-  stopifnot(var %in% names(data)) # Validate input column
-
-  title <- switch(
-    var,
-    "server" = "Daily Mean Occupied Beds",
-    "queue"  = "Daily Mean Queue Length",
-    paste("Plot of", var)
-  )
+  stopifnot(var %in% names(data))
 
   yaxis_label <- switch(
     var,
@@ -290,7 +284,6 @@ make_resource_plot <- function(data, var = "server") {
     paste("Value of", var)
   )
 
-  data <- data[data$resource != "ED", , drop = FALSE]
   plot_data <- make_daily_peak_summary(data, var = var)
   plot_data$series <- if ("scenario_id" %in% names(plot_data) &&
                            length(unique(plot_data$scenario_id)) > 1L) {
@@ -317,16 +310,7 @@ make_resource_plot <- function(data, var = "server") {
     plotly::layout(
       title = "",
       xaxis = list(title = "Day — mean of daily means; band: P10–P90"),
-      yaxis = list(title = yaxis_label) # ,
-      # legend = list(
-      #   orientation = "h", # horizontal legend
-      #   x = 0.5, # left aligned
-      #   y = 1.18, # above the plot
-      #   xanchor = "center",
-      #   yanchor = "top",
-      #   # itemwidth = 10, # forces wrapping → creates 2 rows
-      #   valign = "top"
-      # )
+      yaxis = list(title = yaxis_label)
     )
 }
 
@@ -356,16 +340,6 @@ summary_utilization <- function(data, by_replication = FALSE) {
         0
       )
     ) |>
-    
-    # Cambiar a promedio diario
-    # dplyr::mutate(time1 = ceiling(time)) |>
-    # dplyr::group_by(time1, resource, replication) |>
-    # dplyr::summarise(
-    #   utilization = safe_mean(utilization),
-    #   server = safe_mean(server),
-    #   .groups = "drop"
-    # ) |>
-    
     dplyr::group_by(dplyr::across(dplyr::all_of(intersect(c("scenario_id", "resource", "replication"), names(data))))) |>
     dplyr::arrange(time, .by_group = TRUE) |>
     dplyr::mutate(
@@ -413,9 +387,6 @@ summary_queue <- function(data, by_replication = FALSE) {
   stopifnot(all(required_columns %in% names(data)))
 
   queue_by_sim <- resource_state_intervals(data) |>
-    # filter(time > last_days) |>
-    # dplyr::mutate(time1 = ceiling(time)) |>
-    # dplyr::group_by(time1, resource, replication) |>
     dplyr::group_by(dplyr::across(dplyr::all_of(intersect(c("scenario_id", "resource", "replication"), names(data))))) |>
     dplyr::summarise(
       avg_queue_length = safe_fraction(sum(queue * state_duration), sum(state_duration)),

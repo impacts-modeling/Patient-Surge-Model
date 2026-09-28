@@ -284,7 +284,7 @@ run_pathway_step <- function(env, profile_name, profile, fallbacks,
       # (the patient holds a bed elsewhere -- here, the fallback itself --
       # while wanting a different unit), so it is tracked on the very same
       # .boarding_for__<primary> resource as boarding between pathway steps;
-      # both feed the same boarding-time statistics and search criterion.
+      # both feed the same boarding-time statistics (Boarding Times table).
       simmer::trajectory(paste0(id, "_in_", unit)) |>
         simmer::set_attribute(dur_attr, step_service_time) |>
         simmer::set_attribute(started_attr, function() simmer::now(env)) |>
@@ -362,10 +362,6 @@ profile_trajectory <- function(env, profile_name, patient_profiles, fallbacks,
     }
   }
   run_pathway_step(env, profile_name, profile, fallbacks, 1L, NULL, service_time_for)
-}
-
-sample_patient_profile <- function(profile_prob) {
-  base::sample(names(profile_prob), size = 1, prob = profile_prob)
 }
 
 run_simulation <- function(capacities, duration, n_patients, sim_days,
@@ -703,44 +699,13 @@ estimate_peak_unit_demand <- function(patient_profiles, profile_prob, n_patients
     )
   }))
 }
-# Per-unit mean boarding-episode duration within the observation window
-# [0, sim_days), read entirely from the .boarding_for__<unit> resource's own
-# STATE history (get_mon_resources()) -- no per-patient (arrival) monitoring
-# needed, so this works with monitor_patients = FALSE. This is an exact
-# identity, not an approximation: the time integral of that resource's
-# `server` count always equals the sum of every episode's duration (an
-# episode still open at the horizon contributes only its elapsed portion,
-# the same conservative treatment used elsewhere), and the number of
-# episodes started equals the number of times `server` increased (each
-# episode is exactly one seize/release pair). mean_boarding_days is that
-# integral divided by the episode count. Unlike the previous per-visit
-# criterion, this cannot recover the single longest episode -- only the mean.
-boarding_state_summary <- function(simulation, units, sim_days) {
-  metadata <- attr(simulation, "civilian_metadata")
-  raw <- simmer::get_mon_resources(simulation)
-  boarding <- raw[startsWith(raw$resource, boarding_prefix), , drop = FALSE]
-  boarding$resource <- substring(boarding$resource, nchar(boarding_prefix) + 1L)
-  boarding <- boarding[boarding$resource %in% units, , drop = FALSE]
-  inf_capacities <- stats::setNames(rep(Inf, length(units)), units)
-  history <- initialize_resource_history(boarding, inf_capacities)
-  start <- if (is.null(metadata)) 0 else metadata$surge_start
-  end <- if (is.null(metadata)) sim_days else metadata$observation_end
-  sliced <- slice_resource_history(history, start = start, end = end, shift = start)
-  dplyr::bind_rows(lapply(units, function(unit_name) {
-    rows <- sliced[sliced$resource == unit_name, , drop = FALSE]
-    rows <- rows[order(rows$time), , drop = FALSE]
-    if (nrow(rows) < 2) {
-      return(data.frame(resource = unit_name, mean_boarding_days = 0))
-    }
-    dt <- diff(rows$time)
-    person_days <- sum(utils::head(rows$server, -1) * dt)
-    episodes <- sum(pmax(0, diff(rows$server)))
-    data.frame(resource = unit_name, mean_boarding_days = safe_fraction(person_days, episodes))
-  }))
-}
-
-# Same exact-identity computation as boarding_state_summary(), but for the
-# .waiting_for__<unit> resource: episodes where a patient requests a bed
+# Per-unit mean wait-episode duration within the observation window, read
+# entirely from the .waiting_for__<unit> resource's own STATE history
+# (get_mon_resources()), so it works with monitor_patients = FALSE. This is an
+# exact identity: the time integral of that resource's `server` count equals
+# the sum of every episode's duration (an episode still open at the horizon
+# contributes only its elapsed portion), and the number of episodes equals the
+# number of times `server` increased. It covers episodes where a patient requests a bed
 # while holding none at all (only possible on a pathway's first step -- see
 # new_bed_dispatcher()/build_trajectory()). Given this project's profile
 # configuration, civilian pathways always start at ED, so a civilian's first
@@ -778,10 +743,9 @@ waiting_state_summary <- function(simulation, units, sim_days) {
 # Top-level worker avoids exporting the optimizer's cache and nested closures.
 capacity_replication <- function(replication_id, simulation_args, units) {
   replication_rng_state <- get(".Random.seed", envir = .GlobalEnv)
-  # mean_wait_days is read from resource state history alone (see
-  # waiting_state_summary()), so capacity selection still needs no
-  # individual arrival records, same as before boarding time replaced queue
-  # length as the acceptance criterion.
+  # mean_wait_days (the acceptance metric) is read from resource state history
+  # alone (see waiting_state_summary()), so capacity selection needs no
+  # individual arrival records.
   simulation_args$monitor_patients <- FALSE
   simulation <- do.call(run_simulation, simulation_args)
   resources <- get_hospital_mon_resources(simulation, include_resources = units)
@@ -811,9 +775,9 @@ unlimited_demand_replication <- function(replication_id, simulation_args, units)
 }
 
 # Independent replication means; the t interval measures Monte Carlo error.
-# With one replication, uncertainty is unavailable rather than zero. Mean
-# wait time is a complementary diagnostic, not the acceptance criterion
-# (which uses peak wait time per replication; see find_n_needed()).
+# With one replication, uncertainty is unavailable rather than zero. This is a
+# reporting diagnostic; acceptance compares each replication's own mean wait
+# with the limits (see joint_successes_among() in find_n_needed()).
 summarize_wait_means <- function(resources, thresholds, confidence_level = 0.95) {
   resources |>
     dplyr::group_by(.data$resource) |>
@@ -869,7 +833,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
                           # is not otherwise documented or exercised by either caller.
                           initialization = c("incremental", "analytical")) {
   optimization_started <- proc.time()[["elapsed"]]
-  # reliability_level is the required proportion of joint peak-compliant runs;
+  # reliability_level is the required proportion of joint mean-wait-compliant runs;
   # this is the criterion reported as the search's acceptance target and the
   # one checked before triggering the independent holdout evaluation.
   # refinement_margin makes growth AND refinement (refine_unit()/
@@ -1215,8 +1179,8 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     if (verbose) {
       cat(sprintf(
         paste0(
-          "%s evaluation %d: GenMed=%d (mean wait %.2fd, %.0f%% peak compliance), ",
-          "ICU=%d (mean wait %.2fd, %.0f%% peak compliance), joint peak compliance %.0f%%, ",
+          "%s evaluation %d: GenMed=%d (mean wait %.2fd, %.0f%% compliance), ",
+          "ICU=%d (mean wait %.2fd, %.0f%% compliance), joint compliance %.0f%%, ",
           "pass=%s (margin pass=%s)\n"
         ),
         tools::toTitleCase(stage), stage_evaluation,

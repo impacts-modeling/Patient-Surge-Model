@@ -18,12 +18,6 @@ source("R/app/ui_main.R", local = TRUE)
 source("R/app/app_ui.R", local = TRUE)
 source("R/app/app_server.R", local = TRUE)
 
-# Set the default theme for ggplot2 plots
-#ggplot2::theme_set(ggplot2::theme_minimal())
-
-# Apply the CSS used by the Shiny app to the ggplot2 plots
-#thematic::thematic_shiny()
-
 shiny::shinyApp(
   ui = app_ui(),
   server = app_server

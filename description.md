@@ -12,14 +12,15 @@
    percentages, and fallback rules.
 3. Open **Model Parameters** and enter the demand and simulation settings.
 4. Click **Run Simulation** to evaluate the current hospital configuration.
-5. If needed, enter the maximum allowed Med/Surg and ICU queue lengths, click
-   **Estimate Bed Expansion**, and confirm that you want to start the calculation.
+5. If needed, enter the maximum mean-wait limits (days) for Med/Surg and ICU,
+   click **Estimate Bed Expansion**, and confirm that you want to start the
+   calculation.
 6. Review the recommendation and click **Apply Recommended Expansion**.
 7. Click **Run Simulation** once more to evaluate the expanded configuration.
 
 > After applying a recommendation, do not run the optimizer a second time unless
-> the hospital configuration, demand, simulation settings, or queue limits have
-> changed.
+> the hospital configuration, demand, simulation settings, or mean-wait limits
+> have changed.
 
 ## 1. Model purpose
 
@@ -34,8 +35,8 @@ The application can be used to:
 - identify queues and operational bottlenecks;
 - examine patient treatment and waiting times;
 - compare baseline and expanded-capacity scenarios; and
-- estimate additional GenMed and ICU beds needed to satisfy user-defined queue
-  limits with a specified level of reliability.
+- estimate additional GenMed and ICU beds needed to keep the mean wait for a
+  first bed within user-defined limits with a specified level of reliability.
 
 This is a scenario-analysis model, not a clinical prediction or patient-level
 decision tool.
@@ -99,10 +100,11 @@ A patient profile contains:
 - one or more hospital units, in the order visited; and
 - a mean LOS in days for every unit.
 
-The form begins with **Unit 1**. Use the **+** button when the trajectory needs
-another unit. There is no fixed five-unit limit. Saving a profile resets the form
-to one unit. If the profile name already exists, the application asks whether
-the existing profile should be replaced.
+The form begins with **Unit 1**. Use **Add unit** when the trajectory needs
+another unit and **Remove last unit** to drop one. Each unit has a **Mean stay**
+and an optional **SD** (days). Saving a profile resets the form to one unit. If
+the profile name already exists, the application asks whether the existing
+profile should be replaced.
 
 An ambulatory profile has no inpatient trajectory. It receives a short model
 delay and does not occupy a hospital bed.
@@ -185,53 +187,55 @@ matches the selected predefined hospital:
 files every pathway is ED -> unit, and arrival rates are set so that expected
 occupancy (rate x 6-day mean stay) is 85% of that unit's beds.
 
-Before the surge, the model runs civilian arrivals alone. The default warm-up
-starts checking after 90 days and can extend to 365 days. It compares time-weighted
-mean occupancy and queue lengths across three consecutive 14-day windows. Every
-unit must have an occupancy range no greater than 5% of its capacity (minimum
-denominator one bed) and a queue range no greater than 0.5 patients. Checks repeat
-one window later until the screen passes or the maximum duration is reached.
-Settings are editable; they require sensitivity analysis for scientific use.
-Passing this screen does not establish statistical equilibrium.
+Before the surge, the model runs civilian arrivals alone (warm-up). With the
+default settings (**Advanced Flow Settings**), the minimum warm-up is 110 days
+and the maximum 360 days. The stability screen compares time-weighted mean
+occupancy and queue lengths across three consecutive 14-day windows: every unit
+must have an occupancy range no greater than 10% of its capacity (minimum
+denominator one bed) and a queue range no greater than 0.5 patients.
 
-If warm-up fails, the run stops before the surge. Review civilian demand and
-capacity or increase the warm-up limit. Overloaded configurations may never
-stabilize. If warm-up passes, the same simulation continues: no beds, queues, or
-patients are reset, and civilian arrivals continue throughout the event and
-follow-up. Day 0 is surge onset; simulation duration excludes warm-up. With this
-option disabled, the original empty-hospital behavior is retained, including
-the first surge arrivals on day 1.
+- **Fixed duration with diagnostics** (default): warm-up lasts the minimum
+  duration; the screen is recorded as a diagnostic and the run continues even
+  if it fails.
+- **Adaptive stability screen**: checks repeat one window later until the
+  screen passes or the maximum duration is reached; if it never passes, the
+  run stops before the surge.
 
-Bed-expansion searches include the civilian flow and its warm-up. Added beds are
-available from warm-up onward, representing planned expansion rather than a
-delayed response. Queue criteria are evaluated after surge onset.
+Settings are editable and require sensitivity analysis for scientific use.
+Passing the screen does not establish statistical equilibrium, and overloaded
+configurations may never stabilize. After warm-up the same simulation
+continues: no beds, queues, or patients are reset, and civilian arrivals
+continue throughout the event and follow-up. Day 0 is surge onset; simulation
+duration excludes warm-up. With civilian flow disabled, the hospital starts
+empty and the first surge arrival occurs at day 0.
 
-### Reproducible outputs for analysis
+Warm-up uses the existing beds. Additional (HxS) beds, including candidates
+evaluated by the bed-expansion search, are activated at surge onset. The
+search's wait criterion is evaluated only during the observation period.
 
-Use **Simulation seed** to repeat a scenario. **Download raw run data (.rds)**
-exports resource events, complete resource history including warm-up, patient
-records by population, per-resource patient activity, warm-up diagnostics,
-replication metadata, and the configuration. Civilian-enabled runs retain
-incomplete patients and civilians discharged before surge onset; select the
-appropriate cohort before analysis. Missing end times do not indicate discharge.
-Resource plots include both populations, while patient-time plots use completed
-surge patients when civilian flow is enabled.
+### Reproducible runs
 
-The same runs can be generated outside Shiny with `run_hospital_scenario()`;
-see the runnable example and output dictionary in `README.md`. A zero surge
-arrival rate permits civilian-only comparisons in R. Existing Excel templates
-store hospital and surge settings only; the RDS export includes civilian settings.
+Use **Simulation seed** to repeat a scenario. The **Download PDF Report**
+button exports the configuration, seed, result tables and plots. The same runs,
+with all raw tables (resource history including warm-up, patient records by
+population, per-resource activity, warm-up diagnostics and replication
+metadata), can be generated outside Shiny with `run_hospital_scenario()`; see
+the runnable example and output dictionary in `README.md`. Excel workbooks store
+hospital and surge settings only; save civilian profiles with **Download saved
+profiles** in Routine Civilian Flow.
 
 ### Event settings
 
 | Parameter | Meaning |
 |---|---|
-| **Patients per Day** | Number of surge patient arrivals generated each day. |
-| **Arrival Period (days)** | Number of consecutive days during which new patients arrive. |
-| **Simulation Duration (days)** | Observation horizon; excludes warm-up when civilian flow is enabled. |
+| **Scenario to run** | **Surge event** (surge arrivals, plus civilian flow if enabled) or **Routine civilian operation only**. |
+| **Surge Patients per Day** | Surge arrival rate. With Poisson arrivals it is the mean rate and the realized count varies. |
+| **Surge Arrival Period (days)** | Number of consecutive days during which surge patients arrive. |
+| **Surge arrival process** | **Evenly spaced** or **Poisson (random arrivals)**. |
+| **Observation Duration (days)** | Observation horizon; excludes warm-up when civilian flow is enabled. |
 | **Number of simulations** | Number of independent replications used to summarize stochastic variation. |
-| **Med/Surg queue limit** | Maximum acceptable GenMed queue length used by the expansion optimizer. |
-| **ICU queue limit** | Maximum acceptable ICU queue length used by the expansion optimizer. |
+| **Simulation seed** | Master seed that makes a run reproducible. |
+| **Med/Surg (days)**, **ICU (days)** | Maximum mean wait for a first bed used by the expansion optimizer. |
 | **HxS Med/Surg** | Additional GenMed beds added to the baseline capacity. |
 | **HxS ICU** | Additional ICU beds added to the baseline capacity. |
 
@@ -243,9 +247,12 @@ simulation horizon ends.
 
 ### Patient arrivals and profile assignment
 
-Patients arrive at the configured daily rate during the arrival period. Each
-patient is randomly assigned to a profile using the configured arrival
-percentages, then follows the profile's ordered trajectory.
+Surge patients arrive at the configured daily rate during the arrival period,
+either evenly spaced or as a Poisson process (random exponential interarrival
+times with the configured mean rate). Each patient is randomly assigned to a
+profile using the configured arrival percentages, then follows the profile's
+ordered trajectory. Civilian profiles use their own rates and the civilian
+arrival process chosen in **Advanced Flow Settings**.
 
 ### Length of stay
 
@@ -275,19 +282,31 @@ realized treatment times.
 
 ### Beds, queues, and fallback placement
 
-A patient occupies one bed at a time. After completing a trajectory step, the
-patient releases the current bed before moving to the next step. Queues have no
-fixed capacity and the model does not include patient abandonment.
+After completing a trajectory step, a patient keeps the current bed until a bed
+for the next step is obtained (**boarding**) and then releases it, so a patient
+never holds more than one bed. Time spent holding a bed while waiting for
+another unit -- between steps, or in a fallback while watching for the primary
+unit -- is reported under **Boarding Times**. A wait with no bed held at all
+(only possible at a pathway's first step) is reported under **Bed Waiting
+Times**. Queues have no fixed capacity and the model does not include patient
+abandonment.
 
 Fallback placement uses an available substitute bed but retains the LOS assigned
 to the original trajectory step.
 
 ## 5. Estimating bed expansion
 
-The optimizer estimates additional **GenMed** and **ICU** beds. It evaluates the
-current capacity first. If the current capacity satisfies the exact queue limits
-at the required reliability, it returns zero additional beds without running the
-unlimited-capacity demand scenario.
+The optimizer estimates additional **GenMed** and **ICU** beds. Its acceptance
+metric is, for each replication and each of GenMed and ICU, the **mean wait for
+a first bed** during the observation period: the average duration of episodes in
+which a patient requested a bed in that unit while holding no bed at all. Because
+civilian pathways start in the ED (a patient waiting in the ED holds an ED bed),
+these waits come in practice from surge patients whose pathway starts in GenMed
+or ICU. Boarding time is reported but is not part of the criterion.
+
+The optimizer evaluates the current capacity first. If the current capacity
+satisfies both limits at the required reliability, it returns zero additional
+beds without running the unlimited-capacity demand scenario.
 
 When expansion is needed, the optimizer runs an internal demand scenario with at
 least **500 beds in every configured hospital unit**. If the scenario has more
@@ -295,25 +314,26 @@ than 500 total arrivals, that capacity is increased to the number of arrivals so
 that the demand run remains unconstrained. Patients therefore use their primary
 trajectory units and queues do not determine placement. For every resource, the
 optimizer records the largest number of beds occupied simultaneously across the
-full validation replication bank. These values are printed in the R console as
+replications of that demand scenario (a separate seed bank). These values are printed in the R console as
 `Unlimited-capacity demand`.
 
 Unlimited-capacity demand is a **primary-demand reference**, not a hard safety
 ceiling. A constrained upstream unit can route additional patients through a
 fallback to GenMed or ICU, which is not observed when every unit has ample beds.
-The optimizer therefore starts at current capacity, grows only units that fail
-using doubling increments (for example `7, 8, 10, 14, 22, 35`), and permits that
-growth up to the total number of arrivals in the scenario. It never jumps directly
-to this fallback-safe ceiling. A unit that already passes remains fixed until a
+With the app's `incremental` initialization, only the units that fail at current
+capacity are first raised to their unlimited-capacity peak (never lowered); units
+that still fail then grow using doubling increments (for example
+`7, 8, 10, 14, 22, 35`), up to a fallback-safe ceiling equal to the total number
+of arrivals in the scenario. A unit that already passes remains fixed until a
 capacity interaction causes it to fail later. The internal demand scenario is not
 displayed in the dashboard and is not a bed recommendation.
 
 The recommendation applies the reliability requirement **jointly** to both
-target units: a replication only counts as compliant when the maximum GenMed
-queue and the maximum ICU queue are *both* at or below their limits in that
-same replication. With the dashboard's current search settings
+target units: a replication only counts as compliant when the GenMed mean wait
+and the ICU mean wait are *both* at or below their limits in that same
+replication. With the dashboard's current search settings
 (`bed_search_configs$development` in `R/01_config.R`), a candidate must clear
-this joint check in at least **70%** of **20** replications per candidate (14
+this joint check in at least **75%** of **20** replications per candidate (15
 of 20) to pass. Each unit's own compliance rate is still reported next to the
 joint result, but it is a diagnostic only: a unit can clear 100% of
 replications on its own while the candidate still fails overall, because its
@@ -347,8 +367,8 @@ candidate exceeds the fallback-safe ceiling equal to the total number of
 arrivals, while unlimited-capacity demand remains available as a
 primary-demand reference.
 
-To reduce memory during optimization, each replica returns only the maximum
-GenMed and ICU queue and occupancy metrics needed by the search. The full resource
+To reduce memory during optimization, each replica returns only the GenMed and
+ICU mean-wait and maximum-occupancy metrics needed by the search. The full resource
 time series is retained only for the user-requested simulation results dashboard.
 Because the model is stochastic, the result is a reliability-based recommendation,
 not a guarantee that every future simulation will remain below both limits.
@@ -358,7 +378,7 @@ recommendation becomes outdated and must be recalculated.
 
 ### Correct workflow
 
-1. Enter the two queue limits.
+1. Enter the two mean-wait limits (days).
 2. Click **Estimate Bed Expansion**.
 3. Confirm that you want to start the calculation.
 4. Review the evaluated scenario, the joint reliability that determines
@@ -375,52 +395,56 @@ with an error.
 
 ## 6. Understanding the results
 
-### Average Resource Utilization Over Time
+Result plots and tables leave out the ED, whose capacity is fixed at 999 beds.
+
+### Daily Mean Occupied Beds
 
 This plot shows occupied beds by hospital unit over time. Within each simulation,
-resource observations are grouped by day and summarized by their daily median.
-Those daily values are then averaged across simulations.
+the time-weighted mean occupancy of each day is computed; the line is the mean
+of those daily means across simulations, and the shaded band spans their 10th
+to 90th percentiles.
 
-### Queue Lengths Over Time
+### Daily Mean Queue Length
 
 This plot uses the same daily aggregation but displays patients waiting for each
-unit. A value of zero means no observed queue for that unit on that day.
+unit. A value of zero means no queue for that unit on that day.
 
 ### Average Utilization of Hospital Resources
 
 | Column | Interpretation |
 |---|---|
-| **Average Bed Utilization (%)** | Mean occupied capacity across time and simulations. |
-| **Peak Bed Utilization (%)** | Highest utilization observed among the simulations. |
-| **Average Occupied Beds** | Mean number of occupied beds. |
-| **Maximum Occupied Beds** | Highest occupied-bed count observed among the simulations. |
-| **Average Time at Full Capacity (days)** | Mean count of recorded time points at which the unit was full, reported as days. |
-| **Average Percent of Time at Full Capacity (%)** | Mean percentage of recorded time points at full capacity. |
+| **Average Bed Utilization (%)** | Time-weighted mean occupied share of capacity, averaged across simulations. |
+| **Peak Bed Utilization (%)** | Highest utilization observed in any simulation. |
+| **Average Occupied Beds** | Time-weighted mean number of occupied beds, averaged across simulations. |
+| **Maximum Occupied Beds** | Highest occupied-bed count observed in any simulation. |
+| **Time at Full Capacity (days)** | Mean time (days) during which every bed was occupied. |
+| **Percent of Time at Full Capacity (%)** | Mean percentage of the observation period at full capacity. |
 
 ### Bottlenecks in Hospital Resource Usage
 
 | Column | Interpretation |
 |---|---|
-| **Average Queue Length (Patients)** | Mean queue length across recorded time points and simulations. |
+| **Average Queue Length (Patients)** | Time-weighted mean queue length, averaged across simulations. |
 | **Mean Maximum Queue Length (Patients)** | Mean, across replications, of each replication's maximum queue length. |
-| **Average Congestion Index** | Mean fraction of recorded time points with a queue greater than zero. |
-| **Average Waiting Time Fraction** | Mean ratio of queued demand to total queued plus occupied demand. |
+| **Fraction of Time with a Queue** | Mean share of time with at least one patient waiting. |
+| **Queued Patient-Time Fraction** | Queued patient-time divided by queued plus occupied patient-time. |
 
-The waiting-time fraction is a dimensionless congestion measure; it is not the
-average number of days a patient waited.
+The queued patient-time fraction is a dimensionless congestion measure; it is not
+the average number of days a patient waited.
 
 > **Why can the plot and table show different maxima?** The time-series plot
-> averages daily summaries across simulations, while the queue table first finds
-> a maximum within each simulation and then summarizes those maxima. A peak can
+> averages daily means across simulations, while the queue table first finds a
+> maximum within each simulation and then summarizes those maxima. A peak can
 > therefore be visible in the table even when averaging makes the plotted curve
 > appear lower.
 
-### Treatment and wait time distributions
+### Boarding Times and Bed Waiting Times
 
-The treatment-time histogram shows the distribution of average treatment time
-among completed patients in each simulation. The wait-time histogram shows the
-distribution of average time spent outside active treatment. The dashed line in
-each chart marks the overall mean across the displayed simulations.
+**Boarding Times** reports the time patients held a bed elsewhere while waiting
+for the listed unit (mean of each replication's longest episode, and mean
+episode duration). **Bed Waiting Times** reports waits with no bed held,
+including zero waits, for every request that obtained a bed during observation;
+the 95% CI describes Monte Carlo uncertainty in the mean.
 
 ## 7. Interpreting stochastic results
 
@@ -433,15 +457,18 @@ stable summaries:
 - focus on patterns across metrics rather than one isolated value; and
 - rerun important scenarios to assess sensitivity.
 
-A 70% reliability target means that, in at least 70% of validation replications,
-the GenMed and ICU queues must *both* stay within their limits in that same
+A 75% reliability target means that, in at least 75% of validation replications,
+the GenMed and ICU mean waits must *both* stay within their limits in that same
 replication. A single unit's own compliance rate can look higher or lower than
-70% in isolation -- it is diagnostic only. What determines whether a candidate
+75% in isolation -- it is diagnostic only. What determines whether a candidate
 passes is the joint rate across both units together.
 
 ## 8. Assumptions and limitations
 
-- Patient arrivals use a fixed daily rate during the arrival period.
+- Patient arrivals use a constant daily rate (evenly spaced or Poisson) during
+  the arrival period.
+- The bed-expansion criterion is the mean wait for a first bed, not the longest
+  wait or boarding time; individual patients can wait longer than the limit.
 - Profile probabilities remain constant throughout a scenario.
 - LOS variability is entered as a per-step SD; a blank SD defaults to a CV of 1
   for ICU steps and 0.24 for every other unit. Built-in NDMS-based profile sets
@@ -476,9 +503,8 @@ One calculation is already running. Wait for it to finish; the buttons will be
 enabled automatically. Only one simulation or bed-expansion calculation can run
 at a time.
 
-**A queue still exceeds its limit in some simulations.**  
-The optimizer requires each unit to comply in at least 70% of validation
-simulations, not 100%. Increase the number of simulations for a more stable
-assessment or manually test a larger expansion if a more conservative scenario
-is required. The reported joint diagnostic can be lower because GenMed and ICU
-may fail in different replications.
+**A mean wait still exceeds its limit in some simulations.**  
+The optimizer requires GenMed and ICU to comply jointly in at least 75% of
+validation simulations, not 100%. Increase the number of simulations for a more
+stable assessment or manually test a larger expansion if a more conservative
+scenario is required.

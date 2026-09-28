@@ -123,7 +123,7 @@ build_body <- function() {
             shiny::textOutput("patient_cohort_note"),
             shiny::fluidRow(
               shinydashboard::box(
-                title = "Daily Maximum Occupied Beds", status = "success", solidHeader = TRUE, width = 6,
+                title = "Daily Mean Occupied Beds", status = "success", solidHeader = TRUE, width = 6,
                 collapsible = TRUE,
                 rintrojs::introBox(
                   plotly::plotlyOutput("resource_plot"),
@@ -131,16 +131,15 @@ build_body <- function() {
                   data.intro = paste(
                     "<strong>Occupancy and queues over time</strong><br>",
                     "Use the interactive plots to compare occupied beds and",
-                    "patients waiting across hospital units and days. Each line shows the median",
-                    "of daily maxima across replications; the shaded band shows the 10th–90th",
-                    "percentiles.",
-                    "These are daily peaks, not daily averages."
+                    "patients waiting across hospital units and days. Each line shows the mean",
+                    "of time-weighted daily means across replications; the shaded band shows the",
+                    "10th–90th percentiles. The ED (fixed at 999 beds) is not shown."
                   ),
                   data.position = "left"
                 )
               ),
               shinydashboard::box(
-                title = "Daily Maximum Queue Length", status = "success", solidHeader = TRUE, width = 6,
+                title = "Daily Mean Queue Length", status = "success", solidHeader = TRUE, width = 6,
                 collapsible = TRUE,
                 plotly::plotlyOutput("queue_plot")
               )
@@ -159,7 +158,6 @@ build_body <- function() {
                   ),
                   data.position = "right"
                 ),
-                # Add styling to make the table fit within the box
                 style = "overflow-x: auto;"
               ),
               shinydashboard::box(
@@ -187,7 +185,19 @@ build_body <- function() {
                 title = "Bed Waiting Times", status = "success", solidHeader = TRUE, width = 6,
                 collapsible = TRUE,
                 collapsed = FALSE,
-                rintrojs::introBox(shiny::tableOutput("bed_wait_table"), data.step = 13, data.intro = paste("<strong>Bed waiting times: requests with a resolved wait.</strong><br>", "Mean wait includes zero waits and is averaged across replications; a patient still receiving care at the simulation horizon is still included as long as their bed request itself was already resolved. The 95% CI describes uncertainty in that mean, not the range containing 95% of patient waits; at least two contributing replications are needed.", "Observed waiting (%) is the percentage of bed requests with a positive wait. Rows distinguish unit, population and cohort."), data.position = "top"), shiny::helpText("Includes every bed request that itself found a bed (resolved), whether or not the patient had been discharged by the end of the simulation. Means include zero waits and average replication-specific bed-request means; 95% CIs require at least two replications with a resolved request. Day-zero waits include waiting before observation."), shiny::helpText("This table only covers bed-less waits at a pathway's first step (no bed held yet). If civilian profiles start with ED, and ED has enough capacity, civilian rows here will be near zero -- that wait now shows as boarding (see \"Boarding Times\" above) instead, since the patient holds the ED bed while waiting. This table remains meaningful for populations that do not pass through ED first (e.g. surge patients requesting their first bed directly)."), style = "overflow-x: auto;"
+                rintrojs::introBox(
+                  shiny::tableOutput("bed_wait_table"),
+                  data.step = 13,
+                  data.intro = paste(
+                    "<strong>Bed waiting times: requests with a resolved wait.</strong><br>",
+                    "Mean wait includes zero waits and is averaged across replications; a patient still receiving care at the simulation horizon is still included as long as their bed request itself was already resolved. The 95% CI describes uncertainty in that mean, not the range containing 95% of patient waits; at least two contributing replications are needed.",
+                    "Observed waiting (%) is the percentage of bed requests with a positive wait. Rows distinguish unit, population and cohort."
+                  ),
+                  data.position = "top"
+                ),
+                shiny::helpText("Includes every bed request that itself found a bed (resolved), whether or not the patient had been discharged by the end of the simulation. Means include zero waits and average replication-specific bed-request means; 95% CIs require at least two replications with a resolved request. Day-zero waits include waiting before observation."),
+                shiny::helpText("This table only covers bed-less waits at a pathway's first step (no bed held yet); the ED is not shown. Patients whose pathway starts in the ED hold an ED bed while waiting for their next unit, so that wait appears under \"Boarding Times\" instead. This table is most informative for patients who do not pass through the ED first (e.g. surge patients requesting their first bed directly)."),
+                style = "overflow-x: auto;"
               )
             ),
 
@@ -200,7 +210,7 @@ build_body <- function() {
                   data.step = 14,
                   data.intro = paste(
                     "<strong>Export the scenario.</strong><br>",
-                    "Download raw RDS data for independent figures and analysis, including configuration, seeds and bed-wait summaries. A PDF report is also available. If bed",
+                    "Download a PDF report with the configuration, seed, result tables and plots. If bed",
                     "expansion was estimated, the recommendation is also included."
                   ),
                   data.position = "top"

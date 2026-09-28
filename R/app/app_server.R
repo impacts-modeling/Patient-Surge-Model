@@ -1,9 +1,5 @@
 # Application server ----------------------------------------------------
 app_server <- function(input, output, session) {
-    # ####
-    # res_auth <- secure_server(check_credentials = check_credentials(credentials))
-    # output$auth_output <- shiny::renderPrint({ reactiveValuesToList(res_auth) })
-    
     simulation_data <- shiny::reactiveVal(NULL)
     civilian_only <- shiny::reactive(identical(input$scenario_mode, "civilian_only"))
     surge_config <- hospital_profiles_server("profiles",
@@ -383,10 +379,6 @@ app_server <- function(input, output, session) {
       if (!isTRUE(bed_result_is_current())) return(NULL)
       find_result()
     })
-    output$formula_output <- shiny::renderUI({
-      shiny::withMathJax(shiny::HTML(my_formula()))
-    })
-    
     output$N_tex <- shiny::renderUI({
       applied <- applied_recommendation()
       if (!is.null(applied) && identical(
@@ -412,7 +404,7 @@ app_server <- function(input, output, session) {
           class = "alert alert-warning",
           shiny::tags$strong("Outdated bed-expansion recommendation"),
           shiny::tags$br(),
-          "Hospital profiles, capacities, demand, boarding-time limits, HxS inputs, or the number of simulations changed after this recommendation was calculated. Click Estimate Bed Expansion again before applying it."
+          "Hospital profiles, capacities, demand, mean-wait limits, HxS inputs, or the number of simulations changed after this recommendation was calculated. Click Estimate Bed Expansion again before applying it."
         ))
       }
   
@@ -421,7 +413,7 @@ app_server <- function(input, output, session) {
           return(shiny::div(
             class = "alert alert-warning",
             sprintf(
-              "The search found GenMed=%d, ICU=%d (+%d GenMed, +%d ICU) during its search-stage replications, but that capacity failed joint maximum-wait compliance in %d independent final replications (joint compliance %.1f%%; target %.1f%%). It is not offered as a recommendation and was not re-validated. Review demand, capacity limits or replication precision.",
+              "The search found GenMed=%d, ICU=%d (+%d GenMed, +%d ICU) during its search-stage replications, but that capacity failed joint mean-wait compliance in %d independent final replications (joint compliance %.1f%%; target %.1f%%). It is not offered as a recommendation and was not re-validated. Review demand, capacity limits or replication precision.",
               n_opt$GenMed_N, n_opt$ICU_N, n_opt$N_added, n_opt$N_added_ICU,
               n_opt$final_num_sims, 100 * n_opt$joint_reliability, 100 * n_opt$reliability_level),
             shiny::tags$br(), shiny::tags$br(),
@@ -475,8 +467,8 @@ app_server <- function(input, output, session) {
   
         Recommended Expansion:<br>
         <span style='font-size:14px; font-weight:normal;'>Mode: %s. Recommendation is additional beds beyond current capacity and HxS inputs.</span><br>
-        <span style='font-size:14px; font-weight:normal;'>Evaluated scenario: GenMed %d beds; ICU %d beds; boarding-time limits %.2f and %.2f days; %.6g patients/day; %d scenario simulations.</span><br>
-        <span style='font-size:14px; font-weight:normal;'>Both maximum boarding-time limits met simultaneously in %.1f%% of final replications; target %.1f%%.</span><br>
+        <span style='font-size:14px; font-weight:normal;'>Evaluated scenario: GenMed %d beds; ICU %d beds; mean-wait limits %.2f and %.2f days; %.6g patients/day; %d scenario simulations.</span><br>
+        <span style='font-size:14px; font-weight:normal;'>Both mean-wait limits met simultaneously in %.1f%% of final replications; target %.1f%%.</span><br>
         <span style='font-size:14px; font-weight:normal;'>%s</span><br>
   
         Add <span style='color:%s;'>%d</span> beds to <b>Med/Surg</b> and
@@ -500,7 +492,7 @@ app_server <- function(input, output, session) {
           color_icu,
           N_added_ICU
         )),
-        shiny::helpText(sprintf("Joint maximum-queue compliance: 95%% binomial CI %.1f%% to %.1f%%. Acceptance uses the observed proportion, not the lower confidence bound.",
+        shiny::helpText(sprintf("Joint mean-wait compliance: 95%% binomial CI %.1f%% to %.1f%%. Acceptance uses the observed proportion, not the lower confidence bound.",
           100 * n_opt$final_joint_interval$lower_95[[1]],
           100 * n_opt$final_joint_interval$upper_95[[1]])),
         shiny::actionButton(
@@ -562,47 +554,30 @@ app_server <- function(input, output, session) {
         duration = 10
       )
     })
-    # Plot output
+    # Results: plots and tables leave out internal units (ED).
     output$resource_plot <- plotly::renderPlotly({
       shiny::req(simulation_data())
-      make_resource_plot(simulation_data()$resources, var = "server")
+      make_resource_plot(hide_internal_units(simulation_data()$resources, "resource"), var = "server")
     })
-    ##########
     output$queue_plot <- plotly::renderPlotly({
       shiny::req(simulation_data())
-      make_resource_plot(simulation_data()$resources, var = "queue")
+      make_resource_plot(hide_internal_units(simulation_data()$resources, "resource"), var = "queue")
     })
-    
-    ############
     output$utilization_table <- shiny::renderTable({
-      # # Extract resource metrics
       shiny::req(simulation_data())
-      resource_metrics <- simulation_data()$resources
-      summary_utilization(resource_metrics)
+      utilization_results_table(simulation_data())
     })
-    
-    
-    #############################################################################
-    #############################################################################
-    
     output$queue_analysis <- shiny::renderTable({
-      # resource_metrics <-resource_metrics$resources
       shiny::req(simulation_data())
-      resource_metrics <- simulation_data()$resources
-      
-      summary_queue(resource_metrics)
+      queue_results_table(simulation_data())
     })
-    
-    ###################################################################################################
-    ###################################################################################################
-    
     output$bed_wait_table <- shiny::renderTable({
       shiny::req(simulation_data())
-      bed_wait_table(simulation_data())
+      bed_wait_results_table(simulation_data())
     }, na = "Not estimable")
     output$boarding_time_table <- shiny::renderTable({
       shiny::req(simulation_data())
-      boarding_time_table(simulation_data())
+      boarding_results_table(simulation_data())
     }, na = "Not estimable")
     output$baseline_run_status <- shiny::renderUI({
       data <- simulation_data()
@@ -617,16 +592,14 @@ app_server <- function(input, output, session) {
       }
       shiny::div(class = "alert alert-info",
         mode_description, shiny::tags$br(),
-        sprintf("Civilian warm-up lasted %.0f to %.0f days. Diagnostic failures across checks: %d. Fixed-duration runs continue even if the diagnostic fails. Resource plots include both populations; raw history includes warm-up. The screen does not prove equilibrium.",
+        sprintf("Civilian warm-up lasted %.0f to %.0f days. Diagnostic failures across checks: %d. Fixed-duration runs continue even if the diagnostic fails. Resource plots include both populations after warm-up. The screen does not prove equilibrium.",
                 min(data$runs$warmup_days), max(data$runs$warmup_days),
                 sum(!data$warmup_diagnostics$passed)))
     })
     output$patient_cohort_note <- shiny::renderText({
       data <- simulation_data()
       if (is.null(data)) return("Run the selected scenario to display its results.")
-      if (identical(data$scenario_mode, "civilian_only")) {
-        "Bed waits include zero waits for patients who completed their hospital trajectory; unfinished patients are excluded."
-      } else "Bed waits are restricted to completed patients, separated by requested unit and population. Day-zero requests form a separate cohort."
+      "Bed waits include every bed request that found a bed during observation (including zero waits), whether or not the patient had finished their trajectory. Rows are separated by requested unit and population; day-zero requests form a separate cohort."
     })
     output$download_report <- shiny::downloadHandler(
       filename = function() {

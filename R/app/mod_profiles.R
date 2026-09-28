@@ -595,7 +595,7 @@ hospital_profiles_ui <- function(id) {
                 "Download surge profile configuration",
                 class = "btn-primary"
               ),
-              shiny::helpText("Excel saves hospital beds and surge profiles. Civilian settings are stored in the raw run data download."),
+              shiny::helpText("Excel saves hospital beds and surge profiles. Save civilian profiles with Download saved profiles in Routine Civilian Flow."),
               data.step = 6,
               data.intro = paste(
                 "<strong>Confirm that the setup is ready.</strong><br>",
@@ -1295,7 +1295,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
         shiny::validate(shiny::need(
           length(profile_config$patient_profiles) > 0 &&
             setequal(names(profile_config$patient_profiles), names(profile_config$profile_prob)),
-          "Complete surge profiles and arrival percentages before exporting a surge workbook. Civilian-only runs can be exported as raw RDS data."
+          "Complete surge profiles and arrival percentages before exporting a surge workbook. Civilian profiles are saved separately as CSV in Routine Civilian Flow."
         ))
         write_profile_config_xlsx(profile_config, file)
       },

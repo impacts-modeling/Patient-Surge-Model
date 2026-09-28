@@ -33,7 +33,7 @@ make_expansion_table <- function(n_result) {
       "Validated total ICU capacity",
       "Unified search evaluations",
       "Independent final evaluations",
-      "Joint maximum-wait-time compliance target met",
+      "Joint mean-wait compliance target met",
       "Final mean GenMed wait time (days)",
       "Final mean ICU wait time (days)"
     ),
@@ -213,11 +213,37 @@ add_report_table_page <- function(title, table_data, rows_per_page = 16) {
   }
 }
 
+# Internal units (ED, fixed at 999 beds) are not user-configured, so they are
+# left out of the result tables and plots shown in the app and PDF report.
+hide_internal_units <- function(table, column) {
+  if (!column %in% names(table)) return(table)
+  table[!table[[column]] %in% names(internal_hospital_units), , drop = FALSE]
+}
+
+# Result tables shared by the dashboard and the PDF report.
+utilization_results_table <- function(simulation_data) {
+  hide_internal_units(summary_utilization(simulation_data$resources), "Resource")
+}
+
+queue_results_table <- function(simulation_data) {
+  hide_internal_units(summary_queue(simulation_data$resources), "Resource")
+}
+
+bed_wait_results_table <- function(simulation_data) {
+  table <- hide_internal_units(bed_wait_table(simulation_data), "Unit")
+  if (nrow(table)) table else data.frame(Status = "No bed requests with a resolved wait in the observation period.")
+}
+
+boarding_results_table <- function(simulation_data) {
+  table <- hide_internal_units(boarding_time_table(simulation_data), "Unit")
+  if (nrow(table)) table else data.frame(Status = "No boarding episodes recorded in the observation period.")
+}
+
 add_resource_plot_page <- function(resources, var = "server") {
   # Same daily-mean definition as the dashboard plot and the manuscript
   # figures: mean of daily means across replications, 10th-90th
   # percentile band. See make_daily_peak_summary in simulation_metrics.R.
-  resources <- resources[resources$resource != "ED", , drop = FALSE]
+  resources <- hide_internal_units(resources, "resource")
   plot_data <- make_daily_peak_summary(resources, var = var)
   y_label <- switch(
     var,
@@ -247,82 +273,11 @@ add_resource_plot_page <- function(resources, var = "server") {
   print(plot_obj)
 }
 
-select_patient_time_cohort <- function(arrivals, scenario_mode = "surge") {
-  if ("population" %in% names(arrivals)) {
-    population <- if (identical(scenario_mode, "civilian_only")) "civilian" else "surge"
-    arrivals <- dplyr::filter(arrivals, .data$population == .env$population,
-                              .data$start_time >= 0)
-  }
-  arrivals
-}
-
-make_patient_summary <- function(arrivals, scenario_mode = "surge") {
-  arrivals <- select_patient_time_cohort(arrivals, scenario_mode)
-  arrivals |>
-    dplyr::group_by(replication) |>
-    dplyr::summarise(
-      total_patients = dplyr::n(),
-      completion_rate = safe_mean(as.numeric(finished)),
-      avg_treatment_time = safe_mean(activity_time[finished], default = NA_real_),
-      avg_wait_time = safe_mean((end_time - start_time - activity_time)[finished %in% TRUE], default = NA_real_),
-      .groups = "drop"
-    ) |>
-    dplyr::filter(is.finite(avg_treatment_time), is.finite(avg_wait_time))
-}
-
-add_patient_time_plot_page <- function(arrivals, scenario_mode = "surge") {
-  patient_summary <- make_patient_summary(arrivals, scenario_mode)
-  if (nrow(patient_summary) == 0) {
-    add_report_text_page(
-      "Distribution of Average Treatment/Wait Time",
-      "No completed patient records were available to plot."
-    )
-    return(invisible(NULL))
-  }
-
-  old_par <- graphics::par(no.readonly = TRUE)
-  on.exit(graphics::par(old_par), add = TRUE)
-  graphics::par(mfrow = c(1, 2), mar = c(5, 5, 4, 2))
-
-  graphics::hist(
-    patient_summary$avg_treatment_time,
-    breaks = 20,
-    col = "steelblue",
-    border = "white",
-    main = "Average Treatment Time",
-    xlab = "Days",
-    ylab = "Number of Simulations"
-  )
-  graphics::abline(v = mean(patient_summary$avg_treatment_time), col = "red", lty = 2, lwd = 2)
-  graphics::mtext(
-    paste("Mean:", round(mean(patient_summary$avg_treatment_time), 2), "days"),
-    side = 3,
-    line = 0.2,
-    cex = 0.8
-  )
-
-  graphics::hist(
-    patient_summary$avg_wait_time,
-    breaks = 20,
-    col = "tomato",
-    border = "white",
-    main = "Average Wait Time",
-    xlab = "Days",
-    ylab = "Number of Simulations"
-  )
-  graphics::abline(v = mean(patient_summary$avg_wait_time), col = "blue", lty = 2, lwd = 2)
-  graphics::mtext(
-    paste("Mean:", round(mean(patient_summary$avg_wait_time), 2), "days"),
-    side = 3,
-    line = 0.2,
-    cex = 0.8
-  )
-}
-
 build_report_params <- function(input, profile_config) {
   civilian_only <- identical(input$scenario_mode, "civilian_only")
-  capacity_params <- as.list(profile_config$capacities)
-  names(capacity_params) <- paste(names(capacity_params), "Available Beds")
+  capacities <- profile_config$capacities
+  capacity_params <- as.list(capacities[!names(capacities) %in% names(internal_hospital_units)])
+  names(capacity_params) <- paste(names(capacity_params), "Total Beds")
   c(
     list(
       `Scenario` = if (civilian_only) "Routine civilian operation only" else "Surge event",
@@ -339,8 +294,8 @@ build_report_params <- function(input, profile_config) {
          `Simulation seed` = input$simulation_seed),
     capacity_params,
     list(
-      `Maximum Allowed Med/Surg Boarding Time (days)` = input$congestion_index,
-      `Maximum Allowed ICU Boarding Time (days)` = input$congestion_index_icu,
+      `Maximum Allowed Med/Surg Mean Wait (days)` = input$congestion_index,
+      `Maximum Allowed ICU Mean Wait (days)` = input$congestion_index_icu,
       `HxS Med/Surg Additional Beds Entered` = input$genmed_msf,
       `HxS ICU Additional Beds Entered` = input$icu_msf
     )
@@ -356,11 +311,8 @@ make_profile_configuration_table <- function(profile_config) {
       function(profile) paste(profile$unit, collapse = " -> "),
       character(1)
     ),
-    LOS_days = vapply(
-      profiles,
-      function(profile) paste(profile$los, collapse = " -> "),
-      character(1)
-    ),
+    Mean_stay_days = vapply(profiles, function(profile) format_steps(profile$los), character(1)),
+    SD_days = vapply(profiles, function(profile) format_steps(profile_step_sd(profile)), character(1)),
     Arrival_percent = round(100 * profile_config$profile_prob[names(profiles)], 3),
     check.names = FALSE
   )
@@ -410,7 +362,8 @@ generate_simulation_pdf_report <- function(file, params, simulation_data, profil
       profile <- baseline$profiles[[name]]
       data.frame(Profile = name, Patients_per_day = baseline$arrival_rates[[name]],
                  Pathway = paste(profile$unit, collapse = " -> "),
-                 Mean_stays_days = paste(profile$los, collapse = " -> "))
+                 Mean_stays_days = format_steps(profile$los),
+                 SD_days = format_steps(civilian_step_sd(profile)))
     }))
     add_report_table_page("Routine Civilian Profiles", civilian_profiles)
     add_report_table_page("Civilian Warm-up Settings", make_parameter_table(
@@ -424,19 +377,18 @@ generate_simulation_pdf_report <- function(file, params, simulation_data, profil
       "Civilian arrivals continue throughout warm-up and follow-up without resetting beds or patients.",
       sprintf("Warm-up diagnostic failures across checks: %d. Fixed-duration runs continue even if the screen fails; equilibrium is not established.",
         sum(!simulation_data$warmup_diagnostics$passed)),
-      "Warm-up uses existing beds; added capacity is activated at the start of observation.",
-      "Raw RDS output retains civilian patient records, incomplete patients and warm-up diagnostics."))
+      "Warm-up uses existing beds; added capacity is activated at the start of observation."))
   }
   add_report_table_page("Fallback Configuration", make_fallback_configuration_table(profile_config))
   if (!civilian_only) add_report_table_page("Recommended Expansion", make_expansion_table(n_result))
-  add_report_table_page("Average Utilization of Hospital Resources", summary_utilization(simulation_data$resources))
-  add_report_table_page("Bottlenecks in Hospital Resource Usage", summary_queue(simulation_data$resources))
+  add_report_table_page("Average Utilization of Hospital Resources", utilization_results_table(simulation_data))
+  add_report_table_page("Bottlenecks in Hospital Resource Usage", queue_results_table(simulation_data))
 
   add_resource_plot_page(simulation_data$resources, var = "server")
   add_resource_plot_page(simulation_data$resources, var = "queue")
-  add_report_table_page("Bed waiting times (days; requests with a resolved wait)", bed_wait_table(simulation_data))
+  add_report_table_page("Bed waiting times (days; requests with a resolved wait)", bed_wait_results_table(simulation_data))
   add_report_table_page("Boarding times (days; time holding a bed while awaiting the next unit)",
-                        boarding_time_table(simulation_data))
+                        boarding_results_table(simulation_data))
 
   invisible(file)
 }
