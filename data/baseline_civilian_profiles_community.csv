@@ -1,0 +1,4 @@
+Profile,Patients_per_day,Pathway,Mean_stays_days,CV_values
+ED_GenMed,11.33,"ED, GenMed","0.0598,6","0.44,0.24"
+ED_ICU,1.70,"ED, ICU","0.0598,6","0.44,1"
+ED_TransitionalCare,1.70,"ED, TransitionalCare","0.0598,6","0.44,0.24"

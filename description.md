@@ -8,7 +8,7 @@
 ## Quick start
 
 1. Open **Hospital Setup** and select a patient profile source.
-2. Confirm the hospital units, available beds, patient profiles, arrival
+2. Confirm the hospital units, total beds, patient profiles, arrival
    percentages, and fallback rules.
 3. Open **Model Parameters** and enter the demand and simulation settings.
 4. Click **Run Simulation** to evaluate the current hospital configuration.
@@ -42,25 +42,41 @@ decision tool.
 
 ## 2. Hospital Setup
 
+Hospital Setup is organized into four collapsible sections: **Hospital
+Information**, **Create or edit surge patient trajectory**, **Routine Civilian
+Flow**, and **Advanced Flow Settings** (collapsed by default).
+
 ### Patient profile sources
 
 | Option | Intended use |
 |---|---|
 | **Create profiles manually** | Build a custom hospital configuration and custom patient trajectories. |
-| **Use Deloitte profiles (completed)** | Load the complete built-in example configuration. |
-| **Use Deloitte profiles (reduced)** | Load the smaller built-in example configuration (UC Davis units; Surge relabeled to TransitionalCare). |
-| **Use Deloitte profiles (Regional hospital)** | Load a UC Davis Regional hospital example, adapted from the Deloitte proportions (no BurnBed/Psychiatric unit). |
-| **Use Deloitte profiles (Tertiary hospital)** | Load a UC Davis Tertiary hospital example, adapted from the Deloitte proportions (CardiacICU relabeled to Cardiology). |
+| **Use predefined profiles** | Load a built-in NDMS-Based Classification profile set: UC Davis calibrated profiles, Completed, Regional hospital, Tertiary hospital, or Community acute-care hospital. |
 | **Upload profiles from Excel** | Complete the empty Excel template or restore a configuration previously downloaded from the application. |
+
+All predefined sets use the NDMS-Based Classification:
+
+| Set | Units and beds |
+|---|---|
+| **UC Davis calibrated profiles** | Surge, GenMed and ICU (the configuration used in the manuscript). |
+| **Completed** | All original units (BurnBed, CardiacICU, GenMed, ICU, PhysicalMed, Psychiatric, TransitionalCare). |
+| **Regional hospital** | GenMed 240, ICU 20, Cardiology 12, PhysicalMed 12, TransitionalCare 20; BurnBed pathways rerouted to ICU and Psychiatric to GenMed. |
+| **Tertiary hospital** | GenMed 400, ICU 72, BurnBed 12, Cardiology 18, PhysicalMed 24, Psychiatric 20, TransitionalCare 24. |
+| **Community acute-care hospital** | GenMed 80, ICU 12, TransitionalCare 12; BurnBed and CardiacICU pathways rerouted to ICU, PhysicalMed to TransitionalCare, and Psychiatric to GenMed. Fallbacks: GenMed and TransitionalCare back each other up; ICU has none. |
+
+Rerouting keeps each step's mean LOS unchanged; it is an illustrative
+adaptation of the NDMS proportions to a smaller unit set, not a calibration.
 
 Selecting a built-in or uploaded example automatically populates the hospital
 units, capacities, profiles, probabilities, and fallback rules associated with
 that configuration.
 
-### Hospital units and available beds
+### Hospital units and total beds
 
-Select the units that exist in the scenario and enter the number of beds
-available in each selected unit. Supported units are:
+Select the units that exist in the scenario and enter the total number of beds
+in each selected unit. The **ED** is always part of the hospital with a fixed
+capacity of 999 beds (practically unlimited), so it is not listed or editable;
+it remains available to trajectories and fallback rules. Selectable units are:
 
 - **Surge**
 - **GenMed**
@@ -95,25 +111,31 @@ delay and does not occupy a hospital bed.
 
 Each profile receives a percentage of total patient arrivals. Percentages must
 be non-negative and must sum to **100%** before the configuration can be used.
-The application no longer requires a separate WIA proportion: the full patient
-mix is represented directly by the profile percentages.
 
 ### Fallback rules
 
 Fallbacks define ordered substitute units for a primary unit. When a patient
 reaches a trajectory step, the model:
 
-1. checks the primary unit;
-2. checks each configured fallback in priority order if the primary unit is
-   full; and
-3. counts the patient in the queue of the primary unit if no fallback bed is
-   available;
-4. waits one day; and
-5. checks the primary unit and all ordered fallbacks again.
+1. requests a bed from the primary unit and every configured fallback for it,
+   in priority order, at the same time;
+2. is placed in whichever of those beds is free first -- the primary unit if
+   it has one, otherwise the highest-priority free fallback; and
+3. is counted in the queue of the primary unit if none of the primary or
+   fallback beds are free.
 
-The daily wait-and-recheck cycle continues until a bed becomes available. The
-patient remains one logical patient, is counted in the queue of the requested
-primary unit, and can occupy no more than one bed.
+Bed acquisition is **event-driven, not a periodic recheck**: a waiting patient
+is placed the instant any requested bed (primary or fallback) becomes free,
+not on a fixed daily cycle. If the patient is placed in a fallback, it keeps
+watching the primary unit at the same time. Should the primary free up before
+this step's length of stay is over, the patient transfers there immediately --
+with priority over a fresh request for that same bed -- and continues with only
+the remaining stay, so the step's total duration is unchanged by the transfer.
+The patient remains one logical patient throughout, is counted in the queue of
+the requested primary unit while waiting, and can occupy no more than one bed
+at a time. A patient who already holds a bed (boarding between pathway steps,
+or occupying a fallback while watching for the primary) is dispatched ahead of
+a patient with no bed making a fresh request for that same unit.
 
 The fallback list shown in the application always corresponds to the currently
 selected profile source. A unit cannot be its own fallback.
@@ -131,9 +153,9 @@ workbook for future simulations. Both files use four required sheets:
 | Sheet | Required columns | Purpose |
 |---|---|---|
 | **Profiles** | `Profile`, `Arrival_percent`, `Ambulatory` | Profile names, patient mix, and ambulatory status. |
-| **Trajectories** | `Profile`, `Step`, `Unit`, `LOS_days` (`CV` optional) | Ordered care steps, mean LOS, and optional per-step coefficient of variation (defaults to 1 for ICU steps and 0.24 for every other unit when omitted). |
+| **Trajectories** | `Profile`, `Step`, `Unit`, `LOS_days` (`SD` optional) | Ordered care steps, mean LOS, and optional per-step LOS standard deviation in days (defaults to 1 x LOS for ICU steps and 0.24 x LOS for every other unit when omitted). Older workbooks with a `CV` column are still accepted. |
 | **Fallbacks** | `Primary_unit`, `Priority`, `Fallback_unit` | Ordered substitute-bed rules. |
-| **Hospital** | `Unit`, `Available_beds` | Selected units and baseline bed capacity. |
+| **Hospital** | `Unit`, `Total_beds` | Selected units and baseline bed capacity. The ED is always set to 999 beds. Older workbooks with `Available_beds` are still accepted. |
 
 To reuse the file, select **Upload profiles from Excel** and upload the workbook.
 Profile names must start with a letter and may contain letters, numbers,
@@ -144,13 +166,24 @@ underscores, or hyphens.
 ### Routine civilian operations
 
 The **Routine Civilian Flow** panel in Hospital Setup optionally adds continuous
-civilian demand. Save a separate list of civilian profiles with constant arrival
-rates in patients/day, ordered unit IDs separated by commas, one positive
-mean stay per step, and, optionally, one coefficient of variation (CV) per step
-(comma-separated, or a single value applied to every step). Leaving the CV field
-blank defaults to 1 for ICU steps and 0.24 for every other unit. These profiles share hospital beds and fallback
+civilian demand. The civilian editor is shown only when **Enable routine
+civilian arrivals** is checked. Save a separate list of civilian profiles with
+constant arrival rates in patients/day and an ordered pathway built unit by
+unit, as in the surge trajectory editor, with one positive mean stay and,
+optionally, one standard deviation (SD, days) per unit. Leaving an SD blank
+defaults to SD = 1 x mean stay for ICU steps and 0.24 x mean stay for every other
+unit. The civilian arrival process and warm-up settings are in **Advanced Flow
+Settings**. These profiles share hospital beds and fallback
 rules with surge patients. Fractional rates are supported. Profile lists are
 retained for each hospital source and unit selection during the current session.
+
+**Use predefined civilian profiles** loads the UC Davis-based civilian file that
+matches the selected predefined hospital:
+`data/baseline_civilian_profiles_regional.csv`, `_tertiary.csv`, or
+`_community.csv`. Every other source uses `data/baseline_civilian_profiles.csv`
+(ED, GenMed, Surge and ICU pathways). In the Regional, Tertiary and Community
+files every pathway is ED -> unit, and arrival rates are set so that expected
+occupancy (rate x 6-day mean stay) is 85% of that unit's beds.
 
 Before the surge, the model runs civilian arrivals alone. The default warm-up
 starts checking after 90 days and can extend to 365 days. It compares time-weighted
@@ -219,17 +252,24 @@ percentages, then follows the profile's ordered trajectory.
 LOS at each inpatient step follows a log-normal distribution with:
 
 - mean equal to the LOS entered for that trajectory step; and
-- coefficient of variation (CV) entered for that step, defaulting to **1 for
-  ICU steps and 0.24 for every other unit** when left blank (both surge and
-  civilian profiles support a per-step CV).
+- standard deviation (SD, days) entered for that step. A blank SD defaults to
+  **1 x LOS for ICU steps and 0.24 x LOS for every other unit** (CV 1 and 0.24).
 
-The model converts the arithmetic mean and CV to log-normal parameters:
+The entered SD is stored as the coefficient of variation `CV = SD / mean LOS`,
+which identifies exactly the same log-normal distribution. The model converts
+the arithmetic mean and CV to log-normal parameters:
 
-`sigma = sqrt(log(1 + CV^2))`
+`sigma = sqrt(log(1 + CV^2)) = sqrt(log(1 + SD^2 / mean LOS^2))`
 
 `meanlog = log(mean LOS) - sigma^2 / 2`
 
-This preserves the requested mean LOS while allowing realistic right-skewed
+Built-in surge profiles that carry no per-step variability (the Completed,
+Regional hospital, Tertiary hospital, and Community acute-care hospital
+NDMS-based sets) use the engine
+default **CV = 0.1** at every step, not the 1/0.24 defaults above; the
+trajectory editor and Excel download show the corresponding SD (0.1 x LOS).
+
+This preserves the requested mean LOS while allowing right-skewed
 variation. Consequently, two patients with the same profile can have different
 realized treatment times.
 
@@ -403,14 +443,16 @@ passes is the joint rate across both units together.
 
 - Patient arrivals use a fixed daily rate during the arrival period.
 - Profile probabilities remain constant throughout a scenario.
-- LOS variability defaults to a CV of 1 for ICU steps and 0.24 for every other
-  unit; it is editable per profile step.
+- LOS variability is entered as a per-step SD; a blank SD defaults to a CV of 1
+  for ICU steps and 0.24 for every other unit. Built-in NDMS-based profile sets
+  without per-step variability use CV = 0.1.
 - Queues are unlimited and patients do not leave while waiting.
 - Bed capacity is constant during a simulation.
 - Staffing, equipment, acuity changes, transfers outside the modeled hospital,
   and clinical prioritization are not modeled separately.
-- Patients without an available primary or fallback bed wait one day, then
-  recheck the primary unit and every fallback in priority order.
+- Patients without an available primary or fallback bed wait, event-driven,
+  until any of the requested beds (primary or fallback) frees; there is no
+  periodic recheck delay.
 - Outputs depend on the quality and realism of the entered profiles,
   probabilities, capacities, and fallback rules.
 

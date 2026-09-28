@@ -17,24 +17,151 @@ hospital_profile_units <- c(
 # capacities throughout. Boarding is what actually constrains an ED patient,
 # not this bed count.
 unlimited_capacity_placeholder <- 999L
+# ED is always part of the hospital with the placeholder capacity above; it is
+# never shown as an editable unit or bed count, but remains available to
+# trajectories and fallbacks.
+internal_hospital_units <- c(ED = unlimited_capacity_placeholder)
+editable_hospital_units <- hospital_profile_units[!hospital_profile_units %in% names(internal_hospital_units)]
+
+# Predefined surge profile sets; all use the NDMS-Based Classification. Values
+# are the stable internal source IDs used by the profile builders and saved
+# configs ("deloitte_test" is kept for the UC Davis set used in the manuscript).
+ndms_profile_sources <- c(
+  "UC Davis calibrated profiles" = "deloitte_test",
+  "Completed" = "injury_path_test",
+  "Regional hospital" = "regional_hospital_test",
+  "Tertiary hospital" = "tertiary_hospital_test",
+  "Community acute-care hospital" = "community_hospital_test"
+)
+
+# Predefined civilian profiles (data/) matching each hospital source; any other
+# source (manual, Excel, Completed) uses the default UC Davis-based file.
+civilian_profile_files <- c(
+  deloitte_test = "baseline_civilian_profiles.csv",
+  regional_hospital_test = "baseline_civilian_profiles_regional.csv",
+  tertiary_hospital_test = "baseline_civilian_profiles_tertiary.csv",
+  community_hospital_test = "baseline_civilian_profiles_community.csv"
+)
+
+civilian_profile_file <- function(source) {
+  file_name <- if (length(source) == 1L && source %in% names(civilian_profile_files)) {
+    civilian_profile_files[[source]]
+  } else {
+    civilian_profile_files[["deloitte_test"]]
+  }
+  file.path("data", file_name)
+}
+
+# LOS variability -------------------------------------------------------------
+# Users enter a standard deviation (SD, days) per pathway step. The engine keeps
+# its log-normal parameterized by mean and CV (make_service_times()), and a
+# log-normal with arithmetic mean m and SD s is exactly the one with CV = s / m,
+# so SD is converted to CV once, when a profile is saved or imported.
+engine_default_cv <- eval(formals(make_service_times)$cv)
+
+# The CV the engine actually uses for each step; profiles without a cv field
+# fall back to make_service_times()'s default, not default_cv_for_unit().
+profile_step_cv <- function(profile) {
+  if (!length(profile$unit)) return(NULL)
+  if (!is.null(profile$cv)) profile$cv else rep(engine_default_cv, length(profile$los))
+}
+
+profile_step_sd <- function(profile) {
+  if (!length(profile$unit)) return(NULL)
+  profile_step_cv(profile) * profile$los
+}
+
+# Blank (NA) SDs use the default variability rule (CV 1 for ICU, 0.24 otherwise).
+step_cv_from_sd <- function(units, los, sd) {
+  cv <- sd / los
+  missing <- is.na(sd)
+  cv[missing] <- default_cv_for_unit(units[missing])
+  cv
+}
+
+format_steps <- function(values) {
+  if (!length(values)) return("-")
+  paste(signif(values, 4), collapse = " -> ")
+}
+
+# Pathway step editor shared by the surge and civilian profile editors. Input
+# IDs are "<field>_<form version>_<step>"; bumping the version discards stale
+# browser values. Typed values win over the draft so adding a step keeps them.
+pathway_step_input_id <- function(field, version, index) {
+  paste(field, version, index, sep = "_")
+}
+
+pathway_step_inputs <- function(input, session, field, count, version, draft, units = NULL) {
+  shiny::tagList(lapply(seq_len(count), function(index) {
+    input_id <- pathway_step_input_id(field, version, index)
+    value <- shiny::isolate(input[[input_id]])
+    if (is.null(value)) {
+      value <- if (index <= length(draft[[field]])) draft[[field]][[index]]
+               else if (field == "unit") "None" else NA_real_
+    }
+    switch(
+      field,
+      unit = shiny::selectInput(session$ns(input_id), paste("Unit", index),
+                                choices = unique(c("None", units, value)), selected = value),
+      los = shiny::numericInput(session$ns(input_id), paste("Mean stay", index, "(days)"),
+                                value = value, min = 0.01, step = "any"),
+      sd = shiny::numericInput(session$ns(input_id), paste("SD", index, "(days)"),
+                               value = if (is.na(value)) NA_real_ else signif(value, 12),
+                               min = 0.01, step = "any")
+    )
+  }))
+}
+
+read_pathway_steps <- function(input, count, version) {
+  read_field <- function(field, missing) {
+    vapply(seq_len(count), function(index) {
+      value <- input[[pathway_step_input_id(field, version, index)]]
+      if (is.null(value)) missing else value
+    }, if (is.character(missing)) character(1) else numeric(1))
+  }
+  steps <- list(unit = read_field("unit", "None"), los = read_field("los", NA_real_),
+                sd = read_field("sd", NA_real_))
+  keep <- !is.na(steps$unit) & steps$unit != "None"
+  lapply(steps, `[`, keep)
+}
+
+# Returns an error message, or NULL when every kept step is valid.
+pathway_step_error <- function(steps, available_units) {
+  if (!length(steps$unit)) return("A profile must contain at least one unit with a positive mean stay.")
+  if (!all(is.finite(steps$los) & steps$los > 0)) return("Enter a positive mean stay for each selected unit.")
+  if (!all(is.na(steps$sd) | (is.finite(steps$sd) & steps$sd > 0))) {
+    return("Each SD must be positive, or blank to use the default variability.")
+  }
+  if (!all(steps$unit %in% available_units)) return("All trajectory units must be selected hospital units.")
+  NULL
+}
+
+pathway_sd_help <- function() {
+  shiny::helpText(
+    "Mean stay and SD are in days. Leave SD blank to use the default variability",
+    "(SD = 1 x mean stay for ICU, 0.24 x mean stay for other units)."
+  )
+}
 
 profile_excel_sheet_columns <- list(
   Profiles = c("Profile", "Arrival_percent", "Ambulatory"),
   Trajectories = c("Profile", "Step", "Unit", "LOS_days"),
   Fallbacks = c("Primary_unit", "Priority", "Fallback_unit"),
-  Hospital = c("Unit", "Available_beds")
+  Hospital = c("Unit", "Total_beds")
 )
-# CV is an optional Trajectories column: always written, but only required on
-# read when the uploaded workbook already includes it (older templates omit
-# it and default to 1 for ICU steps, 0.24 for every other unit).
+# SD (days) is an optional Trajectories column: always written, but only
+# required on read when the uploaded workbook includes it. Older workbooks may
+# instead carry a CV column (used as-is), or neither (default: CV 1 for ICU
+# steps, 0.24 for every other unit). Older Hospital sheets named the bed
+# column Available_beds; it is still accepted.
 profile_config_to_excel_tables <- function(profile_config) {
   profile_names <- names(profile_config$patient_profiles)
   trajectory_rows <- lapply(profile_names, function(profile_name) {
     profile <- profile_config$patient_profiles[[profile_name]]
     if (is.null(profile$unit) || length(profile$unit) == 0) return(NULL)
-    step_cv <- if (!is.null(profile$cv)) profile$cv else default_cv_for_unit(profile$unit)
     data.frame(Profile = profile_name, Step = seq_along(profile$unit),
-               Unit = profile$unit, LOS_days = profile$los, CV = step_cv, check.names = FALSE)
+               Unit = profile$unit, LOS_days = profile$los, SD = profile_step_sd(profile),
+               check.names = FALSE)
   })
   trajectory_rows <- Filter(Negate(is.null), trajectory_rows)
   fallback_rows <- lapply(names(profile_config$fallbacks), function(primary_unit) {
@@ -56,14 +183,14 @@ profile_config_to_excel_tables <- function(profile_config) {
     ),
     Trajectories = if (length(trajectory_rows) == 0) {
       data.frame(Profile = character(), Step = integer(), Unit = character(),
-                 LOS_days = numeric(), CV = numeric())
+                 LOS_days = numeric(), SD = numeric())
     } else do.call(rbind, trajectory_rows),
     Fallbacks = if (length(fallback_rows) == 0) {
       data.frame(Primary_unit = character(), Priority = integer(), Fallback_unit = character())
     } else do.call(rbind, fallback_rows),
     Hospital = data.frame(
       Unit = profile_config$units,
-      Available_beds = unname(profile_config$capacities[profile_config$units]),
+      Total_beds = unname(profile_config$capacities[profile_config$units]),
       check.names = FALSE
     )
   )
@@ -134,13 +261,16 @@ read_profile_config_xlsx <- function(file) {
       readxl::read_excel(file, sheet = sheet_name, .name_repair = "minimal"),
       check.names = FALSE
     )
+    if (sheet_name == "Hospital" && !"Total_beds" %in% names(value) &&
+        "Available_beds" %in% names(value)) {
+      names(value)[names(value) == "Available_beds"] <- "Total_beds"
+    }
     missing_columns <- setdiff(profile_excel_sheet_columns[[sheet_name]], names(value))
     if (length(missing_columns) > 0) {
       stop("Sheet '", sheet_name, "' is missing column(s): ",
            paste(missing_columns, collapse = ", "), call. = FALSE)
     }
-    # CV is optional: older templates without it default every step to 0.1.
-    optional_columns <- if (sheet_name == "Trajectories" && "CV" %in% names(value)) "CV" else character()
+    optional_columns <- if (sheet_name == "Trajectories") intersect(c("SD", "CV"), names(value)) else character()
     value[, c(profile_excel_sheet_columns[[sheet_name]], optional_columns), drop = FALSE]
   })
   names(tables) <- names(profile_excel_sheet_columns)
@@ -173,15 +303,23 @@ read_profile_config_xlsx <- function(file) {
 
   hospital <- tables$Hospital
   hospital$Unit <- trimws(as.character(hospital$Unit))
-  hospital$Available_beds <- suppressWarnings(as.numeric(hospital$Available_beds))
+  hospital$Total_beds <- suppressWarnings(as.numeric(hospital$Total_beds))
   if (nrow(hospital) == 0) stop("Sheet 'Hospital' must contain at least one unit.", call. = FALSE)
   if (any(!hospital$Unit %in% hospital_profile_units)) {
     stop("Unknown hospital unit(s): ",
          paste(setdiff(unique(hospital$Unit), hospital_profile_units), collapse = ", "), call. = FALSE)
   }
   if (anyDuplicated(hospital$Unit)) stop("Hospital units must be unique.", call. = FALSE)
-  if (any(!is.finite(hospital$Available_beds)) || any(hospital$Available_beds < 0)) {
-    stop("'Available_beds' must contain non-negative numbers.", call. = FALSE)
+  # Internal units (ED) are always present with their fixed capacity, whatever
+  # the workbook lists for them.
+  hospital <- hospital[!hospital$Unit %in% names(internal_hospital_units), , drop = FALSE]
+  hospital <- rbind(
+    data.frame(Unit = names(internal_hospital_units),
+               Total_beds = unname(internal_hospital_units)),
+    hospital
+  )
+  if (any(!is.finite(hospital$Total_beds)) || any(hospital$Total_beds < 0)) {
+    stop("'Total_beds' must contain non-negative numbers.", call. = FALSE)
   }
 
   trajectories <- tables$Trajectories
@@ -189,8 +327,10 @@ read_profile_config_xlsx <- function(file) {
   trajectories$Step <- suppressWarnings(as.numeric(trajectories$Step))
   trajectories$Unit <- trimws(as.character(trajectories$Unit))
   trajectories$LOS_days <- suppressWarnings(as.numeric(trajectories$LOS_days))
-  has_cv_column <- "CV" %in% names(trajectories)
-  trajectories$CV <- if (has_cv_column) {
+  variability_column <- intersect(c("SD", "CV"), names(trajectories))[1]
+  trajectories$CV <- if (identical(variability_column, "SD")) {
+    suppressWarnings(as.numeric(trajectories$SD)) / trajectories$LOS_days
+  } else if (identical(variability_column, "CV")) {
     suppressWarnings(as.numeric(trajectories$CV))
   } else {
     default_cv_for_unit(trajectories$Unit)
@@ -210,8 +350,9 @@ read_profile_config_xlsx <- function(file) {
       stop("'LOS_days' must contain positive numbers.", call. = FALSE)
     }
     if (any(!is.finite(trajectories$CV)) || any(trajectories$CV <= 0)) {
-      stop("'CV' must contain positive numbers, or be left out entirely to default to 1 for ICU ",
-           "steps and 0.24 for every other unit.", call. = FALSE)
+      stop("'", variability_column, "' must contain positive numbers, or be left out entirely ",
+           "to default to SD = 1 x LOS for ICU steps and 0.24 x LOS for every other unit.",
+           call. = FALSE)
     }
   }
 
@@ -270,7 +411,7 @@ read_profile_config_xlsx <- function(file) {
     source = "excel_upload",
     source_label = paste("Uploaded Excel:", basename(file)),
     units = hospital$Unit,
-    capacities = stats::setNames(hospital$Available_beds, hospital$Unit),
+    capacities = stats::setNames(hospital$Total_beds, hospital$Unit),
     patient_profiles = patient_profiles,
     profile_prob = stats::setNames(profiles$Arrival_percent / 100, profiles$Profile),
     fallbacks = fallbacks
@@ -280,121 +421,42 @@ hospital_profiles_ui <- function(id) {
   ns <- shiny::NS(id)
   test_condition <- sprintf("input['%s'] != 'manual'", ns("profile_source"))
   excel_condition <- sprintf("input['%s'] == 'excel_upload'", ns("profile_source"))
+  predefined_condition <- sprintf("input['%s'] == 'predefined'", ns("profile_source"))
 
   shiny::tagList(
     shiny::fluidRow(
       shinydashboard::box(
-        title = "Hospital information",
+        title = "Hospital Information",
         status = "primary",
         solidHeader = TRUE,
-        width = 6,
+        width = 12,
+        collapsible = TRUE,
         rintrojs::introBox(
-          shiny::radioButtons(
-            ns("profile_source"),
-            "Patient profile source",
-            choices = c(
-              "Create profiles manually" = "manual",
-              "Use Deloitte profiles (completed)" = "injury_path_test",
-              "Use Deloitte profiles (reduced)" = "deloitte_test",
-              "Use Deloitte profiles (Regional hospital)" = "regional_hospital_test",
-              "Use Deloitte profiles (Tertiary hospital)" = "tertiary_hospital_test",
-              "Use UC Davis calibrated profiles" = "uc_davis_test",
-              "Upload profiles from Excel" = "excel_upload"
-            ),
-            selected = "manual",
-            inline = TRUE
-          ),
-          shiny::helpText("Selecting a source loads its starting configuration. All loaded values can be edited for the current scenario. Switching sources replaces the current edits."),
-          shiny::conditionalPanel(
-            condition = excel_condition,
-                        shiny::downloadButton(
-              ns("download_profile_template"),
-              "Download empty Excel template",
-              class = "btn-default"
-            ),
-            shiny::helpText(
-              "Download the blank workbook first if you need the required Excel format."
-            ),
-            shiny::fileInput(
-              ns("profile_excel_file"),
-              "Profile configuration (.xlsx)",
-              accept = c(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                ".xlsx"
-              )
-            ),
-            shiny::helpText(
-              "Upload a workbook previously downloaded from this app. ",
-              "It must contain Profiles, Trajectories, Fallbacks, and Hospital sheets."
-            )
-          ),
           shiny::fluidRow(
             shiny::column(
-              width = 4,
+              width = 3,
               shiny::checkboxGroupInput(
                 ns("hospital_units"),
                 "Hospital units",
-                choices = hospital_profile_units,
-                selected = c("ED","GenMed", "ICU")
+                choices = editable_hospital_units,
+                selected = c("GenMed", "ICU")
               )
             ),
             shiny::column(
-              width = 8,
+              width = 9,
               shiny::uiOutput(ns("capacity_ui"))
             )
           ),
+          shiny::helpText(
+            "The ED is always part of the hospital and available to trajectories and fallbacks.",
+            "Its capacity is fixed at 999 beds (practically unlimited), so it is not listed here."
+          ),
           data.step = 2,
           data.intro = paste(
-            "<strong>Choose the patient profile source.</strong><br>",
-            "Create profiles manually, load a built-in example, or upload",
-            "an Excel configuration. Download the empty Excel template when",
-            "you need the required sheets and columns. Then select hospital",
-            "units and enter the available beds for each unit."
-          ),
-          data.position = "bottom"
-        )
-      ),
-      shinydashboard::box(
-        title = "Create or edit surge patient trajectory",
-        status = "primary",
-        solidHeader = TRUE,
-        width = 6,
-        rintrojs::introBox(
-          shiny::tagList(
-            shiny::selectInput(ns("remove_profile_name"), "Saved profile", choices = NULL),
-            shiny::actionButton(ns("edit_profile"), "Load profile for editing"),
-            shiny::actionButton(ns("remove_profile"), "Remove selected profile", class = "btn-danger"),
-            shiny::hr(),
-            shiny::textInput(ns("profile_name"), "Patient profile name", "profile_1"),
-            shiny::checkboxInput(ns("ambulatory_profile"), "Ambulatory (no inpatient beds)", FALSE),
-            shiny::fluidRow(
-              shiny::column(4, shiny::uiOutput(ns("trajectory_units_ui"))),
-              shiny::column(4, shiny::uiOutput(ns("trajectory_los_ui"))),
-              shiny::column(4, shiny::uiOutput(ns("trajectory_cv_ui")))
-            ),
-            shiny::actionButton(
-              ns("add_trajectory_unit"),
-              "Add unit",
-              icon = shiny::icon("plus"),
-              class = "btn-default"
-            ),
-            shiny::actionButton(ns("remove_trajectory_unit"), "Remove last unit"),
-            shiny::actionButton(ns("add_profile"), "Save patient profile", class = "btn-primary")
-          ),
-          shiny::conditionalPanel(
-            condition = test_condition,
-            shiny::div(
-              class = "alert alert-info",
-              "Profiles, arrival percentages, beds and fallbacks are loaded and editable. Load a saved profile above to change its pathway or length of stay."
-            )
-          ),
-          data.step = 3,
-          data.intro = paste(
-            "<strong>Define each patient trajectory.</strong><br>",
-            "Load a saved profile or enter a unique name and the ordered units",
-            "visited by the patient. Enter the mean length of stay for every",
-            "unit, and its coefficient of variation (defaults to 1 for ICU,",
-            "0.24 otherwise), then use Add unit when another care step is needed."
+            "<strong>Describe the hospital.</strong><br>",
+            "Select the hospital units and enter the total beds for each unit.",
+            "The ED is always included with practically unlimited capacity",
+            "(999 beds) and is not editable."
           ),
           data.position = "bottom"
         )
@@ -402,81 +464,191 @@ hospital_profiles_ui <- function(id) {
     ),
     shiny::fluidRow(
       shinydashboard::box(
-        title = "Profile arrival percentages",
-        status = "info",
+        title = "Create or edit surge patient trajectory",
+        status = "primary",
         solidHeader = TRUE,
-        width = 4,
-        rintrojs::introBox(
-          shiny::tagList(
-            shiny::uiOutput(ns("profile_percent_ui")),
-            shiny::actionButton(
-              ns("set_profile_percentages"),
-              "Set arrival percentages",
-              class = "btn-primary"
+        width = 12,
+        collapsible = TRUE,
+        shiny::fluidRow(
+          shinydashboard::box(
+            title = "Patient profile source",
+            status = "info",
+            solidHeader = TRUE,
+            width = 3,
+            rintrojs::introBox(
+              shiny::radioButtons(
+                ns("profile_source"),
+                "Patient profile source",
+                choices = c(
+                  "Create profiles manually" = "manual",
+                  "Use predefined profiles" = "predefined",
+                  "Upload profiles from Excel" = "excel_upload"
+                ),
+                selected = "manual"
+              ),
+              shiny::conditionalPanel(
+                condition = predefined_condition,
+                shiny::selectInput(ns("ndms_profile"), "NDMS-based profile set",
+                                   choices = ndms_profile_sources)
+              ),
+              shiny::helpText("Selecting a source loads its starting configuration. All loaded values can be edited for the current scenario. Switching sources replaces the current edits."),
+              shiny::conditionalPanel(
+                condition = excel_condition,
+                shiny::downloadButton(
+                  ns("download_profile_template"),
+                  "Download empty Excel template",
+                  class = "btn-default"
+                ),
+                shiny::helpText(
+                  "Download the blank workbook first if you need the required Excel format."
+                ),
+                shiny::fileInput(
+                  ns("profile_excel_file"),
+                  "Profile configuration (.xlsx)",
+                  accept = c(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    ".xlsx"
+                  )
+                ),
+                shiny::helpText(
+                  "Upload a workbook previously downloaded from this app. ",
+                  "It must contain Profiles, Trajectories, Fallbacks, and Hospital sheets."
+                )
+              ),
+              data.step = 3,
+              data.intro = paste(
+                "<strong>Choose the patient profile source.</strong><br>",
+                "Create profiles manually, load predefined profiles (NDMS-Based",
+                "Classification), or upload an Excel configuration.",
+                "Use the trajectory editor below to define the ordered units visited",
+                "by each profile, with a mean stay and standard deviation (SD) per unit."
+              ),
+              data.position = "bottom"
+            )
+          ),
+          shinydashboard::box(
+            title = "Fallbacks",
+            status = "info",
+            solidHeader = TRUE,
+            width = 3,
+            rintrojs::introBox(
+              shiny::tagList(
+                shiny::selectInput(ns("fallback_unit"), "Primary unit", choices = NULL),
+                shiny::selectizeInput(
+                  ns("fallback_options"), "Fallback units", choices = NULL, multiple = TRUE
+                ),
+                shiny::actionButton(ns("add_fallback"), "Save fallback", class = "btn-primary"),
+                shiny::actionButton(ns("remove_fallback"), "Remove fallback"),
+                shiny::helpText("Select a primary unit to edit its existing alternatives. Alternatives are tried in the displayed order."),
+                shiny::verbatimTextOutput(ns("fallbacks_summary"))
+              ),
+              data.step = 4,
+              data.intro = paste(
+                "<strong>Configure fallback beds.</strong><br>",
+                "When a primary unit is full, the model tries these alternatives",
+                "in the displayed order. If none is available, the patient is",
+                "counted in the primary-unit queue. When a bed is released, the oldest",
+                "compatible request receives it, respecting the ordered fallbacks."
+              ),
+              data.position = "top"
+            )
+          ),
+          shinydashboard::box(
+            title = "Profile arrival percentages",
+            status = "info",
+            solidHeader = TRUE,
+            width = 3,
+            rintrojs::introBox(
+              shiny::tagList(
+                shiny::uiOutput(ns("profile_percent_ui")),
+                shiny::actionButton(
+                  ns("set_profile_percentages"),
+                  "Set arrival percentages",
+                  class = "btn-primary"
+                ),
+                shiny::uiOutput(ns("profile_percent_status"))
+              ),
+              shiny::conditionalPanel(
+                condition = test_condition,
+                shiny::helpText("Loaded percentages are already confirmed. After changing percentages or adding/removing profiles, confirm a total of 100%.")
+              ),
+              data.step = 5,
+              data.intro = paste(
+                "<strong>Set the patient mix.</strong><br>",
+                "Assign the percentage of arrivals belonging to each profile.",
+                "For a valid configuration, all percentages must sum to 100%."
+              ),
+              data.position = "top"
+            )
+          ),
+          shinydashboard::box(
+            title = "Configuration status",
+            status = "success",
+            solidHeader = TRUE,
+            width = 3,
+            style = "overflow-x: auto;",
+            rintrojs::introBox(
+              shiny::uiOutput(ns("configuration_status")),
+              shiny::tableOutput(ns("profiles_summary")),
+              shiny::downloadButton(
+                ns("download_profile_config"),
+                "Download surge profile configuration",
+                class = "btn-primary"
+              ),
+              shiny::helpText("Excel saves hospital beds and surge profiles. Civilian settings are stored in the raw run data download."),
+              data.step = 6,
+              data.intro = paste(
+                "<strong>Confirm that the setup is ready.</strong><br>",
+                "This panel lists configuration problems, summarizes all profiles,",
+                "and lets you download the complete setup for future simulations."
+              ),
+              data.position = "left"
+            )
+          )
+        ),
+        shiny::fluidRow(
+          shinydashboard::box(
+            title = "Surge patient trajectory editor",
+            status = "info",
+            solidHeader = TRUE,
+            width = 12,
+            shiny::fluidRow(
+              shiny::column(
+                width = 4,
+                shiny::selectInput(ns("remove_profile_name"), "Saved profile", choices = NULL),
+                shiny::actionButton(ns("edit_profile"), "Load profile for editing"),
+                shiny::actionButton(ns("remove_profile"), "Remove selected profile", class = "btn-danger"),
+                shiny::hr(),
+                shiny::textInput(ns("profile_name"), "Patient profile name", "profile_1"),
+                shiny::checkboxInput(ns("ambulatory_profile"), "Ambulatory (no inpatient beds)", FALSE)
+              ),
+              shiny::column(
+                width = 8,
+                shiny::fluidRow(
+                  shiny::column(4, shiny::uiOutput(ns("trajectory_units_ui"))),
+                  shiny::column(4, shiny::uiOutput(ns("trajectory_los_ui"))),
+                  shiny::column(4, shiny::uiOutput(ns("trajectory_sd_ui")))
+                ),
+                pathway_sd_help(),
+                shiny::actionButton(
+                  ns("add_trajectory_unit"),
+                  "Add unit",
+                  icon = shiny::icon("plus"),
+                  class = "btn-default"
+                ),
+                shiny::actionButton(ns("remove_trajectory_unit"), "Remove last unit"),
+                shiny::actionButton(ns("add_profile"), "Save patient profile", class = "btn-primary")
+              )
             ),
-            shiny::uiOutput(ns("profile_percent_status"))
-          ),
-          shiny::conditionalPanel(
-            condition = test_condition,
-            shiny::helpText("Loaded percentages are already confirmed. After changing percentages or adding/removing profiles, confirm a total of 100%.")
-          ),
-          data.step = 4,
-          data.intro = paste(
-            "<strong>Set the patient mix.</strong><br>",
-            "Assign the percentage of arrivals belonging to each profile.",
-            "For a valid configuration, all percentages must sum to 100%."
-          ),
-          data.position = "right"
-        )
-      ),
-      shinydashboard::box(
-        title = "Fallbacks",
-        status = "info",
-        solidHeader = TRUE,
-        width = 4,
-        rintrojs::introBox(
-          shiny::tagList(
-            shiny::selectInput(ns("fallback_unit"), "Primary unit", choices = NULL),
-            shiny::selectizeInput(
-              ns("fallback_options"), "Fallback units", choices = NULL, multiple = TRUE
-            ),
-            shiny::actionButton(ns("add_fallback"), "Save fallback", class = "btn-primary"),
-            shiny::actionButton(ns("remove_fallback"), "Remove fallback"),
-            shiny::helpText("Select a primary unit to edit its existing alternatives. Alternatives are tried in the displayed order."),
-            shiny::verbatimTextOutput(ns("fallbacks_summary"))
-          ),
-          data.step = 5,
-          data.intro = paste(
-            "<strong>Configure fallback beds.</strong><br>",
-            "When a primary unit is full, the model tries these alternatives",
-            "in the displayed order. If none is available, the patient is",
-            "counted in the primary-unit queue. When a bed is released, the oldest",
-            "compatible request receives it, respecting the ordered fallbacks."
-          ),
-          data.position = "top"
-        )
-      ),
-      shinydashboard::box(
-        title = "Configuration status",
-        status = "success",
-        solidHeader = TRUE,
-        width = 4,
-        rintrojs::introBox(
-          shiny::uiOutput(ns("configuration_status")),
-          shiny::tableOutput(ns("profiles_summary")),
-          shiny::downloadButton(
-            ns("download_profile_config"),
-            "Download surge profile configuration",
-            class = "btn-primary"
-          ),
-          shiny::helpText("Excel saves hospital beds and surge profiles. Civilian settings are stored in the raw run data download."),
-          data.step = 6,
-          data.intro = paste(
-            "<strong>Confirm that the setup is ready.</strong><br>",
-            "This panel lists configuration problems, summarizes all profiles,",
-            "and lets you download the complete setup for future simulations."
-          ),
-          data.position = "left"
+            shiny::conditionalPanel(
+              condition = test_condition,
+              shiny::div(
+                class = "alert alert-info",
+                style = "margin-top: 10px;",
+                "Profiles, arrival percentages, beds and fallbacks are loaded and editable. Load a saved profile above to change its pathway, mean stay or SD."
+              )
+            )
+          )
         )
       )
     )
@@ -492,11 +664,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
     injury_path_config <- injury_path_test_profile_config(wia_prob = 0.67)
     regional_hospital_config <- regional_hospital_test_profile_config(wia_prob = 0.67)
     tertiary_hospital_config <- tertiary_hospital_test_profile_config(wia_prob = 0.67)
-    # Built from data/baseline_civilian_profiles_uc_davis.csv (see
-    # paper/Cleaning.Rmd); that file is generated, not checked in by default,
-    # so a missing/unreadable CSV falls back to NULL instead of breaking
-    # module startup for every other profile source.
-    uc_davis_config <- tryCatch(uc_davis_profile_config(), error = function(error) NULL)
+    community_hospital_config <- community_hospital_test_profile_config(wia_prob = 0.67)
     trajectory_unit_count <- shiny::reactiveVal(1L)
     trajectory_form_version <- shiny::reactiveVal(1L)
     pending_profile_replacement <- shiny::reactiveVal(NULL)
@@ -506,21 +674,34 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
     loaded_probabilities <- shiny::reactiveVal(numeric())
     loaded_capacities <- shiny::reactiveVal(c(GenMed = 15, ICU = 7))
     pending_loaded_units <- shiny::reactiveVal(NULL)
-    trajectory_draft <- shiny::reactiveVal(list(unit = character(), los = numeric(), cv = numeric()))
+    empty_trajectory_draft <- list(unit = character(), los = numeric(), sd = numeric())
+    trajectory_draft <- shiny::reactiveVal(empty_trajectory_draft)
 
     configuration_input_id <- function(prefix, name) {
       paste(prefix, configuration_version(), name, sep = "_")
     }
 
+    # "Use predefined profiles" resolves to the selected NDMS-based source ID.
+    profile_source_id <- shiny::reactive({
+      source <- input$profile_source
+      if (identical(source, "predefined")) input$ndms_profile else source
+    })
+
+    predefined_source_label <- function(source) {
+      ndms_name <- names(ndms_profile_sources)[ndms_profile_sources %in% source]
+      if (length(ndms_name)) paste0("NDMS-Based Classification (", ndms_name, ")") else NULL
+    }
+
     selected_test_config <- shiny::reactive({
-      if (is.null(input$profile_source)) return(NULL)
+      source <- profile_source_id()
+      if (is.null(source)) return(NULL)
       switch(
-        input$profile_source,
+        source,
         deloitte_test = deloitte_config,
         injury_path_test = injury_path_config,
         regional_hospital_test = regional_hospital_config,
         tertiary_hospital_test = tertiary_hospital_config,
-        uc_davis_test = uc_davis_config,
+        community_hospital_test = community_hospital_config,
         excel_upload = uploaded_config(),
         NULL
       )
@@ -552,15 +733,16 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
 
     # Templates seed mutable state once; simulation/export read only that state.
     # Versioned input IDs prevent stale browser values from a previous source.
-    shiny::observeEvent(list(input$profile_source, selected_test_config()), {
-      shiny::req(input$profile_source)
+    shiny::observeEvent(list(profile_source_id(), selected_test_config()), {
+      shiny::req(profile_source_id())
       test_config <- selected_test_config()
       if (is.null(test_config)) {
         test_config <- list(units = c("ED","GenMed", "ICU"),
                             capacities = c(ED = unlimited_capacity_placeholder, GenMed = 15, ICU = 7),
                             patient_profiles = list(), profile_prob = numeric(), fallbacks = list())
       }
-      pending_loaded_units(test_config$units)
+      # ED is always part of the hospital, whether or not the source lists it.
+      pending_loaded_units(union(names(internal_hospital_units), test_config$units))
       loaded_capacities(test_config$capacities)
       loaded_probabilities(test_config$profile_prob)
       configuration_version(configuration_version() + 1L)
@@ -569,28 +751,29 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       confirmed_profile_probabilities(if (length(test_config$profile_prob)) test_config$profile_prob else NULL)
       pending_profile_replacement(NULL)
       pending_profile_removal(NULL)
-      trajectory_draft(list(unit = character(), los = numeric(), cv = numeric()))
+      trajectory_draft(empty_trajectory_draft)
       trajectory_unit_count(1L)
       trajectory_form_version(trajectory_form_version() + 1L)
       shiny::removeModal()
       shiny::updateTextInput(session, "profile_name", value = "profile_1")
       shiny::updateCheckboxInput(session, "ambulatory_profile", value = FALSE)
-      shiny::updateCheckboxGroupInput(session, "hospital_units", selected = union("ED", test_config$units))
+      shiny::updateCheckboxGroupInput(session, "hospital_units",
+                                      selected = setdiff(test_config$units, names(internal_hospital_units)))
       shiny::updateSelectInput(session, "fallback_unit", selected = "")
       shiny::updateSelectizeInput(session, "fallback_options", choices = test_config$units,
                                   selected = character(), server = TRUE)
     }, ignoreInit = FALSE, priority = 100)
 
+    # Internal units (ED) come first, matching the previous checkbox order.
     selected_units <- shiny::reactive({
-      units <- input$hospital_units
-      if (is.null(units)) character() else unique(units)
+      unique(c(names(internal_hospital_units), input$hospital_units))
     })
 
     output$capacity_ui <- shiny::renderUI({
-      units <- selected_units()
+      units <- setdiff(selected_units(), names(internal_hospital_units))
       shiny::req(length(units) > 0)
       shiny::tagList(
-        shiny::h4("Available beds"),
+        shiny::h4("Total beds"),
         shiny::fluidRow(
           lapply(units, function(unit_name) {
             input_id <- configuration_input_id("capacity", unit_name)
@@ -603,19 +786,17 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
               405
             } else if (unit_name == "ICU") {
               84
-            } else if (unit_name == "ED") {
-              unlimited_capacity_placeholder
             } else {
               15
             }
             if (!is.null(current_capacity)) default_capacity <- current_capacity
             shiny::column(
-              width = 6,
+              width = 4,
               shiny::numericInput(
                 session$ns(input_id),
                 unit_name,
                 min = 0,
-                max = if (unit_name == "ED") unlimited_capacity_placeholder else 500,
+                max = 500,
                 value = default_capacity
               )
             )
@@ -667,77 +848,21 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       if (!identical(current, cleaned)) fallbacks(cleaned)
     })
 
-    trajectory_input_id <- function(prefix, index, version = trajectory_form_version()) {
-      paste(prefix, version, index, sep = "_")
-    }
-
     output$trajectory_units_ui <- shiny::renderUI({
       units <- selected_units()
       shiny::req(length(units) > 0)
-      version <- trajectory_form_version()
-      count <- trajectory_unit_count()
-      shiny::tagList(lapply(seq_len(count), function(index) {
-        input_id <- trajectory_input_id("unit", index, version)
-        selected_unit <- shiny::isolate(input[[input_id]])
-        draft <- trajectory_draft()
-        if (is.null(selected_unit)) {
-          selected_unit <- if (index <= length(draft$unit)) draft$unit[[index]] else "None"
-        }
-        shiny::selectInput(
-          session$ns(input_id),
-          paste("Unit", index),
-          choices = unique(c("None", units, selected_unit)),
-          selected = selected_unit
-        )
-      }))
+      pathway_step_inputs(input, session, "unit", trajectory_unit_count(),
+                          trajectory_form_version(), trajectory_draft(), units)
     })
 
     output$trajectory_los_ui <- shiny::renderUI({
-      version <- trajectory_form_version()
-      count <- trajectory_unit_count()
-      shiny::tagList(lapply(seq_len(count), function(index) {
-        input_id <- trajectory_input_id("los", index, version)
-        los_value <- shiny::isolate(input[[input_id]])
-        if (is.null(los_value)) {
-          draft <- trajectory_draft()
-          los_value <- if (index <= length(draft$los)) draft$los[[index]] else NA_real_
-        }
-        shiny::numericInput(
-          session$ns(input_id),
-          paste("LOS unit", index, "(days)"),
-          value = los_value,
-          min = 0.01
-        )
-      }))
+      pathway_step_inputs(input, session, "los", trajectory_unit_count(),
+                          trajectory_form_version(), trajectory_draft())
     })
 
-    output$trajectory_cv_ui <- shiny::renderUI({
-      version <- trajectory_form_version()
-      count <- trajectory_unit_count()
-      shiny::tagList(lapply(seq_len(count), function(index) {
-        input_id <- trajectory_input_id("cv", index, version)
-        cv_value <- shiny::isolate(input[[input_id]])
-        if (is.null(cv_value)) {
-          draft <- trajectory_draft()
-          if (index <= length(draft$cv)) {
-            cv_value <- draft$cv[[index]]
-          } else {
-            unit_id <- trajectory_input_id("unit", index, version)
-            selected_unit <- shiny::isolate(input[[unit_id]])
-            if (is.null(selected_unit)) {
-              selected_unit <- if (index <= length(draft$unit)) draft$unit[[index]] else "None"
-            }
-            cv_value <- default_cv_for_unit(selected_unit)
-          }
-        }
-        shiny::numericInput(
-          session$ns(input_id),
-          paste("CV unit", index),
-          value = cv_value,
-          min = 0.01,
-          step = 0.01
-        )
-      }))
+    output$trajectory_sd_ui <- shiny::renderUI({
+      pathway_step_inputs(input, session, "sd", trajectory_unit_count(),
+                          trajectory_form_version(), trajectory_draft())
     })
 
     shiny::observeEvent(input$add_trajectory_unit, {
@@ -752,8 +877,8 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       profile_name <- input$remove_profile_name
       shiny::req(profile_name %in% names(patient_profiles()))
       profile <- patient_profiles()[[profile_name]]
-      if (is.null(profile$cv)) profile$cv <- default_cv_for_unit(profile$unit)
-      trajectory_draft(profile)
+      # Show the SD the engine actually uses, so re-saving keeps the same draws.
+      trajectory_draft(list(unit = profile$unit, los = profile$los, sd = profile_step_sd(profile)))
       trajectory_unit_count(max(1L, length(profile$unit)))
       trajectory_form_version(trajectory_form_version() + 1L)
       shiny::updateTextInput(session, "profile_name", value = profile_name)
@@ -764,7 +889,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       profiles <- patient_profiles()
       profiles[[profile_name]] <- profile
       patient_profiles(profiles)
-      trajectory_draft(list(unit = character(), los = numeric(), cv = numeric()))
+      trajectory_draft(empty_trajectory_draft)
       trajectory_unit_count(1L)
       trajectory_form_version(trajectory_form_version() + 1L)
       shiny::updateCheckboxInput(session, "ambulatory_profile", value = FALSE)
@@ -777,34 +902,14 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
         grepl("^[A-Za-z][A-Za-z0-9_-]*$", profile_name),
         "Profile names must start with a letter and use only letters, numbers, underscores, or hyphens."
       ))
-      version <- trajectory_form_version()
-      count <- trajectory_unit_count()
-      units <- vapply(seq_len(count), function(index) {
-        value <- input[[trajectory_input_id("unit", index, version)]]
-        if (is.null(value)) "None" else value
-      }, character(1))
-      los <- vapply(seq_len(count), function(index) {
-        value <- input[[trajectory_input_id("los", index, version)]]
-        if (is.null(value)) NA_real_ else value
-      }, numeric(1))
-      cv <- vapply(seq_len(count), function(index) {
-        value <- input[[trajectory_input_id("cv", index, version)]]
-        if (is.null(value)) NA_real_ else value
-      }, numeric(1))
-      keep <- !is.na(units) & units != "None"
       if (isTRUE(input$ambulatory_profile)) {
         new_profile <- list(unit = NULL, los = NULL, cv = NULL)
       } else {
-        shiny::validate(
-          shiny::need(any(keep), "A profile must contain at least one unit with a positive LOS."),
-          shiny::need(all(is.finite(los[keep]) & los[keep] > 0), "Enter a positive LOS for each selected unit."),
-          shiny::need(all(is.finite(cv[keep]) & cv[keep] > 0), "Enter a positive CV for each selected unit."),
-          shiny::need(
-            all(units[keep] %in% selected_units()),
-            "All trajectory units must be selected hospital units."
-          )
-        )
-        new_profile <- list(unit = units[keep], los = los[keep], cv = cv[keep])
+        steps <- read_pathway_steps(input, trajectory_unit_count(), trajectory_form_version())
+        step_error <- pathway_step_error(steps, selected_units())
+        shiny::validate(shiny::need(is.null(step_error), step_error))
+        new_profile <- list(unit = steps$unit, los = steps$los,
+                            cv = step_cv_from_sd(steps$unit, steps$los, steps$sd))
       }
       if (profile_name %in% names(patient_profiles())) {
         pending_profile_replacement(list(
@@ -1044,6 +1149,9 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
     capacities <- shiny::reactive({
       units <- selected_units()
       values <- vapply(units, function(unit_name) {
+        if (unit_name %in% names(internal_hospital_units)) {
+          return(as.numeric(internal_hospital_units[[unit_name]]))
+        }
         value <- input[[configuration_input_id("capacity", unit_name)]]
         if (is.null(value)) NA_real_ else value
       }, numeric(1))
@@ -1052,13 +1160,16 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
 
     effective_profile_data <- shiny::reactive({
       test_config <- selected_test_config()
+      source <- profile_source_id()
+      display_label <- predefined_source_label(source)
       source_label <- if (!is.null(test_config)) {
-        paste(test_config$source_label, "(editable scenario)")
-      } else if (identical(input$profile_source, "excel_upload")) {
+        paste(if (is.null(display_label)) test_config$source_label else display_label,
+              "(editable scenario)")
+      } else if (identical(source, "excel_upload")) {
         "Uploaded Excel: select a valid .xlsx file"
       } else "Manually entered profiles"
       list(
-        source = input$profile_source,
+        source = source,
         source_label = source_label,
         patient_profiles = patient_profiles(),
         profile_prob = profile_probabilities(),
@@ -1076,7 +1187,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       errors <- character()
 
       if (length(units) == 0) errors <- c(errors, "Select at least one hospital unit.")
-      if (isTRUE(require_surge_profiles()) && length(profiles) == 0) errors <- c(errors, "Create at least one patient profile or use the Deloitte test profiles.")
+      if (isTRUE(require_surge_profiles()) && length(profiles) == 0) errors <- c(errors, "Create at least one patient profile or use predefined profiles.")
       if (length(capacity_values) == 0 || any(!is.finite(capacity_values)) || any(capacity_values < 0)) {
         errors <- c(errors, "Enter a valid non-negative capacity for every selected unit.")
       }
@@ -1152,25 +1263,8 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
           },
           character(1)
         ),
-        LOS_days = vapply(
-          profiles,
-          function(profile) {
-            if (is.null(profile$los)) "-" else paste(profile$los, collapse = " -> ")
-          },
-          character(1)
-        ),
-        CV = vapply(
-          profiles,
-          function(profile) {
-            if (is.null(profile$los)) {
-              "-"
-            } else {
-              step_cv <- if (!is.null(profile$cv)) profile$cv else default_cv_for_unit(profile$unit)
-              paste(step_cv, collapse = " -> ")
-            }
-          },
-          character(1)
-        ),
+        Mean_stay_days = vapply(profiles, function(profile) format_steps(profile$los), character(1)),
+        SD_days = vapply(profiles, function(profile) format_steps(profile_step_sd(profile)), character(1)),
         Arrival_percent = arrival_percent,
         check.names = FALSE
       )

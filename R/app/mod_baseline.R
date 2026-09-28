@@ -1,21 +1,32 @@
-# CSV pathways, stays and CVs use comma-separated values inside quoted CSV
-# fields. CV_values is optional; a blank or absent CV_values entry defaults
-# every step to 1 for ICU, 0.24 for every other unit (default_cv_for_unit()
-# from R/shared/profiles_deloitte.R).
+# CSV pathways, stays and SDs use comma-separated values inside quoted CSV
+# fields. SD_values (days) is optional and is converted to CV = SD / mean stay
+# (see step_cv_from_sd() in R/app/mod_profiles.R). Files written before the
+# switch to SD carry CV_values instead, which is still read as-is. A blank or
+# absent entry defaults every step to CV 1 for ICU and 0.24 for every other
+# unit (default_cv_for_unit() from R/shared/profiles_deloitte.R).
+
+# Civilian profiles always run with profile$cv, or default_cv_for_unit() when
+# it is absent (see configuration() in mod_baseline_server()).
+civilian_step_cv <- function(profile) {
+  if (!is.null(profile$cv)) profile$cv else default_cv_for_unit(profile$unit)
+}
+
+civilian_step_sd <- function(profile) civilian_step_cv(profile) * profile$los
+
 baseline_profiles_to_table <- function(profiles) {
   if (!length(profiles)) {
     return(data.frame(Profile = character(), Patients_per_day = numeric(),
                       Pathway = character(), Mean_stays_days = character(),
-                      CV_values = character()))
+                      SD_values = character()))
   }
   do.call(rbind, lapply(names(profiles), function(name) {
     profile <- profiles[[name]]
-    step_cv <- if (!is.null(profile$cv)) profile$cv else default_cv_for_unit(profile$unit)
     data.frame(Profile = name, Patients_per_day = profile$rate,
                Pathway = paste(profile$unit, collapse = ", "),
                Mean_stays_days = paste(format(profile$los, digits = 15, trim = TRUE),
                                        collapse = ", "),
-               CV_values = paste(format(step_cv, digits = 15, trim = TRUE), collapse = ", "))
+               SD_values = paste(format(civilian_step_sd(profile), digits = 15, trim = TRUE),
+                                 collapse = ", "))
   }))
 }
 
@@ -28,10 +39,10 @@ read_baseline_profiles_csv <- function(file, hospital) {
     stop("CSV must contain unique columns: ", paste(required_columns, collapse = ", "), call. = FALSE)
   }
   if (!nrow(rows)) stop("CSV must contain at least one civilian profile.", call. = FALSE)
-  has_cv_column <- "CV_values" %in% names(rows)
-  rows <- rows[, c(required_columns, if (has_cv_column) "CV_values"), drop = FALSE]
+  variability_columns <- intersect(c("SD_values", "CV_values"), names(rows))
+  rows <- rows[, c(required_columns, variability_columns), drop = FALSE]
   rows[required_columns] <- lapply(rows[required_columns], trimws)
-  if (has_cv_column) rows$CV_values <- trimws(rows$CV_values)
+  rows[variability_columns] <- lapply(rows[variability_columns], trimws)
   if (anyNA(rows[required_columns]) ||
       any(vapply(rows[required_columns], function(column) any(!nzchar(column)), logical(1)))) {
     stop("Every profile needs a name, arrival rate, pathway, and mean stays.", call. = FALSE)
@@ -43,7 +54,7 @@ read_baseline_profiles_csv <- function(file, hospital) {
   }
   split_steps <- function(value) {
     if (grepl("(^|,)\\s*(,|$)", value)) {
-      stop("Pathway, Mean_stays_days and CV_values cannot contain empty steps.", call. = FALSE)
+      stop("Pathway, Mean_stays_days, SD_values and CV_values cannot contain empty steps.", call. = FALSE)
     }
     trimws(strsplit(value, ",", fixed = TRUE)[[1]])
   }
@@ -54,17 +65,31 @@ read_baseline_profiles_csv <- function(file, hospital) {
       stop("Profile '", rows$Profile[[index]], "' needs one positive mean stay per pathway step.",
            call. = FALSE)
     }
-    cv_entry <- if (has_cv_column) rows$CV_values[[index]] else NA_character_
-    cv <- if (is.na(cv_entry) || !nzchar(cv_entry)) {
-      default_cv_for_unit(units)
-    } else {
-      suppressWarnings(as.numeric(split_steps(cv_entry)))
+    # Per row, a filled SD_values entry takes precedence over CV_values.
+    entry_of <- function(column) {
+      if (!column %in% variability_columns) return(NA_character_)
+      value <- rows[[column]][[index]]
+      if (is.na(value) || !nzchar(value)) NA_character_ else value
     }
-    if (length(cv) == 1L && length(units) > 1L) cv <- rep(cv, length(units))
+    parse_steps <- function(value) {
+      steps <- suppressWarnings(as.numeric(split_steps(value)))
+      if (length(steps) == 1L && length(units) > 1L) steps <- rep(steps, length(units))
+      steps
+    }
+    sd_entry <- entry_of("SD_values")
+    cv_entry <- entry_of("CV_values")
+    cv <- if (!is.na(sd_entry)) {
+      sd <- parse_steps(sd_entry)
+      if (length(sd) == length(stays)) sd / stays else NA_real_
+    } else if (!is.na(cv_entry)) {
+      parse_steps(cv_entry)
+    } else {
+      default_cv_for_unit(units)
+    }
     if (length(cv) != length(units) || any(!is.finite(cv)) || any(cv <= 0)) {
-      stop("Profile '", rows$Profile[[index]], "' needs one positive CV per pathway step, ",
-           "or leave CV_values blank to default to 1 for ICU steps and 0.24 for other steps.",
-           call. = FALSE)
+      stop("Profile '", rows$Profile[[index]], "' needs one positive SD (days) per pathway step, ",
+           "or leave SD_values blank to default to SD = 1 x mean stay for ICU steps and ",
+           "0.24 x mean stay for other steps.", call. = FALSE)
     }
     unknown <- setdiff(units, hospital$units)
     if (length(unknown)) {
@@ -84,85 +109,116 @@ read_baseline_profiles_csv <- function(file, hospital) {
 mod_baseline_ui <- function(id) {
   ns <- shiny::NS(id)
   defaults <- baseline_defaults()
-  rintrojs::introBox(shinydashboard::box(
-    title = "Routine Civilian Flow", width = 12, status = "primary", solidHeader = TRUE,
-    shiny::checkboxInput(ns("enabled"), "Enable routine civilian arrivals", FALSE),
-    shiny::helpText("Civilian and surge patients share the selected hospital beds and fallback rules. Civilian profiles are stored separately for each hospital source and unit selection."),
-    shiny::conditionalPanel(sprintf("input['%s']", ns("enabled")),
-      shiny::actionButton(
-        ns("use_predefined_profiles"),
-        "Use predefined baseline profiles (GenMed, Surge, ICU)",
-        class = "btn-primary"
-      ),
-      shiny::helpText(paste(
-        "Loads the profiles supplied with the app from",
-        "data/baseline_civilian_profiles.csv and replaces the currently saved civilian profiles.",
-        "These predefined pathways use only GenMed, IP Surge, and ICU; select all three units first.",
-        "For other units, create or import civilian profiles. Review rates and stays for your hospital."
-      )),
-      shiny::tags$hr(),
-      shiny::fileInput(ns("profile_csv"), "Civilian profiles CSV", accept = ".csv"),
-      shiny::helpText(paste(
-        "Columns: Profile, Patients_per_day, Pathway, Mean_stays_days, and optional CV_values.",
-        "Use decimal points. Separate pathway units, stays and CVs with commas inside each cell",
-        "(for example: ICU, GenMed and 8.294710, 0.142857).",
-        "CV_values may be left blank, or omitted entirely, to default to 1 for ICU steps",
-        "and 0.24 for every other unit.",
-        "Import adds profiles and updates matching names; other saved profiles are kept.",
-        "Select the hospital units before importing. Beds and warm-up settings are configured separately."
-      )),
-      shiny::actionButton(ns("import_csv"), "Import civilian profiles", class = "btn-primary"),
-      shiny::downloadButton(ns("download_csv_template"), "Download CSV template"),
-      shiny::downloadButton(ns("download_csv"), "Download saved profiles"),
-      shiny::uiOutput(ns("import_status")),
-      shiny::tags$hr(),
-      shiny::fluidRow(
-        shiny::column(6,
-          shiny::selectInput(ns("arrival_process"), "Civilian arrival process",
-            choices = c("Evenly spaced" = "even", "Poisson (random arrivals)" = "poisson")),
-          shiny::selectInput(ns("warmup_mode"), "Warm-up method",
-            choices = c("Fixed duration with diagnostics" = "fixed", "Adaptive stability screen" = "adaptive"),
-            selected = defaults$warmup_mode),
-          shiny::textInput(ns("name"), "Civilian profile name", "routine_medical"),
-          shiny::numericInput(ns("rate"), "Arrival rate (patients/day)", 1, min = 0, step = "any"),
-          shiny::textInput(ns("units"), "Ordered pathway (unit IDs separated by commas)", "GenMed"),
-          shiny::textInput(ns("los"), "Mean stay at each step (days, separated by commas)", "3"),
-          shiny::textInput(ns("cv"), "Coefficient of variation at each step (comma-separated)", ""),
-          shiny::helpText("Leave blank to default to 1 for ICU steps and 0.24 for every other unit; or enter one value to apply it to every step."),
-          shiny::textOutput(ns("available_units")),
-          shiny::actionButton(ns("save"), "Save civilian profile", class = "btn-primary"),
-          shiny::selectInput(ns("selected"), "Saved civilian profile", choices = character()),
-          shiny::actionButton(ns("edit"), "Load profile for editing"),
-          shiny::actionButton(ns("remove"), "Remove profile")
-        ),
-        shiny::column(6,
-          shiny::numericInput(ns("warmup_min"), "Minimum warm-up (days)", defaults$warmup_min_days, min = 1),
-          shiny::numericInput(ns("warmup_max"), "Maximum warm-up (days)", defaults$warmup_max_days, min = 1),
-          shiny::numericInput(ns("window"), "Stability window (days; three windows compared)", defaults$window_days, min = 1),
-          shiny::numericInput(ns("occupancy_tolerance"), "Occupancy tolerance (fraction of beds)", defaults$occupancy_tolerance, min = 0.001, step = 0.01),
-          shiny::numericInput(ns("queue_tolerance"), "Queue tolerance (patients)", defaults$queue_tolerance, min = 0.01, step = 0.1),
-          shiny::helpText("Poisson uses each profile's mean patients/day and random exponential interarrival times. Fixed warm-up uses the minimum duration and retains the diagnostic even if it fails. Adaptive warm-up extends until the screen passes or the maximum is reached. Neither method proves equilibrium."),
-          shiny::helpText("No patients are removed at surge onset. The civilian warm-up uses existing capacity; additional beds are activated when the surge begins.")
+  shiny::tagList(
+    shiny::fluidRow(
+      rintrojs::introBox(shinydashboard::box(
+        title = "Routine Civilian Flow", width = 12, status = "primary", solidHeader = TRUE,
+        collapsible = TRUE,
+        shiny::checkboxInput(ns("enabled"), "Enable routine civilian arrivals", FALSE),
+        shiny::helpText("Civilian and surge patients share the selected hospital beds and fallback rules. Civilian profiles are stored separately for each hospital source and unit selection."),
+        shiny::conditionalPanel(sprintf("input['%s']", ns("enabled")),
+          shiny::actionButton(
+            ns("use_predefined_profiles"),
+            "Use predefined civilian profiles",
+            class = "btn-primary"
+          ),
+          shiny::helpText(paste(
+            "Loads the UC Davis-based civilian profiles that match the predefined hospital selected",
+            "above (Regional, Tertiary, or Community acute-care hospital) and replaces the currently",
+            "saved civilian profiles. Any other source uses data/baseline_civilian_profiles.csv",
+            "(ED, General Medicine, Inpatient Surge, and ICU). Every unit in those pathways must be",
+            "selected (ED is always included). Review rates and stays for your hospital."
+          )),
+          shiny::tags$hr(),
+          shiny::fluidRow(
+            shiny::column(
+              width = 4,
+              shiny::selectInput(ns("selected"), "Saved civilian profile", choices = character()),
+              shiny::actionButton(ns("edit"), "Load profile for editing"),
+              shiny::actionButton(ns("remove"), "Remove profile"),
+              shiny::hr(),
+              shiny::textInput(ns("name"), "Civilian profile name", "routine_medical"),
+              shiny::numericInput(ns("rate"), "Arrival rate (patients/day)", 1, min = 0, step = "any")
+            ),
+            shiny::column(
+              width = 8,
+              shiny::tags$label("Ordered pathway"),
+              shiny::fluidRow(
+                shiny::column(4, shiny::uiOutput(ns("pathway_units_ui"))),
+                shiny::column(4, shiny::uiOutput(ns("pathway_los_ui"))),
+                shiny::column(4, shiny::uiOutput(ns("pathway_sd_ui")))
+              ),
+              pathway_sd_help(),
+              shiny::actionButton(ns("add_step"), "Add unit", icon = shiny::icon("plus"),
+                                  class = "btn-default"),
+              shiny::actionButton(ns("remove_step"), "Remove last unit"),
+              shiny::actionButton(ns("save"), "Save civilian profile", class = "btn-primary")
+            )
+          ),
+          shiny::tags$hr(),
+          shiny::tableOutput(ns("profiles")),
+          shiny::uiOutput(ns("status")),
+          shiny::tags$hr(),
+          shiny::fileInput(ns("profile_csv"), "Civilian profiles CSV", accept = ".csv"),
+          shiny::helpText(paste(
+            "Columns: Profile, Patients_per_day, Pathway, Mean_stays_days, and optional SD_values (days).",
+            "Use decimal points. Separate pathway units, stays and SDs with commas inside each cell",
+            "(for example: ICU, GenMed and 8.294710, 0.142857).",
+            "SD_values may be left blank, or omitted entirely, to default to SD = 1 x mean stay for",
+            "ICU steps and 0.24 x mean stay for every other unit. Older files with CV_values are still accepted.",
+            "Import adds profiles and updates matching names; other saved profiles are kept.",
+            "Select the hospital units before importing. Beds and warm-up settings are configured separately."
+          )),
+          shiny::actionButton(ns("import_csv"), "Import civilian profiles", class = "btn-primary"),
+          shiny::downloadButton(ns("download_csv_template"), "Download CSV template"),
+          shiny::downloadButton(ns("download_csv"), "Download saved profiles"),
+          shiny::uiOutput(ns("import_status"))
         )
-      ),
-      shiny::tableOutput(ns("profiles")),
-      shiny::uiOutput(ns("status"))
+      ), id = ns("tour_routine_flow"), data.step = 7,
+        data.intro = paste(
+          "<strong>Routine civilian operation and warm-up.</strong><br>",
+          "Enable this flow for a populated hospital before the surge. Civilian arrivals continue during the event.",
+          "Predefined civilian profiles follow the selected predefined hospital (Regional, Tertiary or Community); other sources use the ED, General Medicine, Inpatient Surge and ICU set.",
+          "Enter a rate and build the ordered pathway unit by unit, with a mean stay and SD (days) for each unit.",
+          "Arrival process and warm-up settings are under Advanced Flow Settings. Fixed warm-up continues even if its diagnostic fails; adaptive mode must pass.",
+          "Patients and queues remain at day zero. Additional beds activate then. Review baseline stability before comparing surge effects."
+        ), data.position = "top")
+    ),
+    shiny::fluidRow(
+      shinydashboard::box(
+        title = "Advanced Flow Settings", width = 12, status = "primary", solidHeader = TRUE,
+        collapsible = TRUE, collapsed = TRUE,
+        shiny::helpText("These settings apply only when routine civilian arrivals are enabled."),
+        shiny::fluidRow(
+          shiny::column(6,
+            shiny::selectInput(ns("arrival_process"), "Civilian arrival process",
+              choices = c("Evenly spaced" = "even", "Poisson (random arrivals)" = "poisson")),
+            shiny::selectInput(ns("warmup_mode"), "Warm-up method",
+              choices = c("Fixed duration with diagnostics" = "fixed", "Adaptive stability screen" = "adaptive"),
+              selected = defaults$warmup_mode),
+            shiny::numericInput(ns("warmup_min"), "Minimum warm-up (days)", defaults$warmup_min_days, min = 1),
+            shiny::numericInput(ns("warmup_max"), "Maximum warm-up (days)", defaults$warmup_max_days, min = 1)
+          ),
+          shiny::column(6,
+            shiny::numericInput(ns("window"), "Stability window (days; three windows compared)", defaults$window_days, min = 1),
+            shiny::numericInput(ns("occupancy_tolerance"), "Occupancy tolerance (fraction of beds)", defaults$occupancy_tolerance, min = 0.001, step = 0.01),
+            shiny::numericInput(ns("queue_tolerance"), "Queue tolerance (patients)", defaults$queue_tolerance, min = 0.01, step = 0.1)
+          )
+        ),
+        shiny::helpText("Poisson uses each profile's mean patients/day and random exponential interarrival times. Fixed warm-up uses the minimum duration and retains the diagnostic even if it fails. Adaptive warm-up extends until the screen passes or the maximum is reached. Neither method proves equilibrium."),
+        shiny::helpText("No patients are removed at surge onset. The civilian warm-up uses existing capacity; additional beds are activated when the surge begins.")
+      )
     )
-  ), id = ns("tour_routine_flow"), data.step = 7,
-    data.intro = paste(
-      "<strong>Routine civilian operation and warm-up.</strong><br>",
-      "Enable this flow for a populated hospital before the surge. Civilian arrivals continue during the event.",
-      "Predefined profiles require GenMed, IP Surge and ICU only; other units need manual or imported profiles.",
-      "Enter a rate and an ordered pathway with one mean stay per step, for example GenMed, ICU and 3, 3 days.",
-      "Choose evenly spaced or Poisson arrivals. Fixed warm-up continues even if its diagnostic fails; adaptive mode must pass.",
-      "Patients and queues remain at day zero. Additional beds activate then. Review baseline stability before comparing surge effects."
-    ), data.position = "top")
+  )
 }
 
 mod_baseline_server <- function(id, hospital_config) {
   shiny::moduleServer(id, function(input, output, session) {
     saved <- shiny::reactiveVal(list())
     import_status <- shiny::reactiveVal(NULL)
+    step_count <- shiny::reactiveVal(1L)
+    form_version <- shiny::reactiveVal(1L)
+    pathway_draft <- shiny::reactiveVal(list(unit = "GenMed", los = 3, sd = NA_real_))
     key <- shiny::reactive({
       hospital <- hospital_config()
       if (is.null(hospital)) return("pending")
@@ -184,21 +240,22 @@ mod_baseline_server <- function(id, hospital_config) {
       hospital <- hospital_config()
       result <- tryCatch({
         if (is.null(hospital)) stop("Complete the hospital configuration before loading profiles.")
-        predefined_file <- file.path("data", "baseline_civilian_profiles.csv")
+        predefined_file <- civilian_profile_file(hospital$source)
         if (!file.exists(predefined_file)) {
           stop("The predefined baseline profile file is unavailable.")
         }
-        read_baseline_profiles_csv(predefined_file, hospital)
+        list(file = predefined_file, profiles = read_baseline_profiles_csv(predefined_file, hospital))
       }, error = function(error) error)
       if (inherits(result, "error")) {
         import_status(list(ok = FALSE, message = paste(
           "Predefined profiles were not loaded.", conditionMessage(result))))
         return(invisible(NULL))
       }
-      replace_profiles(result)
+      replace_profiles(result$profiles)
       import_status(list(ok = TRUE, message = sprintf(
-        "Loaded %d predefined baseline profiles. Total arrival rate: %.9g patients/day.",
-        length(result), sum(vapply(result, `[[`, numeric(1), "rate")))))
+        "Loaded %d predefined baseline profiles from %s. Total arrival rate: %.9g patients/day.",
+        length(result$profiles), result$file,
+        sum(vapply(result$profiles, `[[`, numeric(1), "rate")))))
     })
     shiny::observeEvent(input$import_csv, {
       hospital <- hospital_config()
@@ -248,11 +305,21 @@ mod_baseline_server <- function(id, hospital_config) {
       },
       contentType = "text/csv"
     )
-    output$available_units <- shiny::renderText({
+    # Pathway editor: same step inputs as the surge trajectory editor.
+    output$pathway_units_ui <- shiny::renderUI({
       hospital <- hospital_config()
-      if (is.null(hospital)) return("Complete a valid surge/hospital configuration first.")
-      paste("Available unit IDs:", paste(hospital$units, collapse = ", "))
+      if (is.null(hospital)) return(shiny::helpText("Complete a valid surge/hospital configuration first."))
+      pathway_step_inputs(input, session, "unit", step_count(), form_version(),
+                          pathway_draft(), hospital$units)
     })
+    output$pathway_los_ui <- shiny::renderUI({
+      pathway_step_inputs(input, session, "los", step_count(), form_version(), pathway_draft())
+    })
+    output$pathway_sd_ui <- shiny::renderUI({
+      pathway_step_inputs(input, session, "sd", step_count(), form_version(), pathway_draft())
+    })
+    shiny::observeEvent(input$add_step, step_count(step_count() + 1L))
+    shiny::observeEvent(input$remove_step, step_count(max(1L, step_count() - 1L)))
     shiny::observe({
       names <- names(profiles())
       selected <- shiny::isolate(input$selected)
@@ -263,21 +330,16 @@ mod_baseline_server <- function(id, hospital_config) {
       hospital <- hospital_config()
       shiny::req(hospital)
       name <- trimws(input$name)
-      units <- trimws(strsplit(input$units, ",", fixed = TRUE)[[1]])
-      los <- suppressWarnings(as.numeric(trimws(strsplit(input$los, ",", fixed = TRUE)[[1]])))
-      cv_text <- trimws(if (is.null(input$cv)) "" else input$cv)
-      cv <- if (!nzchar(cv_text)) {
-        default_cv_for_unit(units)
-      } else {
-        suppressWarnings(as.numeric(trimws(strsplit(cv_text, ",", fixed = TRUE)[[1]])))
-      }
-      if (length(cv) == 1L && length(units) > 1L) cv <- rep(cv, length(units))
+      steps <- read_pathway_steps(input, step_count(), form_version())
+      cv <- step_cv_from_sd(steps$unit, steps$los, steps$sd)
       candidate <- baseline_defaults()
       candidate$enabled <- TRUE
-      candidate$profiles <- stats::setNames(list(list(unit = units, los = los, cv = cv)), name)
+      candidate$profiles <- stats::setNames(list(list(unit = steps$unit, los = steps$los, cv = cv)), name)
       candidate$arrival_rates <- stats::setNames(input$rate, name)
       error <- tryCatch({
         if (!nzchar(name)) stop("Enter a civilian profile name.")
+        step_error <- pathway_step_error(steps, hospital$units)
+        if (!is.null(step_error)) stop(step_error)
         validate_baseline_config(candidate, hospital$capacities, hospital$fallbacks)
         NULL
       }, error = function(error) conditionMessage(error))
@@ -287,18 +349,17 @@ mod_baseline_server <- function(id, hospital_config) {
       }
       all <- saved()
       current <- profiles()
-      current[[name]] <- list(unit = units, los = los, cv = cv, rate = input$rate)
+      current[[name]] <- list(unit = steps$unit, los = steps$los, cv = cv, rate = input$rate)
       all[[key()]] <- current
       saved(all)
     })
     shiny::observeEvent(input$edit, {
       profile <- profiles()[[input$selected]]
       shiny::req(profile)
-      step_cv <- if (!is.null(profile$cv)) profile$cv else default_cv_for_unit(profile$unit)
+      pathway_draft(list(unit = profile$unit, los = profile$los, sd = civilian_step_sd(profile)))
+      step_count(max(1L, length(profile$unit)))
+      form_version(form_version() + 1L)
       shiny::updateTextInput(session, "name", value = input$selected)
-      shiny::updateTextInput(session, "units", value = paste(profile$unit, collapse = ", "))
-      shiny::updateTextInput(session, "los", value = paste(profile$los, collapse = ", "))
-      shiny::updateTextInput(session, "cv", value = paste(step_cv, collapse = ", "))
       shiny::updateNumericInput(session, "rate", value = profile$rate)
     })
     shiny::observeEvent(input$remove, {
@@ -314,9 +375,7 @@ mod_baseline_server <- function(id, hospital_config) {
       config$enabled <- isTRUE(input$enabled)
       if (!config$enabled) return(config)
       config$profiles <- lapply(profiles(), function(profile) {
-        cv <- profile$cv
-        if (is.null(cv)) cv <- default_cv_for_unit(profile$unit)
-        list(unit = profile$unit, los = profile$los, cv = cv)
+        list(unit = profile$unit, los = profile$los, cv = civilian_step_cv(profile))
       })
       config$arrival_rates <- vapply(profiles(), `[[`, numeric(1), "rate")
       config$arrival_process <- if (is.null(input$arrival_process)) "even" else input$arrival_process
@@ -331,11 +390,10 @@ mod_baseline_server <- function(id, hospital_config) {
     output$profiles <- shiny::renderTable({
       dplyr::bind_rows(lapply(names(profiles()), function(name) {
         profile <- profiles()[[name]]
-        step_cv <- if (!is.null(profile$cv)) profile$cv else default_cv_for_unit(profile$unit)
         data.frame(Profile = name, Patients_per_day = profile$rate,
                    Pathway = paste(profile$unit, collapse = " -> "),
-                   Mean_stays_days = paste(profile$los, collapse = " -> "),
-                   CV_values = paste(step_cv, collapse = " -> "))
+                   Mean_stays_days = format_steps(profile$los),
+                   SD_days = format_steps(civilian_step_sd(profile)))
       }))
     })
     output$status <- shiny::renderUI({

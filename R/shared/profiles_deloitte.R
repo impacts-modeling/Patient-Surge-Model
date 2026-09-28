@@ -9,7 +9,9 @@ default_cv_for_unit <- function(unit) {
   ifelse(unit == "ICU", 1, 0.24)
 }
 
-# Example 1: the original Deloitte 3-unit test profiles
+# Example 1: the original Deloitte 3-unit test profiles, shown in the app as
+# "UC Davis calibrated profiles" (the configuration used in the manuscript).
+# The internal source ID stays "deloitte_test" so saved runs remain comparable.
 # Only the GenMed<->Surge fallback
 # link changes; no patient_profiles step uses this unit directly.
 deloitte_test_profile_config <- function() {
@@ -48,50 +50,7 @@ deloitte_test_profile_config <- function() {
 
   list(
     source = "deloitte_test",
-    source_label = "Deloitte test profiles (reduced; UC Davis units)",
-    units = c("Surge", "GenMed", "ICU"),
-    patient_profiles = patient_profiles,
-    profile_prob = profile_counts / sum(profile_counts),
-    fallbacks = fallbacks_list_1
-  )
-}
-
-# UC Davis calibrated profiles: reads the CSV built by paper/Cleaning.Rmd's
-# "Build UC Davis profiles for the app" section (build_uc_davis_profiles()),
-# which follows the 2026_Assessing_the_hospital_occupancy_under_a_surge_event
-# paper's Section 2.2 flow structure. Every patient is modeled as
-# ED -> unit[-> second unit] -- a single entry type, since the Davis extract
-# has no per-unit split between ED-origin and direct/transfer admissions
-# (Admit_<unit> is a combined total; see Cleaning.Rmd's "What the data does
-# NOT support"), so the paper's A_S/A_M/A_I cannot be calibrated separately
-# from ED admissions here. Each profile has at most one post-admission
-# transfer, chosen by the paper's Section 2.5 competing-exponential
-# transfer/discharge rates (varphi/psi/epsilon). Every value is calibrated
-# from 2025 UC Davis operational data only -- no external/illustrative
-# values are substituted in. The Surge <-> GenMed transfer (both directions)
-# is not observable in that data at all and is therefore not modeled (rate
-# 0), rather than filled in from elsewhere. See Cleaning.Rmd for the full
-# derivation and caveats (notably: ICU-linked transfer counts did not
-# reconcile with a Little's-Law check there, so treat those specific rates
-# as approximate).
-uc_davis_profile_config <- function(csv_path = file.path("data", "baseline_civilian_profiles_uc_davis.csv")) {
-  rows <- utils::read.csv(csv_path, check.names = FALSE, colClasses = "character",
-                           fileEncoding = "UTF-8-BOM", strip.white = TRUE)
-  split_steps <- function(value) trimws(strsplit(value, ",", fixed = TRUE)[[1]])
-
-  patient_profiles <- stats::setNames(lapply(seq_len(nrow(rows)), function(index) {
-    list(
-      unit = split_steps(rows$Pathway[[index]]),
-      los = as.numeric(split_steps(rows$Mean_stays_days[[index]])),
-      cv = as.numeric(split_steps(rows$CV_values[[index]]))
-    )
-  }), rows$Profile)
-
-  profile_counts <- stats::setNames(as.numeric(rows$Patients_per_day), rows$Profile)
-
-  list(
-    source = "uc_davis",
-    source_label = "UC Davis calibrated profiles (ICU/GenMed/Surge; ED-origin admissions)",
+    source_label = "UC Davis calibrated profiles (NDMS-based; Surge/GenMed/ICU)",
     units = c("Surge", "GenMed", "ICU"),
     patient_profiles = patient_profiles,
     profile_prob = profile_counts / sum(profile_counts),
@@ -249,6 +208,14 @@ regional_hospital_fallbacks <- list(
   TransitionalCare = c("GenMed", "PhysicalMed")
 )
 
+# Community acute-care hospital: only GenMed, ICU and TransitionalCare (plus
+# the always-present ED). ICU has no fallback because no other critical-care
+# unit exists.
+community_hospital_fallbacks <- list(
+  GenMed = c("TransitionalCare"),
+  TransitionalCare = c("GenMed")
+)
+
 # Shared builder behind injury_path_test_profile_config() and the
 # hospital-specific examples below. Reuses the same Deloitte WIA/DNBI
 # proportions (deloitte_injury_paths/deloitte_*_type_probabilities) for all of
@@ -393,6 +360,24 @@ regional_hospital_test_profile_config <- function(wia_prob = 0.67) {
     unit_map = c(CardiacICU = "Cardiology", BurnBed = "ICU", Psychiatric = "GenMed"),
     capacities = c(GenMed = 240, ICU = 20, Cardiology = 12,
                    PhysicalMed = 12, TransitionalCare = 20),
+    wia_prob = wia_prob
+  )
+}
+
+# Example 4: Community acute-care hospital -- GenMed, ICU and TransitionalCare
+# only. Deloitte pathways through missing units are rerouted to the nearest
+# available unit (BurnBed and CardiacICU -> ICU, PhysicalMed ->
+# TransitionalCare, Psychiatric -> GenMed); as in the Regional example this is
+# an illustrative adaptation, not a calibrated one. Bed counts are the
+# scenario's assumed capacities, not derived from Deloitte.
+community_hospital_test_profile_config <- function(wia_prob = 0.67) {
+  deloitte_injury_path_profile_config(
+    source = "community_hospital_test",
+    source_label = "Community acute-care hospital test profiles (Deloitte-derived; GenMed/ICU/TransitionalCare)",
+    fallbacks = community_hospital_fallbacks,
+    unit_map = c(BurnBed = "ICU", CardiacICU = "ICU",
+                 PhysicalMed = "TransitionalCare", Psychiatric = "GenMed"),
+    capacities = c(GenMed = 80, ICU = 12, TransitionalCare = 12),
     wia_prob = wia_prob
   )
 }
