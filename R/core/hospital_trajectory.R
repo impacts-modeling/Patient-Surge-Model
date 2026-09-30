@@ -213,13 +213,13 @@ new_bed_dispatcher <- function(env, units) {
 # dispatcher priority); waiting with no bed held is a true, bed-less queue
 # (the .waiting_for__ resource, only possible on the first step). Once any
 # candidate bed is granted, `previous_unit` (if any) is released immediately,
-# before the new bed is seized. If the granted bed is a fallback rather than
-# this step's primary unit, the patient keeps watching for the primary while
-# being served in the fallback: if the primary frees before this step's
-# length of stay elapses, the patient transfers there (with dispatcher
-# priority over a fresh request for that same bed) and resumes with the
-# remaining stay, unchanged in total duration. Whichever unit the patient
-# ends this step in becomes `previous_unit` for the next step.
+# before the new bed is seized. Whichever bed is granted -- the primary unit
+# or a fallback -- the patient completes this step's full length of stay
+# there; a fallback assignment is not revisited even if the primary frees up
+# before the step ends (freed primary beds go to whoever is currently
+# waiting -- a fresh arrival or a patient boarding into their next step --
+# not to someone already being cared for in a fallback). Whichever unit the
+# patient ends this step in becomes `previous_unit` for the next step.
 run_pathway_step <- function(env, profile_name, profile, fallbacks,
                              step_index, previous_unit, service_time_for) {
   dispatcher <- attr(env, "bed_dispatcher")
@@ -238,81 +238,13 @@ run_pathway_step <- function(env, profile_name, profile, fallbacks,
   id <- paste(profile_name, step_index, sep = "_")
 
   continuation_for <- function(unit) {
-    if (identical(unit, primary)) {
-      # Already in the primary unit: no transfer to watch for.
-      simmer::trajectory(paste0(id, "_in_", unit)) |>
-        simmer::timeout(step_service_time) |>
-        simmer::join(run_pathway_step(env, profile_name, profile, fallbacks,
-                                      step_index + 1L, primary, service_time_for))
-    } else {
-      # simmer::trap(handler=X) semantics (confirmed against the package's own
-      # documentation for send()/trap()): on signal receipt, the arrival stops
-      # its current activity, runs X, THEN CONTINUES with whatever follows the
-      # interrupted activity in the surrounding pipe -- it does not replace
-      # the rest of the trajectory. So the interrupted timeout() below and its
-      # handler both funnel into the SAME shared continuation afterward
-      # (untrap, then branch on whether a transfer happened); the handler must
-      # NOT itself contain untrap/join, or that shared continuation runs a
-      # second time on top of the handler's (already-completed) actions.
-      dur_attr <- paste0(".", id, "_duration")
-      started_attr <- paste0(".", id, "_started")
-      transferred_attr <- paste0(".", id, "_transferred")
-      watch_signal <- function() dispatcher$signal_for(simmer::get_name(env))
-      transferred_next <- run_pathway_step(env, profile_name, profile, fallbacks,
-                                           step_index + 1L, primary, service_time_for)
-      stayed_next <- run_pathway_step(env, profile_name, profile, fallbacks,
-                                      step_index + 1L, unit, service_time_for)
-      remaining_time <- function() {
-        elapsed <- simmer::now(env) - simmer::get_attribute(env, started_attr)
-        max(simmer::get_attribute(env, dur_attr) - elapsed, .Machine$double.eps)
-      }
-      # Built fresh each call (used once as the trap's interrupt handler, once
-      # for an already-free primary at registration time); "elapsed" is ~0 in
-      # the latter case. Deliberately has no untrap/join of its own. Releases
-      # .boarding_for__<primary> the moment primary is actually seized --
-      # boarding ends there, not after the remaining stay in primary.
-      transfer_now <- function(label) {
-        simmer::trajectory(paste0(id, "_", label, "_", unit, "_to_", primary)) |>
-          simmer::set_attribute(transferred_attr, 1) |>
-          simmer::release(unit, 1) |>
-          simmer::send(dispatcher$dispatch) |>
-          simmer::seize(primary, dispatcher$claim) |>
-          simmer::release(boarding_resource(primary), 1) |>
-          simmer::timeout(remaining_time)
-      }
-      # Occupying a fallback while watching for the primary is boarding too
-      # (the patient holds a bed elsewhere -- here, the fallback itself --
-      # while wanting a different unit), so it is tracked on the very same
-      # .boarding_for__<primary> resource as boarding between pathway steps;
-      # both feed the same boarding-time statistics (Boarding Times table).
-      simmer::trajectory(paste0(id, "_in_", unit)) |>
-        simmer::set_attribute(dur_attr, step_service_time) |>
-        simmer::set_attribute(started_attr, function() simmer::now(env)) |>
-        simmer::set_attribute(transferred_attr, 0) |>
-        simmer::seize(boarding_resource(primary), 1) |>
-        simmer::trap(watch_signal, handler = transfer_now("transferred")) |>
-        simmer::set_attribute(paste0(".", id, "_watch"),
-          function() dispatcher$register(primary, priority = TRUE)) |>
-        simmer::send(dispatcher$dispatch) |>
-        simmer::branch(function() if (is.null(dispatcher$assigned())) 1L else 2L,
-          continue = c(TRUE, TRUE),
-          simmer::trajectory(paste0(id, "_watching_", unit)) |>
-            simmer::timeout(function() simmer::get_attribute(env, dur_attr)),
-          transfer_now("immediate")) |>
-        simmer::untrap(watch_signal) |>
-        # A transfer (handler or immediate) already released
-        # .boarding_for__<primary> the moment it seized primary; a normal,
-        # never-transferred completion has not, so release it now. Interrupt
-        # resumption re-enters this shared point regardless of which path was
-        # taken (see the note above transfer_now()), so this must stay a
-        # single conditional release, not a second unconditional one.
-        simmer::release(boarding_resource(primary),
-          function() if (isTRUE(simmer::get_attribute(env, transferred_attr) == 1)) 0 else 1) |>
-        simmer::branch(function() if (isTRUE(simmer::get_attribute(env, transferred_attr) == 1)) 1L else 2L,
-          continue = c(TRUE, TRUE),
-          transferred_next,
-          stayed_next)
-    }
+    # Whether `unit` is the primary or a fallback, the patient completes the
+    # full step here -- a fallback stay is not revisited if the primary frees
+    # up mid-step (see the design note above run_pathway_step()).
+    simmer::trajectory(paste0(id, "_in_", unit)) |>
+      simmer::timeout(step_service_time) |>
+      simmer::join(run_pathway_step(env, profile_name, profile, fallbacks,
+                                    step_index + 1L, unit, service_time_for))
   }
 
   candidate_branches <- lapply(candidates, function(unit) {
