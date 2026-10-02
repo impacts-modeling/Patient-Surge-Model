@@ -180,7 +180,7 @@ mod_baseline_ui <- function(id) {
           "Enable this flow for a populated hospital before the surge. Civilian arrivals continue during the event.",
           "Predefined civilian profiles follow the selected predefined hospital (Regional, Tertiary or Community); other sources use the ED, General Medicine, Inpatient Surge and ICU set.",
           "Enter a rate and build the ordered pathway unit by unit, with a mean stay and SD (days) for each unit.",
-          "Arrival process and warm-up settings are under Advanced Flow Settings. Fixed warm-up continues even if its diagnostic fails; adaptive mode must pass.",
+          "Arrival process and the fixed warm-up duration are under Advanced Flow Settings.",
           "Patients and queues remain at day zero. Additional beds activate then. Review baseline stability before comparing surge effects."
         ), data.position = "top")
     ),
@@ -192,20 +192,12 @@ mod_baseline_ui <- function(id) {
         shiny::fluidRow(
           shiny::column(6,
             shiny::selectInput(ns("arrival_process"), "Civilian arrival process",
-              choices = c("Evenly spaced" = "even", "Poisson (random arrivals)" = "poisson")),
-            shiny::selectInput(ns("warmup_mode"), "Warm-up method",
-              choices = c("Fixed duration with diagnostics" = "fixed", "Adaptive stability screen" = "adaptive"),
-              selected = defaults$warmup_mode),
-            shiny::numericInput(ns("warmup_min"), "Minimum warm-up (days)", defaults$warmup_min_days, min = 1),
-            shiny::numericInput(ns("warmup_max"), "Maximum warm-up (days)", defaults$warmup_max_days, min = 1)
-          ),
-          shiny::column(6,
-            shiny::numericInput(ns("window"), "Stability window (days; three windows compared)", defaults$window_days, min = 1),
-            shiny::numericInput(ns("occupancy_tolerance"), "Occupancy tolerance (fraction of beds)", defaults$occupancy_tolerance, min = 0.001, step = 0.01),
-            shiny::numericInput(ns("queue_tolerance"), "Queue tolerance (patients)", defaults$queue_tolerance, min = 0.01, step = 0.1)
+              choices = c("Evenly spaced" = "even", "Poisson (random arrivals)" = "poisson"),
+              selected = defaults$arrival_process),
+            shiny::numericInput(ns("warmup_days"), "Warm-up duration (days)", defaults$warmup_days, min = 1)
           )
         ),
-        shiny::helpText("Poisson uses each profile's mean patients/day and random exponential interarrival times. Fixed warm-up uses the minimum duration and retains the diagnostic even if it fails. Adaptive warm-up extends until the screen passes or the maximum is reached. Neither method proves equilibrium."),
+        shiny::helpText("Poisson uses each profile's mean patients/day and random exponential interarrival times. The warm-up is a fixed duration you choose; no automated stability test is run, so pick it from raw-occupancy plots of the civilian flow."),
         shiny::helpText("No patients are removed at surge onset. The civilian warm-up uses existing capacity; additional beds are activated when the surge begins.")
       )
     )
@@ -378,13 +370,8 @@ mod_baseline_server <- function(id, hospital_config) {
         list(unit = profile$unit, los = profile$los, cv = civilian_step_cv(profile))
       })
       config$arrival_rates <- vapply(profiles(), `[[`, numeric(1), "rate")
-      config$arrival_process <- if (is.null(input$arrival_process)) "even" else input$arrival_process
-      config$warmup_mode <- if (is.null(input$warmup_mode)) "fixed" else input$warmup_mode
-      config$warmup_min_days <- input$warmup_min
-      config$warmup_max_days <- input$warmup_max
-      config$window_days <- input$window
-      config$occupancy_tolerance <- input$occupancy_tolerance
-      config$queue_tolerance <- input$queue_tolerance
+      config$arrival_process <- if (is.null(input$arrival_process)) "poisson" else input$arrival_process
+      config$warmup_days <- input$warmup_days
       config
     })
     output$profiles <- shiny::renderTable({

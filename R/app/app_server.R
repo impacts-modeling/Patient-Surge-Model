@@ -592,9 +592,8 @@ app_server <- function(input, output, session) {
       }
       shiny::div(class = "alert alert-info",
         mode_description, shiny::tags$br(),
-        sprintf("Civilian warm-up lasted %.0f to %.0f days. Diagnostic failures across checks: %d. Fixed-duration runs continue even if the diagnostic fails. Resource plots include both populations after warm-up. The screen does not prove equilibrium.",
-                min(data$runs$warmup_days), max(data$runs$warmup_days),
-                sum(!data$warmup_diagnostics$passed)))
+        sprintf("Civilian warm-up was a fixed %.0f days (chosen by the user; no automated stability test is run). Resource plots include both populations after warm-up.",
+                max(data$runs$warmup_days)))
     })
     output$patient_cohort_note <- shiny::renderText({
       data <- simulation_data()

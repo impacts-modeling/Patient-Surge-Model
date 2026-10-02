@@ -422,6 +422,7 @@ hospital_profiles_ui <- function(id) {
   test_condition <- sprintf("input['%s'] != 'manual'", ns("profile_source"))
   excel_condition <- sprintf("input['%s'] == 'excel_upload'", ns("profile_source"))
   predefined_condition <- sprintf("input['%s'] == 'predefined'", ns("profile_source"))
+  not_predefined_condition <- sprintf("input['%s'] != 'predefined'", ns("profile_source"))
 
   shiny::tagList(
     shiny::fluidRow(
@@ -560,7 +561,10 @@ hospital_profiles_ui <- function(id) {
             width = 3,
             rintrojs::introBox(
               shiny::tagList(
-                shiny::uiOutput(ns("profile_percent_ui")),
+                shiny::div(
+                  style = "max-height: 320px; overflow-y: auto;",
+                  shiny::uiOutput(ns("profile_percent_ui"))
+                ),
                 shiny::actionButton(
                   ns("set_profile_percentages"),
                   "Set arrival percentages",
@@ -589,7 +593,10 @@ hospital_profiles_ui <- function(id) {
             style = "overflow-x: auto;",
             rintrojs::introBox(
               shiny::uiOutput(ns("configuration_status")),
-              shiny::tableOutput(ns("profiles_summary")),
+              shiny::div(
+                style = "max-height: 320px; overflow-y: auto;",
+                shiny::tableOutput(ns("profiles_summary"))
+              ),
               shiny::downloadButton(
                 ns("download_profile_config"),
                 "Download surge profile configuration",
@@ -606,12 +613,15 @@ hospital_profiles_ui <- function(id) {
             )
           )
         ),
-        shiny::fluidRow(
+        shiny::conditionalPanel(
+          condition = not_predefined_condition,
+          shiny::fluidRow(
           shinydashboard::box(
             title = "Surge patient trajectory editor",
             status = "info",
             solidHeader = TRUE,
             width = 12,
+            collapsible = TRUE,
             shiny::fluidRow(
               shiny::column(
                 width = 4,
@@ -649,6 +659,7 @@ hospital_profiles_ui <- function(id) {
               )
             )
           )
+        )
         )
       )
     )

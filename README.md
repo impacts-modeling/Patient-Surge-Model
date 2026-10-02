@@ -56,9 +56,7 @@ When civilian flow is enabled, candidates include both populations. Warm-up uses
 
 Civilian profiles are independent of surge profiles and use the selected hospital units and shared fallback rules. In **Routine Civilian Flow**, enter a profile name and patients/day, and build the ordered pathway unit by unit with a mean stay and optional SD for each unit, or load or import CSV profiles. Saved civilian profile lists are kept separately by hospital source and unit selection within the current session; rates may be fractional.
 
-By default warm-up uses a fixed duration of 110 days with a stability diagnostic; the adaptive mode checks up to 360 days. The screen compares time-weighted mean occupancy and queue across the last three 14-day windows; the range must be within 10% of bed capacity for occupancy (at least one bed as denominator) and 0.5 patients for queues, for every unit. Fixed warm-up continues even if the screen fails; adaptive warm-up stops the run before the surge if it never passes.
-
-These configurable thresholds are a screening rule, not proof of equilibrium or empirically calibrated defaults. Assess sensitivity to window lengths, tolerances, and warm-up duration before reporting scientific results.
+Warm-up is a fixed duration (**Warm-up duration**, 110 days by default). No automated stability test is run: choose the duration from raw-occupancy plots of the civilian flow (see `paper/plot_raw_dynamics.R`) and report those plots as the justification. A fixed warm-up does not by itself establish equilibrium; assess sensitivity to the warm-up duration before reporting scientific results.
 
 The same simulation environment continues after warm-up. Existing patients, bed occupancy, queues, and scheduled civilian arrivals remain intact. Day 0 denotes surge onset; the selected simulation duration excludes warm-up. Patients still in care at the final horizon remain marked as incomplete.
 
@@ -106,7 +104,6 @@ Set `n_patients = 0` to evaluate civilian operations without a surge. Set `confi
 | `resource_history` | Complete resource history, with negative times for civilian warm-up |
 | `arrivals` | Patient records, profile, population (`civilian` or `surge`), and completion status; civilian-enabled runs also include incomplete patients, warm-up flags, and presence at surge onset |
 | `patient_resource_activity` | Per-resource patient records, including logical waiting resources and incomplete activities |
-| `warmup_diagnostics` | Per-unit results at every warm-up check |
 | `runs` | Replication IDs, realized warm-up duration, observation duration, and master seed |
 | `configuration`, `parameters` | Inputs needed to reproduce the scenario |
 

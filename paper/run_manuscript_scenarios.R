@@ -49,7 +49,7 @@ make_study_config <- function(project_dir = ".",
   has_civilian_cv <- "CV_values" %in% names(civilian)
   baseline <- utils::modifyList(baseline_defaults(), warmup)
   baseline$enabled <- TRUE
-  baseline$arrival_process <- "even"
+  baseline$arrival_process <- "poisson"
   baseline$profiles <- stats::setNames(lapply(seq_len(nrow(civilian)), function(i) {
     units <- trimws(strsplit(civilian$Pathway[i], ",", fixed = TRUE)[[1]])
     los <- as.numeric(trimws(strsplit(civilian$Mean_stays_days[i], ",", fixed = TRUE)[[1]]))
@@ -220,7 +220,6 @@ summarize_study_runs <- function(runs) {
        wait_replications = dplyr::bind_rows(lapply(waits, `[[`, "replications")),
        boarding_summary = dplyr::bind_rows(lapply(boardings, `[[`, "summary")),
        boarding_replications = dplyr::bind_rows(lapply(boardings, `[[`, "replications")),
-       warmup_diagnostics = dplyr::bind_rows(lapply(runs, `[[`, "warmup_diagnostics")),
        run_metadata = dplyr::bind_rows(lapply(runs, `[[`, "runs")))
 }
 
@@ -249,27 +248,101 @@ scenario_labels <- function(scenario_id, design) {
   ifelse(expanded, paste0(label, "_expanded"), label)
 }
 
-make_study_figures <- function(tables) {
+make_study_figures <- function(tables, mode = c("paper", "unlimited_demand")) {
+  mode <- match.arg(mode)
   daily <- tables$daily_summary |>
     dplyr::filter(resource != "ED")
+
+  # Filter by mode: unlimited_demand shows only occupancy (no queues) and includes Surge
+  # paper mode shows both occupancy and queues, but excludes Surge
+  if (mode == "unlimited_demand") {
+    daily <- daily |> dplyr::filter(.data$metric == "server")
+  } else {
+    daily <- daily |> dplyr::filter(.data$resource != "Surge")
+  }
+
+  # Create color mapping BEFORE scenario_labels() transformation
+  # Map base scenario IDs to colors
+  scenario_id_colors <- c(
+    "baseline" = "grey40",
+    "volume_10" = "#9ECAE1",
+    "reference" = "#4292C6",
+    "volume_20" = "#08519C",
+    "concentration_15" = "#FCBBA1",
+    "concentration_5" = "#CB181D"
+  )
+
+  # Extract base IDs (without _expanded) and add color column
+  daily$base_id <- sub("_expanded$", "", daily$scenario_id)
+  daily$scenario_color <- scenario_id_colors[daily$base_id]
+
+  # Apply scenario labels transformation
   daily$scenario_id <- scenario_labels(daily$scenario_id, tables$design)
   daily$measure <- factor(ifelse(daily$metric == "server", "Occupied beds", "Queue (patients)"),
                           levels = c("Occupied beds", "Queue (patients)"))
+
+  # Identify expansion scenarios (those ending with "_expanded") for line type differentiation
+  daily$linetype <- ifelse(grepl("_expanded$", daily$scenario_id), "dashed", "solid")
+
   unit_order <- c(intersect(c("GenMed", "ICU", "Surge"), unique(daily$resource)),
                   setdiff(unique(daily$resource), c("GenMed", "ICU", "Surge")))
   daily$resource <- factor(daily$resource, levels = unit_order)
 
+  # Create scenario_colors mapping for ggplot
+  scenario_colors <- stats::setNames(
+    daily$scenario_color,
+    daily$scenario_id
+  )
+  scenario_colors <- scenario_colors[!duplicated(names(scenario_colors))]
+
+  # Fixed Y-axis limits by unit
+  y_limits <- list(
+    GenMed = c(0, 500),
+    ICU = c(0, 120),
+    Surge = c(0, 23)
+  )
+
+  # Create faceted plot with fixed Y-axis limits per unit
+  # Since facetted_pos_scales requires ggh4x, create plot per unit and combine
+  unit_plots <- lapply(unit_order, function(unit_res) {
+    unit_data <- daily[daily$resource == unit_res, ]
+    if (nrow(unit_data) == 0) return(NULL)
+
+    p <- ggplot2::ggplot(unit_data,
+      ggplot2::aes(x = .data$time1 - 0.5, y = .data$median_val, color = .data$scenario_id,
+                   fill = .data$scenario_id, linetype = .data$linetype)) +
+      ggplot2::geom_ribbon(ggplot2::aes(ymin = .data$lower, ymax = .data$upper),
+                           alpha = 0.12, color = NA, na.rm = TRUE) +
+      ggplot2::geom_line() +
+      ggplot2::scale_linetype_identity() +
+      ggplot2::scale_color_manual(values = scenario_colors, guide = "none") +
+      ggplot2::scale_fill_manual(values = scenario_colors, guide = "none") +
+      ggplot2::facet_wrap(ggplot2::vars(measure), ncol = 1) +
+      ggplot2::labs(x = NULL, y = NULL, color = "Scenario", fill = "Scenario") +
+      ggplot2::theme_bw()
+
+    # Apply fixed limits if available
+    if (unit_res %in% names(y_limits)) {
+      p <- p + ggplot2::coord_cartesian(ylim = y_limits[[unit_res]])
+    }
+    p
+  })
+  unit_plots <- unit_plots[!vapply(unit_plots, is.null, logical(1))]
+
   figures <- list(trajectories = ggplot2::ggplot(daily,
     ggplot2::aes(x = .data$time1 - 0.5, y = .data$median_val, color = .data$scenario_id,
-                 fill = .data$scenario_id)) +
+                 fill = .data$scenario_id, linetype = .data$linetype)) +
     ggplot2::geom_ribbon(ggplot2::aes(ymin = .data$lower, ymax = .data$upper),
                          alpha = 0.12, color = NA, na.rm = TRUE) +
-    ggplot2::geom_line() + ggplot2::facet_wrap(ggplot2::vars(measure, resource),
-                                             ncol = length(unit_order), scales = "free_y") +
+    ggplot2::geom_line() +
+    ggplot2::scale_linetype_identity() +
+    ggplot2::scale_color_manual(values = scenario_colors, guide = ggplot2::guide_legend(nrow = 2)) +
+    ggplot2::scale_fill_manual(values = scenario_colors, guide = "none") +
+    ggplot2::facet_wrap(ggplot2::vars(measure, resource),
+                       ncol = length(unit_order), scales = "free_y") +
     ggplot2::labs(x = "Days after surge onset (daily interval midpoint)", y = NULL,
       color = "Scenario", fill = "Scenario",
-      caption = paste("Median of daily maxima across replications; shaded band shows",
-                       "the 10th-90th percentiles. Daily peaks, not daily means.")) +
+      caption = paste("Mean and 10th-90th percentile band of daily peak occupancy across replications.")) +
     ggplot2::theme_bw() + ggplot2::theme(legend.position = "top"))
   
   waits <- tables$wait_summary |>
@@ -312,8 +385,9 @@ make_study_figures <- function(tables) {
 # General runner: one routine baseline plus arbitrary rate/duration combinations.
 # Expansion is activated only at day zero; warm-up capacity remains unchanged.
 run_scenario_study <- function(study, design, expand = FALSE, output_dir = NULL,
-                               reference_id = NULL,
+                               reference_id = NULL, mode = c("paper", "unlimited_demand"),
                                cache_dir = file.path(study$project_dir, "outputs/scenario_cache")) {
+  mode <- match.arg(mode)
   stopifnot(all(c("scenario_id", "rate", "duration") %in% names(design)), nrow(design) > 0,
     !anyNA(design), !anyDuplicated(design$scenario_id),
     all(grepl("^[A-Za-z][A-Za-z0-9_]*$", design$scenario_id)),
@@ -321,8 +395,9 @@ run_scenario_study <- function(study, design, expand = FALSE, output_dir = NULL,
     !any(paste0(design$scenario_id, "_expanded") %in% design$scenario_id),
     all(design$rate > 0 & design$rate == floor(design$rate)),
     all(design$duration > 0 & design$duration == floor(design$duration)),
-    study$sim_days >= max(design$duration), study$config$arrival_process == "even",
-    study$config$baseline$arrival_process == "even",
+    study$sim_days >= max(design$duration),
+    study$config$arrival_process == "even",
+    study$config$baseline$arrival_process %in% c("even", "poisson"),
     is.null(reference_id) || (length(reference_id) == 1L && !is.na(reference_id) &&
       reference_id %in% design$scenario_id))
   if (!is.null(output_dir) && dir.exists(output_dir) && length(list.files(output_dir, all.files = TRUE,
@@ -372,14 +447,8 @@ run_scenario_study <- function(study, design, expand = FALSE, output_dir = NULL,
     list(raw_path = raw_path, summary_path = summary_path, scenario_id = id)
   }
   runs <- list(baseline = run_one(study$config, 0, 0, "baseline"))
-  diagnostics <- read_study_summary(runs$baseline)$tables$warmup_diagnostics |>
-    dplyr::group_by(.data$replication, .data$resource) |>
-    dplyr::filter(.data$check_time == max(.data$check_time)) |>
-    dplyr::ungroup()
-  if (any(!diagnostics$passed)) {
-    warning("Baseline warm-up diagnostic failed in some units/replications. See warmup_diagnostics; do not assume equilibrium.")
-  }
-  # Diagnostics are exported; fixed warm-up is not described as equilibrium.
+  # The warm-up is a fixed length (baseline$warmup_days), justified from
+  # raw-occupancy plots (paper/plot_raw_dynamics.R), not from an automated test.
   searches <- list()
   expansion <- list()
   comparisons <- list()
@@ -397,7 +466,8 @@ run_scenario_study <- function(study, design, expand = FALSE, output_dir = NULL,
       n_patients = row$rate, sim_days = study$sim_days,
       patient_profiles = study$config$patient_profiles, profile_prob = study$config$profile_prob,
       fallbacks = study$config$fallbacks, baseline = study$config$baseline,
-      warmup_capacities = study$config$warmup_capacities, arrival_process = "even"), study$search)
+      warmup_capacities = study$config$warmup_capacities,
+      arrival_process = study$config$arrival_process), study$search)
     search_key <- study_fingerprint(list(engine = engine, args = args))
     search_path <- file.path(cache_dir, paste0(search_key, "_search.rds"))
     search_hit <- file.exists(search_path)
@@ -468,7 +538,7 @@ run_scenario_study <- function(study, design, expand = FALSE, output_dir = NULL,
                  session_info = utils::sessionInfo())
   # Keep the public study view focused on trajectories and metric tables.
   result$cache_dir <- cache_dir
-  result$figures <- make_study_figures(tables)["trajectories"]
+  result$figures <- make_study_figures(tables, mode = mode)["trajectories"]
   if (!is.null(output_dir)) save_study_outputs(result, output_dir)
   result
 }
@@ -565,7 +635,7 @@ run_volume_and_concentration_study <- function(study, volume_duration = 10,
                                                reference_id = "reference", ...) {
   design <- manuscript_scenario_design(volume_duration, volume_rates,
     concentration_total, concentration_durations, reference_id)
-  run_scenario_study(study, design, reference_id = reference_id, ...)
+  run_scenario_study(study, design, reference_id = reference_id, mode = "paper", ...)
 }
 
 # Runs the same manuscript scenario set (see manuscript_scenario_design) with
@@ -579,22 +649,29 @@ run_volume_and_concentration_study <- function(study, volume_duration = 10,
 # `capacity` must comfortably exceed peak simultaneous demand in every unit,
 # or this stops being effectively unconstrained -- inspect resource_summary's
 # peak utilization/time-at-capacity to confirm no unit ever saturates.
-run_unlimited_demand_study <- function(study, capacity = 500L, volume_duration = 10,
+run_unlimited_demand_study <- function(study, capacity = 500L, ed_capacity = 100000L,
+                                       volume_duration = 10,
                                        volume_rates = c(10, 15, 20),
                                        concentration_total = 150,
                                        concentration_durations = c(5, 10, 15),
                                        reference_id = "reference", output_dir = NULL,
                                        cache_dir = file.path(study$project_dir, "outputs/scenario_cache")) {
   stopifnot(length(capacity) == 1L, is.finite(capacity), capacity > 0,
-            capacity == floor(capacity))
+            capacity == floor(capacity),
+            length(ed_capacity) == 1L, is.finite(ed_capacity), ed_capacity >= capacity,
+            ed_capacity == floor(ed_capacity))
   design <- manuscript_scenario_design(volume_duration, volume_rates,
     concentration_total, concentration_durations, reference_id)
   unlimited <- stats::setNames(rep(as.integer(capacity), length(study$config$capacities)),
     names(study$config$capacities))
+  # ED is a hallway/chair placeholder, not a bed count (see make_study_config);
+  # it only accumulates patients, so it gets a far larger value than inpatient
+  # units rather than being lowered to `capacity` (the paper setting is 999).
+  if ("ED" %in% names(unlimited)) unlimited[["ED"]] <- as.integer(ed_capacity)
   study$config$capacities <- unlimited
   study$config$warmup_capacities <- unlimited
   run_scenario_study(study, design, expand = FALSE, output_dir = output_dir,
-                     reference_id = reference_id, cache_dir = cache_dir)
+                     reference_id = reference_id, mode = "unlimited_demand", cache_dir = cache_dir)
 }
 
 # Step 2: optimize only explicitly selected IDs from a completed first-stage study.
@@ -644,7 +721,7 @@ combine_optimized_studies <- function(output_dirs, out_file = NULL) {
     stop("output_dirs must be one or more paths to optimize_study_scenarios() output directories.")
   }
   table_names <- c("daily_summary", "design", "expansion", "wait_summary",
-                   "resource_summary", "run_metadata", "warmup_diagnostics")
+                   "resource_summary", "run_metadata")
   studies <- lapply(output_dirs, function(d) readRDS(file.path(d, "study.rds")))
   tables <- stats::setNames(lapply(table_names, function(name) {
     dplyr::distinct(dplyr::bind_rows(lapply(studies, function(s) s$tables[[name]])))
@@ -658,7 +735,7 @@ combine_optimized_studies <- function(output_dirs, out_file = NULL) {
            " across output_dirs in table '", name, "'. Runs must share an identical baseline.")
     }
   }
-  figures <- make_study_figures(tables)
+  figures <- make_study_figures(tables, mode = "paper")
   if (!is.null(out_file)) {
     ggplot2::ggsave(out_file, figures$trajectories, width = 12, height = 8,
       units = "in", dpi = 300, limitsize = FALSE)

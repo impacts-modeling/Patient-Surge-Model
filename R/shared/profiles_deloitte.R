@@ -48,12 +48,31 @@ deloitte_test_profile_config <- function() {
     icu_30 = 4
   )
 
+  # Display names for the manuscript tables only. The engine, saved
+  # configurations and outputs keep using the profile keys above, so renaming
+  # a label never affects results.
+  profile_labels <- c(
+    medsurg_3 = "Ward, short stay",
+    medsurg_5 = "Ward, standard stay",
+    medsurg_7 = "Ward, extended stay",
+    medsurg_15 = "Ward, long stay",
+    medsurg_18 = "Ward, prolonged stay",
+    icu_1_medsurg_4 = "ICU brief, then ward",
+    icu_2_medsurg_4 = "ICU short, then ward",
+    icu_3_medsurg_7 = "ICU medium, then ward",
+    icu_5_medsurg_7 = "ICU extended, then ward",
+    icu_10_medsurg_10 = "ICU long, then ward",
+    icu_30 = "ICU prolonged stay"
+  )
+  stopifnot(setequal(names(profile_labels), names(patient_profiles)))
+
   list(
     source = "deloitte_test",
     source_label = "UC Davis calibrated profiles (NDMS-based; Surge/GenMed/ICU)",
     units = c("Surge", "GenMed", "ICU"),
     patient_profiles = patient_profiles,
     profile_prob = profile_counts / sum(profile_counts),
+    profile_labels = profile_labels,
     fallbacks = fallbacks_list_1
   )
 }

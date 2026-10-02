@@ -296,13 +296,24 @@ profile_trajectory <- function(env, profile_name, patient_profiles, fallbacks,
   run_pathway_step(env, profile_name, profile, fallbacks, 1L, NULL, service_time_for)
 }
 
+# ED is a capacity placeholder, not a bed count worth reporting on. With
+# monitor_ed = FALSE the state history of ED and of its logical waiting and
+# boarding resources is not recorded (about 46% of the resource history in a
+# civilian run). Per-patient records (get_mon_arrivals(), including
+# per_resource = TRUE) are unaffected, because simmer controls those through
+# the generators' mon level, not the resources'.
+should_monitor_resource <- function(unit, monitor_ed) {
+  isTRUE(monitor_ed) || !identical(unit, "ED")
+}
+
 run_simulation <- function(capacities, duration, n_patients, sim_days,
                            patient_profiles, profile_prob, fallbacks = list(),
                            recheck_interval_days = 1, baseline = NULL,
                            warmup_capacities = capacities, arrival_process = "even",
-                           monitor_patients = TRUE) {
+                           monitor_patients = TRUE, monitor_ed = TRUE) {
   stopifnot(is.logical(monitor_patients), length(monitor_patients) == 1L,
-            !is.na(monitor_patients))
+            !is.na(monitor_patients),
+            is.logical(monitor_ed), length(monitor_ed) == 1L, !is.na(monitor_ed))
   arrival_process <- match.arg(arrival_process, c("even", "poisson"))
   stopifnot(length(duration) == 1L, is.finite(duration), duration >= 0,
             duration == floor(duration), length(n_patients) == 1L,
@@ -313,7 +324,8 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
   if (!is.null(baseline) && isTRUE(baseline$enabled)) {
     return(run_baseline_simulation(capacities, duration, n_patients, sim_days,
                                     patient_profiles, profile_prob, fallbacks, baseline,
-                                    warmup_capacities, arrival_process, monitor_patients))
+                                    warmup_capacities, arrival_process, monitor_patients,
+                                    monitor_ed))
   }
   validate_patient_configuration(capacities, patient_profiles, profile_prob, fallbacks)
   stopifnot(
@@ -324,23 +336,27 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
   hospital_sim <- simmer::simmer("hospital-simulation")
   attr(hospital_sim, "bed_dispatcher") <- new_bed_dispatcher(hospital_sim, names(capacities))
   for (unit_name in names(capacities)) {
+    mon <- should_monitor_resource(unit_name, monitor_ed)
     hospital_sim <- simmer::add_resource(
       hospital_sim,
       unit_name,
       capacity = as.integer(capacities[[unit_name]]),
-      queue_size = Inf
+      queue_size = Inf,
+      mon = mon
     )
     hospital_sim <- simmer::add_resource(
       hospital_sim,
       logical_queue_resource(unit_name),
       capacity = Inf,
-      queue_size = 0
+      queue_size = 0,
+      mon = mon
     )
     hospital_sim <- simmer::add_resource(
       hospital_sim,
       boarding_resource(unit_name),
       capacity = Inf,
-      queue_size = 0
+      queue_size = 0,
+      mon = mon
     )
   }
 
@@ -677,8 +693,9 @@ capacity_replication <- function(replication_id, simulation_args, units) {
   replication_rng_state <- get(".Random.seed", envir = .GlobalEnv)
   # mean_wait_days (the acceptance metric) is read from resource state history
   # alone (see waiting_state_summary()), so capacity selection needs no
-  # individual arrival records.
+  # individual arrival records, and only GenMed/ICU state, not ED's.
   simulation_args$monitor_patients <- FALSE
+  simulation_args$monitor_ed <- FALSE
   simulation <- do.call(run_simulation, simulation_args)
   resources <- get_hospital_mon_resources(simulation, include_resources = units)
   occupancy <- resource_state_intervals(resources) |>
@@ -696,6 +713,7 @@ capacity_replication <- function(replication_id, simulation_args, units) {
 # Explicit arguments keep the optimizer cache and history out of worker exports.
 unlimited_demand_replication <- function(replication_id, simulation_args, units) {
   simulation_args$monitor_patients <- FALSE
+  simulation_args$monitor_ed <- FALSE
   simulation <- do.call(run_simulation, simulation_args)
   simmer::get_mon_resources(simulation) |>
     dplyr::filter(!startsWith(.data$resource, logical_queue_prefix),
@@ -1136,7 +1154,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
   if (!is.null(baseline) && isTRUE(baseline$enabled)) {
     # A safe bound includes every civilian scheduled during warm-up and follow-up.
     total_generated_patients <- total_generated_patients + sum(ceiling(
-      baseline$arrival_rates * (baseline$warmup_max_days + sim_days)))
+      baseline$arrival_rates * (baseline$warmup_days + sim_days)))
   }
   poisson_arrivals <- arrival_process == "poisson" ||
     (!is.null(baseline) && isTRUE(baseline$enabled) && identical(baseline$arrival_process, "poisson"))
@@ -1192,7 +1210,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       dplyr::bind_rows() |>
       dplyr::group_by(.data$resource) |>
       dplyr::summarise(
-        maximum_occupied = max(.data$maximum_occupied),
+        maximum_occupied = mean(.data$maximum_occupied),
         .groups = "drop"
       )
 

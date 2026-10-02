@@ -187,22 +187,11 @@ matches the selected predefined hospital:
 files every pathway is ED -> unit, and arrival rates are set so that expected
 occupancy (rate x 6-day mean stay) is 85% of that unit's beds.
 
-Before the surge, the model runs civilian arrivals alone (warm-up). With the
-default settings (**Advanced Flow Settings**), the minimum warm-up is 110 days
-and the maximum 360 days. The stability screen compares time-weighted mean
-occupancy and queue lengths across three consecutive 14-day windows: every unit
-must have an occupancy range no greater than 10% of its capacity (minimum
-denominator one bed) and a queue range no greater than 0.5 patients.
-
-- **Fixed duration with diagnostics** (default): warm-up lasts the minimum
-  duration; the screen is recorded as a diagnostic and the run continues even
-  if it fails.
-- **Adaptive stability screen**: checks repeat one window later until the
-  screen passes or the maximum duration is reached; if it never passes, the
-  run stops before the surge.
-
-Settings are editable and require sensitivity analysis for scientific use.
-Passing the screen does not establish statistical equilibrium, and overloaded
+Before the surge, the model runs civilian arrivals alone (warm-up). The warm-up
+is a fixed duration set in **Advanced Flow Settings** (110 days by default).
+No automated stability test is run: choose the duration from raw-occupancy
+plots of the civilian flow, and assess sensitivity to it for scientific use.
+A fixed warm-up does not by itself establish equilibrium, and overloaded
 configurations may never stabilize. After warm-up the same simulation
 continues: no beds, queues, or patients are reset, and civilian arrivals
 continue throughout the event and follow-up. Day 0 is surge onset; simulation
@@ -218,8 +207,7 @@ search's wait criterion is evaluated only during the observation period.
 Use **Simulation seed** to repeat a scenario. The **Download PDF Report**
 button exports the configuration, seed, result tables and plots. The same runs,
 with all raw tables (resource history including warm-up, patient records by
-population, per-resource activity, warm-up diagnostics and replication
-metadata), can be generated outside Shiny with `run_hospital_scenario()`; see
+population, per-resource activity and replication metadata), can be generated outside Shiny with `run_hospital_scenario()`; see
 the runnable example and output dictionary in `README.md`. Excel workbooks store
 hospital and surge settings only; save civilian profiles with **Download saved
 profiles** in Routine Civilian Flow.
@@ -231,7 +219,7 @@ profiles** in Routine Civilian Flow.
 | **Scenario to run** | **Surge event** (surge arrivals, plus civilian flow if enabled) or **Routine civilian operation only**. |
 | **Surge Patients per Day** | Surge arrival rate. With Poisson arrivals it is the mean rate and the realized count varies. |
 | **Surge Arrival Period (days)** | Number of consecutive days during which surge patients arrive. |
-| **Surge arrival process** | **Evenly spaced** or **Poisson (random arrivals)**. |
+| **Surge arrival process** | **Evenly spaced** (default) or **Poisson (random arrivals)**. Civilian arrivals default to Poisson (Advanced Flow Settings). |
 | **Observation Duration (days)** | Observation horizon; excludes warm-up when civilian flow is enabled. |
 | **Number of simulations** | Number of independent replications used to summarize stochastic variation. |
 | **Simulation seed** | Master seed that makes a run reproducible. |

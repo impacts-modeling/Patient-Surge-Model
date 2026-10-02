@@ -289,8 +289,7 @@ build_report_params <- function(input, profile_config) {
     ),
     list(`Routine civilian flow enabled` = isTRUE(profile_config$baseline$enabled),
          `Civilian arrival process` = profile_config$baseline$arrival_process,
-         `Warm-up method` = profile_config$baseline$warmup_mode,
-         `Warm-up duration (days)` = profile_config$baseline$warmup_min_days,
+         `Warm-up duration (days)` = profile_config$baseline$warmup_days,
          `Simulation seed` = input$simulation_seed),
     capacity_params,
     list(
@@ -375,8 +374,7 @@ generate_simulation_pdf_report <- function(file, params, simulation_data, profil
       if (civilian_only) "Bed wait tables include civilian bed requests and identify pending requests."
       else "Bed wait tables distinguish civilian and surge bed requests.",
       "Civilian arrivals continue throughout warm-up and follow-up without resetting beds or patients.",
-      sprintf("Warm-up diagnostic failures across checks: %d. Fixed-duration runs continue even if the screen fails; equilibrium is not established.",
-        sum(!simulation_data$warmup_diagnostics$passed)),
+      "The warm-up is a fixed duration chosen by the user; no automated stability test is run, and equilibrium is not established by this report.",
       "Warm-up uses existing beds; added capacity is activated at the start of observation."))
   }
   add_report_table_page("Fallback Configuration", make_fallback_configuration_table(profile_config))
