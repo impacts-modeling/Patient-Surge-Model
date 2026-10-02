@@ -1,7 +1,7 @@
 # Civilian flow functions have no Shiny dependency. Rates are patients/day.
 baseline_defaults <- function() {
   list(enabled = FALSE, profiles = list(), arrival_rates = numeric(),
-       arrival_process = "poisson", warmup_days = 50,
+       arrival_process = "poisson", warmup_days = 30,
        recheck_interval_days = 1)
 }
 
