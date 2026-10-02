@@ -6,7 +6,7 @@ The project supports hospital capacity planning and scenario analysis. Users can
 
 ## Main features
 
-- **Hospital configuration:** select units and enter total beds. The ED is always included with a fixed capacity of 999 beds and is not shown in results.
+- **Hospital configuration:** select units and enter beds: total beds with routine civilian flow, or beds available to the surge without it (defaults assume 95% occupancy in GenMed and ICU and 50% elsewhere, rounded up). The ED is always included with a fixed capacity of 10,000 beds and is not shown in results.
 - **Patient profiles:** define arrival percentages and ordered care pathways with a mean length of stay and SD per unit, or load a predefined NDMS-Based Classification set (UC Davis calibrated profiles, Completed, Regional hospital, Tertiary hospital, Community acute-care hospital).
 - **Routine civilian flow:** configure civilian profiles and constant arrival rates, with a warm-up before the surge. Predefined civilian profiles match the selected predefined hospital.
 - **Fallback placement:** specify ordered alternative units when the preferred unit has no available bed.
@@ -141,7 +141,7 @@ Download the empty Excel template from **Hospital Setup**, or export a surge con
 | `Profiles` | Profile names, arrival percentages, and ambulatory flags |
 | `Trajectories` | Ordered unit visits, mean lengths of stay, and optional SD (days); older `CV` columns are accepted |
 | `Fallbacks` | Primary units and ordered alternatives |
-| `Hospital` | Hospital units and total beds (`Total_beds`; older `Available_beds` accepted). The ED is always set to 999 beds |
+| `Hospital` | Hospital units and total beds (`Total_beds`; older `Available_beds` accepted). The ED is always set to 10,000 beds |
 
 PDF reports contain scenario parameters, profile and fallback configurations, simulation summaries, and plots. A current bed-expansion result is included when available.
 

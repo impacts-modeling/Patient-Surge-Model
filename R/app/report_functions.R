@@ -213,7 +213,7 @@ add_report_table_page <- function(title, table_data, rows_per_page = 16) {
   }
 }
 
-# Internal units (ED, fixed at 999 beds) are not user-configured, so they are
+# Internal units (ED, fixed at 10,000 beds) are not user-configured, so they are
 # left out of the result tables and plots shown in the app and PDF report.
 hide_internal_units <- function(table, column) {
   if (!column %in% names(table)) return(table)
@@ -277,7 +277,9 @@ build_report_params <- function(input, profile_config) {
   civilian_only <- identical(input$scenario_mode, "civilian_only")
   capacities <- profile_config$capacities
   capacity_params <- as.list(capacities[!names(capacities) %in% names(internal_hospital_units)])
-  names(capacity_params) <- paste(names(capacity_params), "Total Beds")
+  # Without civilian flow the entered beds are those available to the surge.
+  capacity_suffix <- if (isTRUE(profile_config$baseline$enabled)) "Total Beds" else "Total Available Beds"
+  names(capacity_params) <- paste(names(capacity_params), capacity_suffix)
   c(
     list(
       `Scenario` = if (civilian_only) "Routine civilian operation only" else "Surge event",

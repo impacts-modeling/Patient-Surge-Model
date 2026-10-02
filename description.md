@@ -72,12 +72,26 @@ Selecting a built-in or uploaded example automatically populates the hospital
 units, capacities, profiles, probabilities, and fallback rules associated with
 that configuration.
 
-### Hospital units and total beds
+### Hospital units and beds
 
-Select the units that exist in the scenario and enter the total number of beds
-in each selected unit. The **ED** is always part of the hospital with a fixed
-capacity of 999 beds (practically unlimited), so it is not listed or editable;
-it remains available to trajectories and fallback rules. Selectable units are:
+Select the units that exist in the scenario and enter their beds. What the bed
+inputs mean depends on **Enable routine civilian arrivals**:
+
+| Civilian arrivals | Label | Meaning and default value |
+|---|---|---|
+| Disabled (default) | **Total available beds** | The hospital starts empty, so the value is the beds available to the surge. The default assumes a baseline occupancy of 95% in GenMed and ICU (5% of total beds shown) and 50% in every other unit (50% shown), rounded up to whole beds. |
+| Enabled | **Total beds** | The civilian warm-up fills the hospital, so the value is the unit's total beds (the source's value, unchanged). |
+
+For example, the Community acute-care hospital (GenMed 80, ICU 12,
+TransitionalCare 12) shows GenMed 4, ICU 1 and TransitionalCare 6 when
+civilian arrivals are disabled. These are only starting values: a value typed
+by the user is kept when civilian arrivals are toggled; untouched values switch
+to the new default. The PDF report labels the beds "Total Available Beds" or
+"Total Beds" accordingly.
+
+The **ED** is always part of the hospital with a fixed capacity of 10,000 beds
+(practically unlimited, so it never fills); it is not listed or editable and
+remains available to trajectories and fallback rules. Selectable units are:
 
 - **Surge**
 - **GenMed**
@@ -157,7 +171,7 @@ workbook for future simulations. Both files use four required sheets:
 | **Profiles** | `Profile`, `Arrival_percent`, `Ambulatory` | Profile names, patient mix, and ambulatory status. |
 | **Trajectories** | `Profile`, `Step`, `Unit`, `LOS_days` (`SD` optional) | Ordered care steps, mean LOS, and optional per-step LOS standard deviation in days (defaults to 1 x LOS for ICU steps and 0.24 x LOS for every other unit when omitted). Older workbooks with a `CV` column are still accepted. |
 | **Fallbacks** | `Primary_unit`, `Priority`, `Fallback_unit` | Ordered substitute-bed rules. |
-| **Hospital** | `Unit`, `Total_beds` | Selected units and baseline bed capacity. The ED is always set to 999 beds. Older workbooks with `Available_beds` are still accepted. |
+| **Hospital** | `Unit`, `Total_beds` | Selected units and baseline bed capacity. The ED is always set to 10,000 beds. Older workbooks with `Available_beds` are still accepted. |
 
 To reuse the file, select **Upload profiles from Excel** and upload the workbook.
 Profile names must start with a letter and may contain letters, numbers,
@@ -383,7 +397,7 @@ with an error.
 
 ## 6. Understanding the results
 
-Result plots and tables leave out the ED, whose capacity is fixed at 999 beds.
+Result plots and tables leave out the ED, whose capacity is fixed at 10,000 beds.
 
 ### Daily Mean Occupied Beds
 

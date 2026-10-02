@@ -133,7 +133,7 @@ build_body <- function() {
                     "Use the interactive plots to compare occupied beds and",
                     "patients waiting across hospital units and days. Each line shows the mean",
                     "of time-weighted daily means across replications; the shaded band shows the",
-                    "10th–90th percentiles. The ED (fixed at 999 beds) is not shown."
+                    "10th–90th percentiles. The ED (fixed at 10,000 beds) is not shown."
                   ),
                   data.position = "left"
                 )

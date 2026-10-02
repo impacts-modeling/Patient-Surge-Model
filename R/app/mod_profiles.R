@@ -15,13 +15,39 @@ hospital_profile_units <- c(
 # elastic in practice): a large finite value, not literal Inf, because
 # validate_patient_configuration() and the resource setup require finite
 # capacities throughout. Boarding is what actually constrains an ED patient,
-# not this bed count.
-unlimited_capacity_placeholder <- 999L
+# not this bed count. 10,000 beds is far above any simulated ED census, so the
+# ED never fills.
+unlimited_capacity_placeholder <- 10000L
 # ED is always part of the hospital with the placeholder capacity above; it is
 # never shown as an editable unit or bed count, but remains available to
 # trajectories and fallbacks.
 internal_hospital_units <- c(ED = unlimited_capacity_placeholder)
 editable_hospital_units <- hospital_profile_units[!hospital_profile_units %in% names(internal_hospital_units)]
+
+# Default bed inputs --------------------------------------------------------------
+# Predefined sources and unit defaults are total beds. With routine civilian
+# flow enabled, the warm-up fills the hospital, so total beds are shown as-is.
+# Without it the hospital starts empty, so the default shown is the beds still
+# available to the surge under an assumed baseline occupancy (95% for GenMed
+# and ICU, 50% for every other unit), rounded up to whole beds. These are only
+# starting values; whatever the user types is kept.
+assumed_baseline_occupancy <- c(GenMed = 0.95, ICU = 0.95)
+other_unit_baseline_occupancy <- 0.5
+
+available_beds_default <- function(unit, total_beds) {
+  occupancy <- if (unit %in% names(assumed_baseline_occupancy)) {
+    assumed_baseline_occupancy[[unit]]
+  } else {
+    other_unit_baseline_occupancy
+  }
+  # Rounding to 6 decimals first stops floating-point noise (80 * 0.05 =
+  # 4.000000000000001) from adding a spurious bed in ceiling().
+  ceiling(round(total_beds * (1 - occupancy), 6))
+}
+
+capacity_label <- function(civilian_enabled) {
+  if (isTRUE(civilian_enabled)) "Total beds" else "Total available beds"
+}
 
 # Predefined surge profile sets; all use the NDMS-Based Classification. Values
 # are the stable internal source IDs used by the profile builders and saved
@@ -450,14 +476,16 @@ hospital_profiles_ui <- function(id) {
           ),
           shiny::helpText(
             "The ED is always part of the hospital and available to trajectories and fallbacks.",
-            "Its capacity is fixed at 999 beds (practically unlimited), so it is not listed here."
+            "Its capacity is fixed at 10,000 beds (practically unlimited), so it is not listed here."
           ),
           data.step = 2,
           data.intro = paste(
             "<strong>Describe the hospital.</strong><br>",
-            "Select the hospital units and enter the total beds for each unit.",
-            "The ED is always included with practically unlimited capacity",
-            "(999 beds) and is not editable."
+            "Select the hospital units and enter their beds. Without routine civilian",
+            "arrivals the values are the beds available to the surge (defaults assume",
+            "95% occupancy in GenMed and ICU and 50% elsewhere); with civilian arrivals",
+            "they are total beds. The ED is always included with practically unlimited",
+            "capacity (10,000 beds) and is not editable."
           ),
           data.position = "bottom"
         )
@@ -666,7 +694,10 @@ hospital_profiles_ui <- function(id) {
   )
 }
 
-hospital_profiles_server <- function(id, require_surge_profiles = function() TRUE) {
+# civilian_enabled: reactive TRUE when routine civilian arrivals are enabled;
+# it switches the bed inputs between total beds and beds available to the surge.
+hospital_profiles_server <- function(id, require_surge_profiles = function() TRUE,
+                                     civilian_enabled = function() FALSE) {
   shiny::moduleServer(id, function(input, output, session) {
     patient_profiles <- shiny::reactiveVal(list())
     fallbacks <- shiny::reactiveVal(list())
@@ -780,18 +811,28 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       unique(c(names(internal_hospital_units), input$hospital_units))
     })
 
+    # Default value last written into each capacity input. A current value that
+    # differs from it was typed by the user and is kept when the civilian
+    # toggle changes the defaults; untouched inputs follow the new default.
+    shown_capacity_defaults <- list()
+
     output$capacity_ui <- shiny::renderUI({
       units <- setdiff(selected_units(), names(internal_hospital_units))
       shiny::req(length(units) > 0)
+      civilian <- isTRUE(civilian_enabled())
       shiny::tagList(
-        shiny::h4("Total beds"),
+        shiny::h4(capacity_label(civilian)),
+        if (!civilian) shiny::helpText(
+          "Beds available to the surge. Defaults assume 95% occupancy in GenMed and ICU",
+          "and 50% in other units (rounded up); enable routine civilian arrivals to enter total beds instead."
+        ),
         shiny::fluidRow(
           lapply(units, function(unit_name) {
             input_id <- configuration_input_id("capacity", unit_name)
             current_capacity <- shiny::isolate(input[[input_id]])
             configured_capacity <- unname(loaded_capacities()[unit_name])
-            default_capacity <- if (length(configured_capacity) == 1 &&
-                                    is.finite(configured_capacity)) {
+            total_beds <- if (length(configured_capacity) == 1 &&
+                              is.finite(configured_capacity)) {
               configured_capacity
             } else if (unit_name == "GenMed") {
               405
@@ -800,7 +841,14 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
             } else {
               15
             }
-            if (!is.null(current_capacity)) default_capacity <- current_capacity
+            default_capacity <- if (civilian) total_beds else available_beds_default(unit_name, total_beds)
+            user_edited <- !is.null(current_capacity) &&
+              !isTRUE(as.numeric(current_capacity) == as.numeric(shown_capacity_defaults[[input_id]]))
+            if (user_edited) {
+              default_capacity <- current_capacity
+            } else {
+              shown_capacity_defaults[[input_id]] <<- default_capacity
+            }
             shiny::column(
               width = 4,
               shiny::numericInput(
