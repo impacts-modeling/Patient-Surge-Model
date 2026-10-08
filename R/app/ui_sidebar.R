@@ -26,10 +26,13 @@ build_sidebar <- function() {
     ),
     shiny::div(style = "padding: 0 10px;",
       shiny::selectInput("scenario_mode", "Scenario to run",
-        choices = c("Surge event" = "surge", "Routine civilian operation only" = "civilian_only"),
+        choices = c("Surge event" = "surge", "Routine civilian operation only" = "civilian_only",
+                    "Unlimited capacity (analytic)" = "unlimited"),
         selected = "surge"),
       shiny::conditionalPanel("input.scenario_mode == 'civilian_only'",
-        shiny::helpText("Enable Routine Civilian Flow and save civilian profiles in Hospital Setup. Surge profiles are not required."))
+        shiny::helpText("Enable Routine Civilian Flow and save civilian profiles in Hospital Setup. Surge profiles are not required.")),
+      shiny::conditionalPanel("input.scenario_mode == 'unlimited'",
+        shiny::helpText("Occupancy under unlimited capacity is computed analytically (no simulation). Bed counts, replications and seed are not used."))
     ),
     sidebarMenu(
       id = "sidebarid",
@@ -52,7 +55,8 @@ build_sidebar <- function() {
                 width = col1,
                 shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
                   shiny::numericInput("duration", "Surge Arrival Period (days)", min = 1, max = 30, value = 10)),
-                shiny::numericInput("num_sims", "Number of simulations", min = 1, max = 20, value = app_development_config$num_sims)
+                shiny::conditionalPanel("input.scenario_mode != 'unlimited'",
+                  shiny::numericInput("num_sims", "Number of simulations", min = 1, max = 20, value = app_development_config$num_sims))
               )
             ),
             shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
@@ -60,7 +64,8 @@ build_sidebar <- function() {
                 choices = c("Evenly spaced" = "even", "Poisson (random arrivals)" = "poisson"),
                 selected = "even"),
               shiny::helpText("For Poisson arrivals, patients/day is the mean rate; the actual count varies. The observation duration must cover the full arrival period.")),
-            shiny::numericInput("simulation_seed", "Simulation seed", value = app_development_config$simulation_seed, min = 1, step = 1),
+            shiny::conditionalPanel("input.scenario_mode != 'unlimited'",
+              shiny::numericInput("simulation_seed", "Simulation seed", value = app_development_config$simulation_seed, min = 1, step = 1)),
             shiny::helpText(sprintf("Day 0 starts observation and surge arrivals. With civilian flow enabled, warm-up occurs before day 0. Bed search uses %d replications per candidate and %d independent final replications in development mode.",
               search_config$num_sims, search_config$final_num_sims))
           ),
@@ -93,6 +98,7 @@ build_sidebar <- function() {
           ),
           data.position = "right"
         ),
+        shiny::conditionalPanel("input.scenario_mode != 'unlimited'",
         rintrojs::introBox(
           shiny::tags$details(
             class = "sidebar-section", open = NA,
@@ -126,7 +132,7 @@ build_sidebar <- function() {
             "calculation can run at a time."
           ),
           data.position = "right"
-        )
+        ))
       )
     )
   )

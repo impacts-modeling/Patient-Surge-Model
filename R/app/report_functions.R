@@ -275,6 +275,19 @@ add_resource_plot_page <- function(resources, var = "server") {
 
 build_report_params <- function(input, profile_config) {
   civilian_only <- identical(input$scenario_mode, "civilian_only")
+  if (identical(input$scenario_mode, "unlimited")) {
+    # Beds, replications, seed and wait limits do not apply to the analytic scenario.
+    return(list(
+      `Scenario` = "Unlimited capacity (analytic)",
+      `Surge arrival process` = profile_config$arrival_process,
+      `Surge Patients per Day` = input$n_patients,
+      `Surge Arrival Period (days)` = input$duration,
+      `Observation Duration (days)` = input$sim_days,
+      `Routine civilian flow enabled` = isTRUE(profile_config$baseline$enabled),
+      `Civilian arrival process` = profile_config$baseline$arrival_process,
+      `Warm-up duration (days)` = profile_config$baseline$warmup_days
+    ))
+  }
   capacities <- profile_config$capacities
   capacity_params <- as.list(capacities[!names(capacities) %in% names(internal_hospital_units)])
   # Without civilian flow the entered beds are those available to the surge.
@@ -333,6 +346,50 @@ make_fallback_configuration_table <- function(profile_config) {
     ),
     check.names = FALSE
   )
+}
+
+add_unlimited_plot_page <- function(trajectory) {
+  plot_data <- hide_internal_units(trajectory, "resource")
+  plot_obj <- ggplot2::ggplot(plot_data, ggplot2::aes(x = time, color = resource, fill = resource)) +
+    ggplot2::geom_ribbon(ggplot2::aes(ymin = q0.05, ymax = q0.95), alpha = 0.15, color = NA) +
+    ggplot2::geom_line(ggplot2::aes(y = mean), linewidth = 0.9) +
+    ggplot2::labs(title = "Expected Occupied Beds (Unlimited Capacity)",
+      x = "Day (0 = surge onset)", y = "Number of Beds Occupied",
+      color = "Resource", fill = "Resource",
+      caption = "Line: expected occupancy; band: 5th-95th percentile of occupancy at each instant (analytic, no simulation).") +
+    ggplot2::theme_minimal(base_size = 12) +
+    ggplot2::theme(legend.position = "bottom")
+  print(plot_obj)
+}
+
+# PDF for the analytic unlimited-capacity scenario (no simulation tables).
+generate_unlimited_pdf_report <- function(file, params, analytic_data, profile_config) {
+  stopifnot(!is.null(analytic_data$trajectory), !is.null(analytic_data$peaks))
+  grDevices::pdf(file, width = 11, height = 8.5, onefile = TRUE)
+  on.exit(grDevices::dev.off(), add = TRUE)
+
+  add_report_text_page(
+    "Patient Surge Model Report - Unlimited Capacity (Analytic)",
+    c(paste("Generated:", format(Sys.time(), "%Y-%m-%d %H:%M:%S")), "",
+      strwrap(unlimited_assumption_note, width = 105)),
+    cex = 1.1
+  )
+  add_report_table_page("Model Parameter Configuration", make_parameter_table(params))
+  add_report_table_page("Surge Patient Profiles", make_profile_configuration_table(profile_config))
+  if (isTRUE(profile_config$baseline$enabled)) {
+    baseline <- profile_config$baseline
+    civilian_profiles <- dplyr::bind_rows(lapply(names(baseline$profiles), function(name) {
+      profile <- baseline$profiles[[name]]
+      data.frame(Profile = name, Patients_per_day = baseline$arrival_rates[[name]],
+                 Pathway = paste(profile$unit, collapse = " -> "),
+                 Mean_stays_days = format_steps(profile$los),
+                 SD_days = format_steps(civilian_step_sd(profile)))
+    }))
+    add_report_table_page("Routine Civilian Profiles", civilian_profiles)
+  }
+  add_report_table_page("Peak Occupancy (Unlimited Capacity)", unlimited_peak_table(analytic_data))
+  add_unlimited_plot_page(analytic_data$trajectory)
+  invisible(file)
 }
 
 generate_simulation_pdf_report <- function(file, params, simulation_data, profile_config, n_result = NULL) {

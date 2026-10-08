@@ -697,8 +697,14 @@ hospital_profiles_ui <- function(id) {
 # civilian_enabled: reactive TRUE when routine civilian arrivals are enabled;
 # it switches the bed inputs between total beds and beds available to the surge.
 hospital_profiles_server <- function(id, require_surge_profiles = function() TRUE,
-                                     civilian_enabled = function() FALSE) {
+                                     civilian_enabled = function() FALSE,
+                                     unlimited_selected = function() FALSE) {
   shiny::moduleServer(id, function(input, output, session) {
+    # The scenario selector lives in the sidebar (root scope), outside this module.
+    shiny::observeEvent(input$select_unlimited_capacity, {
+      shiny::updateSelectInput(session$rootScope(), "scenario_mode",
+        selected = if (isTRUE(unlimited_selected())) "surge" else "unlimited")
+    })
     patient_profiles <- shiny::reactiveVal(list())
     fallbacks <- shiny::reactiveVal(list())
     confirmed_profile_probabilities <- shiny::reactiveVal(NULL)
@@ -820,8 +826,22 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       units <- setdiff(selected_units(), names(internal_hospital_units))
       shiny::req(length(units) > 0)
       civilian <- isTRUE(civilian_enabled())
+      unlimited <- isTRUE(unlimited_selected())
       shiny::tagList(
         shiny::h4(capacity_label(civilian)),
+        shiny::actionButton(
+          session$ns("select_unlimited_capacity"),
+          if (unlimited) "Unlimited capacity selected (click to return to Surge event)"
+          else "Select unlimited capacity",
+          icon = shiny::icon("infinity"),
+          class = if (unlimited) "btn-success" else "btn-default"
+        ),
+        if (unlimited) shiny::helpText(
+          "Unlimited capacity: the bed counts below are not used. Occupancy is computed analytically",
+          "when you click Run Simulation."
+        ) else shiny::helpText(
+          "Alternatively, evaluate demand with no bed limit (analytic occupancy, no simulation)."
+        ),
         if (!civilian) shiny::helpText(
           "Beds available to the surge. Defaults assume 95% occupancy in GenMed and ICU",
           "and 50% in other units (rounded up); enable routine civilian arrivals to enter total beds instead."

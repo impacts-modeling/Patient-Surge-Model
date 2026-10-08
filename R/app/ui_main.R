@@ -119,6 +119,9 @@ build_body <- function() {
         shiny::tabsetPanel(
           shiny::tabPanel(
             "Simulation Results",
+            shiny::conditionalPanel("input.scenario_mode == 'unlimited'",
+              mod_unlimited_ui("unlimited")),
+            shiny::conditionalPanel("input.scenario_mode != 'unlimited'",
             shiny::uiOutput("baseline_run_status"),
             shiny::textOutput("patient_cohort_note"),
             shiny::fluidRow(
@@ -199,7 +202,7 @@ build_body <- function() {
                 shiny::helpText("This table only covers bed-less waits at a pathway's first step (no bed held yet); the ED is not shown. Patients whose pathway starts in the ED hold an ED bed while waiting for their next unit, so that wait appears under \"Boarding Times\" instead. This table is most informative for patients who do not pass through the ED first (e.g. surge patients requesting their first bed directly)."),
                 style = "overflow-x: auto;"
               )
-            ),
+            )),
 
             shiny::fluidRow(
               shinydashboard::box(

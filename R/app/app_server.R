@@ -1,12 +1,16 @@
 # Application server ----------------------------------------------------
 app_server <- function(input, output, session) {
     simulation_data <- shiny::reactiveVal(NULL)
+    analytic_data <- shiny::reactiveVal(NULL)
     civilian_only <- shiny::reactive(identical(input$scenario_mode, "civilian_only"))
+    unlimited_mode <- shiny::reactive(identical(input$scenario_mode, "unlimited"))
     # The civilian checkbox lives in the baseline module, which itself depends
     # on surge_config, so its state is read here by its namespaced input ID.
     surge_config <- hospital_profiles_server("profiles",
       require_surge_profiles = shiny::reactive(!civilian_only()),
-      civilian_enabled = shiny::reactive(isTRUE(input[["baseline-enabled"]])))
+      civilian_enabled = shiny::reactive(isTRUE(input[["baseline-enabled"]])),
+      unlimited_selected = unlimited_mode)
+    mod_unlimited_server("unlimited", analytic_data)
     baseline_config <- mod_baseline_server("baseline", surge_config)
     profile_config <- shiny::reactive({
       config <- surge_config()
@@ -130,8 +134,21 @@ app_server <- function(input, output, session) {
         "Complete a valid Hospital Setup before running the simulation."
       ))
       simulation_data(NULL)
+      analytic_data(NULL)
       invisible(base::gc(full = TRUE))
-  
+
+      # Unlimited capacity: analytic occupancy, no simulation, beds/seed unused.
+      if (unlimited_mode()) {
+        tryCatch(shiny::withProgress(message = "Computing analytic occupancy...", value = 0, {
+          results <- run_unlimited_analytic(config, input$n_patients, input$duration, input$sim_days)
+          results$report_params <- build_report_params(input, config)
+          analytic_data(results)
+        }), error = function(error) {
+          shiny::showNotification(conditionMessage(error), type = "error", duration = NULL)
+        })
+        return(invisible(NULL))
+      }
+
       params <- reactiveValuesToList(input)
       capacities <- config$capacities
       if ("ICU" %in% names(capacities)) capacities[["ICU"]] <- capacities[["ICU"]] + params$icu_msf
@@ -160,7 +177,7 @@ app_server <- function(input, output, session) {
   
   
     shiny::observeEvent(input$run_N, {
-      if (civilian_only()) {
+      if (civilian_only() || unlimited_mode()) {
         shiny::showNotification("Select Surge event to estimate surge bed expansion.", type = "message")
         return(invisible(NULL))
       }
@@ -212,6 +229,7 @@ app_server <- function(input, output, session) {
 
     shiny::observeEvent(input$scenario_mode, {
       simulation_data(NULL)
+      analytic_data(NULL)
       find_result(NULL)
       bed_result_signature(NULL)
       applied_recommendation(NULL)
@@ -245,6 +263,7 @@ app_server <- function(input, output, session) {
       shiny::updateNumericInput(session, "genmed_msf", value = 0)
       shiny::updateNumericInput(session, "icu_msf", value = 0)
       simulation_data(NULL)
+      analytic_data(NULL)
       find_result(NULL)
       bed_result_signature(NULL)
       applied_recommendation(NULL)
@@ -608,6 +627,12 @@ app_server <- function(input, output, session) {
         paste0("patient_surge_model_report_", format(Sys.Date(), "%Y%m%d"), ".pdf")
       },
       content = function(file) {
+        if (unlimited_mode()) {
+          shiny::req(analytic_data())
+          generate_unlimited_pdf_report(file, analytic_data()$report_params, analytic_data(),
+                                        analytic_data()$profile_config)
+          return(invisible(NULL))
+        }
         shiny::req(simulation_data())
         n_result <- tryCatch(
           current_find_result(),
