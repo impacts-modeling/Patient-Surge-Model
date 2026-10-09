@@ -105,8 +105,8 @@ build_sidebar <- function() {
             shiny::tags$summary("Calculate HxS Expansion"),
             shiny::h4("Maximum Mean Wait Limits (Days):"),
             shiny::fluidRow(
-              shiny::column(width = 6, shiny::numericInput("congestion_index", "Med/Surg (days)", min = 0.01, max = 30, value = 1, step = 0.5)),
-              shiny::column(width = 6, shiny::numericInput("congestion_index_icu", "ICU (days)", min = 0.01, max = 30, value = 1, step = 0.5))
+              shiny::column(width = 6, shiny::numericInput("congestion_index", "GedMed", min = 0.01, max = 30, value = 1, step = 0.5)),
+              shiny::column(width = 6, shiny::numericInput("congestion_index_icu", "ICU", min = 0.01, max = 30, value = 1, step = 0.5))
             ),
             shiny::helpText(paste(
               compliance_note
@@ -115,7 +115,7 @@ build_sidebar <- function() {
               shiny::actionButton("run_N", "Estimate Bed Expansion", class = "btn-primary")),
             shiny::h4("Additional Bed Capacity:"),
             shiny::fluidRow(
-              shiny::column(width = 6, shiny::numericInput("genmed_msf", "HxS Med/Surg", min = 0, max = 100, value = 0)),
+              shiny::column(width = 6, shiny::numericInput("genmed_msf", "HxS GedMed", min = 0, max = 100, value = 0)),
               shiny::column(width = 6, shiny::numericInput("icu_msf", "HxS ICU", min = 0, max = 100, value = 0))
             ),
             shiny::helpText("HxS additions apply to the selected scenario. Use zero additions to evaluate existing capacity.")
@@ -125,7 +125,7 @@ build_sidebar <- function() {
           data.intro = paste(
             "<strong>Estimate additional capacity.</strong><br>",
             "Enter acceptable GenMed and ICU mean-wait limits (days). The optimizer first checks current capacity",
-            "and, if needed, estimates demand with at least 500 beds in every unit.",
+            "and, if needed, starts from the analytic unlimited-capacity occupancy (no simulation).",
             "It then grows only failing resources exponentially; this can exceed primary",
             "demand when fallbacks route patients into GenMed or ICU.", compliance_note,
             "Confirm before starting; only one",

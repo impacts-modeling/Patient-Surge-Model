@@ -785,13 +785,10 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
                           # Only used with initialization = "analytic": the simulation-free
                           # unlimited-capacity occupancy (R/analitic/occupancy_analytic.R, which the
                           # caller must source) replaces the simulated unlimited-demand run.
-                          # analytic_start_level NULL starts at the peak over time of the pointwise
-                          # mean; a level in (0, 1) starts at the peak of that pointwise quantile.
-                          # analytic_mean_as_lower_hint = TRUE also probes the peak of the mean once
-                          # at the start of each unit's first binary search: if it fails, the search
-                          # is bracketed above it (same monotonicity assumption as the search itself).
-                          analytic_start_level = NULL,
-                          analytic_mean_as_lower_hint = FALSE) {
+                          # analytic_start_level, a level in (0, 1), sets the starting capacity of
+                          # each failing unit to the peak over time of that quantile of the
+                          # pointwise occupancy distribution (0.5 = median, close to the mean).
+                          analytic_start_level = 0.5) {
   optimization_started <- proc.time()[["elapsed"]]
   # reliability_level is the required proportion of joint mean-wait-compliant runs;
   # this is the criterion reported as the search's acceptance target and the
@@ -839,11 +836,8 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
             is.finite(weight_GenMed), weight_GenMed > 0,
             is.finite(weight_ICU), weight_ICU > 0,
             is.finite(acceptance_confidence), acceptance_confidence > 0, acceptance_confidence < 1,
-            is.null(analytic_start_level) ||
-              (length(analytic_start_level) == 1L && is.finite(analytic_start_level) &&
-                 analytic_start_level > 0 && analytic_start_level < 1),
-            is.logical(analytic_mean_as_lower_hint), length(analytic_mean_as_lower_hint) == 1L,
-            !is.na(analytic_mean_as_lower_hint))
+            length(analytic_start_level) == 1L, is.finite(analytic_start_level),
+            analytic_start_level > 0, analytic_start_level < 1)
   validate_patient_configuration(capacities, patient_profiles, profile_prob, fallbacks)
   if (!is.null(baseline) && isTRUE(baseline$enabled)) {
     validate_baseline_config(baseline, warmup_capacities, fallbacks)
@@ -1181,7 +1175,6 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
   unlimited_capacity_value <- max(500L, total_generated_patients)
   unlimited_simulation_used <- FALSE
   analytic_demand_used <- FALSE
-  analytic_mean_peak <- NULL
   unlimited_max_occupancy <- stats::setNames(
     rep(NA_integer_, length(configured_capacities)),
     names(configured_capacities)
@@ -1243,30 +1236,23 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     maximum_occupancy
   }
   # Simulation-free counterpart of estimate_unlimited_demand(): same quantity (peak
-  # unlimited-capacity occupancy per unit), computed analytically. Also stores the
-  # peak of the pointwise mean, used as the optional lower hint in refine_unit().
+  # unlimited-capacity occupancy per unit), computed analytically.
   estimate_analytic_demand <- function() {
     if (!exists("analytic_unlimited_demand", mode = "function")) {
       stop("initialization = \"analytic\" needs R/analitic/occupancy_analytic.R to be sourced.",
            call. = FALSE)
     }
     auxiliary_started <- proc.time()[["elapsed"]]
-    levels <- if (is.null(analytic_start_level)) numeric() else analytic_start_level
     demand <- analytic_unlimited_demand(
       patient_profiles, profile_prob, n_patients, duration, sim_days,
       baseline = baseline, surge_process = arrival_process, units = target_units,
-      step = 0.05, output_step = 0.1, levels = levels)
-    peak_of <- function(statistic) {
-      rows <- demand$peaks[demand$peaks$statistic == statistic, ]
-      stats::setNames(as.integer(rows$peak_value[match(target_units, rows$resource)]), target_units)
-    }
-    analytic_mean_peak <<- peak_of("peak_mean")
+      step = 0.05, output_step = 0.1, levels = analytic_start_level)
+    rows <- demand$peaks[demand$peaks$statistic == paste0("peak_q", analytic_start_level), ]
     auxiliary_history[[length(auxiliary_history) + 1L]] <<- data.frame(
       stage = "analytic_demand", seed = NA_integer_, replications = 0L,
       capacity_per_unit = NA_integer_,
       elapsed_seconds = proc.time()[["elapsed"]] - auxiliary_started)
-    if (is.null(analytic_start_level)) analytic_mean_peak
-    else peak_of(paste0("peak_q", analytic_start_level))
+    stats::setNames(as.integer(rows$peak_value[match(target_units, rows$resource)]), target_units)
   }
   # Current capacity is evaluated once on the same bank as every other candidate.
   # Gated on the real acceptance criterion (passes), not the margin: skipping
@@ -1393,35 +1379,12 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     # GenMed<->ICU trade-offs using an adaptive step (see search_minimal_unit
     # and trade_direction below) instead of a small fixed neighborhood.
     if (!is.null(result) && result$passes) {
-      # Optional analytic lower hint, consumed by each unit's first binary search only
-      # (later passes face a different companion-unit capacity).
-      pending_lower_hint <- if (analytic_demand_used && analytic_mean_as_lower_hint) {
-        as.list(analytic_mean_peak)
-      } else list()
       refine_unit <- function(unit_name, current_capacities, current_result) {
         lower <- initial_capacities[[unit_name]]
         upper <- current_capacities[[unit_name]]
         best_capacities <- current_capacities
         best_result <- current_result
         complete <- TRUE
-
-        hint <- pending_lower_hint[[unit_name]]
-        pending_lower_hint[[unit_name]] <<- NULL
-        if (!is.null(hint) && hint > lower && hint < upper) {
-          trial <- best_capacities
-          trial[[unit_name]] <- hint
-          trial_result <- evaluate(trial)
-          if (is.null(trial_result)) {
-            return(list(capacities = best_capacities, result = best_result, complete = FALSE))
-          }
-          if (trial_result$passes_margin) {
-            best_capacities <- trial
-            best_result <- trial_result
-            upper <- hint
-          } else {
-            lower <- hint + 1L
-          }
-        }
 
         while (lower < upper) {
           midpoint <- floor((lower + upper) / 2)
@@ -1644,7 +1607,6 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     unlimited_simulation_used = unlimited_simulation_used,
     analytic_demand_used = analytic_demand_used,
     analytic_start_level = analytic_start_level,
-    analytic_mean_as_lower_hint = analytic_mean_as_lower_hint,
     unlimited_capacity_value = unlimited_capacity_value,
     unlimited_max_occupancy_GenMed = unlimited_max_occupancy[["GenMed"]],
     unlimited_max_occupancy_ICU = unlimited_max_occupancy[["ICU"]],

@@ -206,3 +206,14 @@ analytic_unlimited_demand <- function(patient_profiles, profile_prob, rate, dura
                                warmup_days = warmup, surge_process = surge_process,
                                step = step, output_step = output_step))
 }
+
+# Expected occupancy of each unit once the civilian streams have run long enough
+# (Little's law: sum over civilian profiles of rate x total mean stay in the unit).
+analytic_equilibrium_occupancy <- function(baseline, units) {
+  vapply(units, function(unit) {
+    sum(vapply(names(baseline$profiles), function(name) {
+      profile <- baseline$profiles[[name]]
+      baseline$arrival_rates[[name]] * sum(profile$los[profile$unit == unit])
+    }, numeric(1)))
+  }, numeric(1))
+}

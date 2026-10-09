@@ -365,6 +365,8 @@ app_server <- function(input, output, session) {
             weight_GenMed = bed_search_config$weight_GenMed,
             weight_ICU = bed_search_config$weight_ICU,
             initialization = bed_search_config$initialization,
+            analytic_start_level = app_analytic_start_level[[
+              if (isTRUE(config$baseline$enabled)) "with_civilian_flow" else "without_civilian_flow"]],
             search_seed = bed_search_config$search_seed,
             wait_time_limit_GenMed = shiny::req(evaluation_signature$congestion_index),
             wait_time_limit_ICU = shiny::req(evaluation_signature$congestion_index_icu),

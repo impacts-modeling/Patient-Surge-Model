@@ -230,7 +230,7 @@ profiles** in Routine Civilian Flow.
 
 | Parameter | Meaning |
 |---|---|
-| **Scenario to run** | **Surge event** (surge arrivals, plus civilian flow if enabled) or **Routine civilian operation only**. |
+| **Scenario to run** | **Surge event** (surge arrivals, plus civilian flow if enabled), **Routine civilian operation only**, or **Unlimited capacity (analytic)** (see section 6). The **Select unlimited capacity** button next to the bed inputs in Hospital Setup selects the last one. |
 | **Surge Patients per Day** | Surge arrival rate. With Poisson arrivals it is the mean rate and the realized count varies. |
 | **Surge Arrival Period (days)** | Number of consecutive days during which surge patients arrive. |
 | **Surge arrival process** | **Evenly spaced** (default) or **Poisson (random arrivals)**. Civilian arrivals default to Poisson (Advanced Flow Settings). |
@@ -308,27 +308,37 @@ or ICU. Boarding time is reported but is not part of the criterion.
 
 The optimizer evaluates the current capacity first. If the current capacity
 satisfies both limits at the required reliability, it returns zero additional
-beds without running the unlimited-capacity demand scenario.
+beds without computing the unlimited-capacity demand.
 
-When expansion is needed, the optimizer runs an internal demand scenario with at
-least **500 beds in every configured hospital unit**. If the scenario has more
-than 500 total arrivals, that capacity is increased to the number of arrivals so
-that the demand run remains unconstrained. Patients therefore use their primary
-trajectory units and queues do not determine placement. For every resource, the
-optimizer records the largest number of beds occupied simultaneously across the
-replications of that demand scenario (a separate seed bank). These values are printed in the R console as
-`Unlimited-capacity demand`.
+When expansion is needed, the optimizer computes the **unlimited-capacity
+demand analytically**, without simulation. With no bed limit nobody waits, boards
+or uses a fallback, so each patient simply spends the sampled stay in each unit of
+the pathway, and the number of patients in a unit at any time has an exact
+distribution: Poisson for Poisson arrivals (an M(t)/G/infinity system) and
+Poisson-binomial for evenly spaced surge arrivals, with civilian and surge counts
+independent. Log-normal stays are discretised on a 0.05-day grid. The calculation
+covers the whole horizon, civilian warm-up included, and takes under a second.
+For each unit, the starting capacity is the **peak over time of a chosen
+percentile** of this distribution, set by the editable parameter
+`analytic_start_level` (`R/01_config.R`). The app uses 0.75 when routine civilian
+flow is enabled and 0.5 (the median, close to the expected occupancy) when it is
+not (`app_analytic_start_level`); the manuscript runs use 0.75. Starting somewhat
+above the final capacity costs fewer evaluations than starting below it. The
+**Unlimited capacity (analytic)** scenario shows the same occupancy (expected value
+and 5th-95th percentile band) in the dashboard.
 
 Unlimited-capacity demand is a **primary-demand reference**, not a hard safety
 ceiling. A constrained upstream unit can route additional patients through a
-fallback to GenMed or ICU, which is not observed when every unit has ample beds.
-With the app's `incremental` initialization, only the units that fail at current
-capacity are first raised to their unlimited-capacity peak (never lowered); units
-that still fail then grow using doubling increments (for example
-`7, 8, 10, 14, 22, 35`), up to a fallback-safe ceiling equal to the total number
-of arrivals in the scenario. A unit that already passes remains fixed until a
-capacity interaction causes it to fail later. The internal demand scenario is not
-displayed in the dashboard and is not a bed recommendation.
+fallback to GenMed or ICU, which this calculation does not capture. With the
+app's `analytic` initialization, only the units that fail at current capacity are
+first raised to their starting capacity (never lowered); units that still fail
+then grow using doubling increments (for example `7, 8, 10, 14, 22, 35`), up to a
+fallback-safe ceiling equal to the total number of arrivals in the scenario. A
+unit that already passes remains fixed until a capacity interaction causes it to
+fail later. The starting capacity is only where the search begins: it is not a bed
+recommendation, and every candidate, including the first, is evaluated with the
+full simulation. The previous simulation-based initialization (`incremental`,
+which ran a high-capacity simulation) is still available as an option.
 
 The recommendation applies the reliability requirement **jointly** to both
 target units: a replication only counts as compliant when the GenMed mean wait
@@ -366,7 +376,7 @@ search was actively growing or shrinking beds can still fail holdout; when
 that happens, the dashboard reports that the search did not find a passing
 capacity even though some intermediate search evaluations looked promising. No
 candidate exceeds the fallback-safe ceiling equal to the total number of
-arrivals, while unlimited-capacity demand remains available as a
+arrivals, while the analytic unlimited-capacity demand remains available as a
 primary-demand reference.
 
 To reduce memory during optimization, each replica returns only the GenMed and
@@ -448,6 +458,29 @@ episode duration). **Bed Waiting Times** reports waits with no bed held,
 including zero waits, for every request that obtained a bed during observation;
 the 95% CI describes Monte Carlo uncertainty in the mean.
 
+### Unlimited capacity (analytic)
+
+Selecting **Unlimited capacity (analytic)** (sidebar, or the **Select unlimited
+capacity** button next to the bed inputs in Hospital Setup) and clicking **Run
+Simulation** computes the expected occupancy of every unit with no bed limit,
+without simulation. The surge and civilian settings are used as in the other
+scenarios; the bed counts, number of simulations and seed are not, and queues,
+bed waits and boarding do not apply (nobody waits). The results are:
+
+- **Expected Occupied Beds**: the expected number of occupied beds over time (day
+  0 = surge onset; negative days are the civilian warm-up) with a band from the 5th
+  to the 95th percentile of the occupancy at each instant. The band is a
+  prediction band for the random occupancy, not a confidence interval: it has no
+  Monte Carlo error, and it does not include uncertainty in the inputs (stays,
+  arrival rates, profile percentages).
+- **Peak Occupancy**: the peak over time of the expected occupancy, with the day
+  it occurs, and the peak over time of the 50th and 95th percentiles. These are
+  peaks of pointwise statistics, not the distribution of the maximum occupancy.
+
+The PDF report contains the same plot and table. The calculation is exact for the
+model's arrival processes up to the 0.05-day discretisation of the log-normal
+stays, and it ignores fallbacks (irrelevant without capacity limits).
+
 ## 7. Interpreting stochastic results
 
 Every simulation run contains random profile assignments and random LOS values.
@@ -476,6 +509,9 @@ passes is the joint rate across both units together.
   for ICU steps and 0.24 for every other unit. Built-in NDMS-based profile sets
   without per-step variability use CV = 0.1.
 - Queues are unlimited and patients do not leave while waiting.
+- The unlimited-capacity (analytic) results describe occupancy without bed limits
+  only; they are not a capacity recommendation, and they summarize the occupancy
+  at each time rather than the distribution of its maximum over time.
 - Bed capacity is constant during a simulation.
 - Staffing, equipment, acuity changes, transfers outside the modeled hospital,
   and clinical prioritization are not modeled separately.

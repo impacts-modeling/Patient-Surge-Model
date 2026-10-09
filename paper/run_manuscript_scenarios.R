@@ -4,7 +4,8 @@ load_study_functions <- function(project_dir = ".", envir = parent.frame()) {
   required <- c("simmer", "future.apply", "dplyr", "tidyr", "ggplot2")
   missing <- required[!vapply(required, requireNamespace, logical(1), quietly = TRUE)]
   if (length(missing)) stop("Install required packages: ", paste(missing, collapse = ", "))
-  for (file in c("R/shared/simulation_metrics.R", "R/core/hospital_trajectory.R",
+  for (file in c("R/shared/simulation_metrics.R", "R/analitic/occupancy_analytic.R",
+                 "R/core/hospital_trajectory.R",
                  "R/core/baseline_flow.R", "R/core/run_scenarios.R",
                  "R/shared/profiles_deloitte.R")) {
     sys.source(file.path(project_dir, file), envir = envir)
@@ -33,11 +34,11 @@ make_study_config <- function(project_dir = ".",
                               # ED = 999 is a practically-unlimited placeholder (hallway/chair
                               # capacity is elastic in practice, not a hard bed count); boarding
                               # time, not this capacity, is what constrains an ED patient.
-                              capacities = c(ICU = 84, GenMed = 405, Surge = 15, ED = 999),
+                              capacities = c(ICU = 84, GenMed = 405, Surge = 15, ED = 9999),
                               civilian_file = file.path(project_dir, "data/baseline_civilian_profiles.csv"),
                               sim_days = 50, num_sims = 40L, seed = 2026L,
                               warmup = list(), search = list(), mode = c("paper", "development"),
-                              workers = 3L) {
+                              workers = 4L) {
   mode <- match.arg(mode)
   profiles <- deloitte_test_profile_config()
   civilian <- utils::read.csv(civilian_file, stringsAsFactors = FALSE)
@@ -106,8 +107,8 @@ study_fingerprint <- function(object) {
 
 study_engine_signature <- function(study) {
   files <- file.path(study$project_dir, c("R/shared/simulation_metrics.R",
-    "R/core/hospital_trajectory.R", "R/core/baseline_flow.R",
-    "R/core/run_scenarios.R"))
+    "R/analitic/occupancy_analytic.R", "R/core/hospital_trajectory.R",
+    "R/core/baseline_flow.R", "R/core/run_scenarios.R"))
   # Fingerprint loaded function definitions, not files that another editor can
   # change while this R session is still executing the previously loaded code.
   names <- unique(unlist(lapply(files, function(file) {
@@ -655,7 +656,8 @@ run_unlimited_demand_study <- function(study, capacity = 500L, ed_capacity = 100
                                        concentration_total = 150,
                                        concentration_durations = c(5, 10, 15),
                                        reference_id = "reference", output_dir = NULL,
-                                       cache_dir = file.path(study$project_dir, "outputs/scenario_cache")) {
+                                       cache_dir = file.path(study$project_dir, "outputs/scenario_cache"),
+                                       analytic = TRUE) {
   stopifnot(length(capacity) == 1L, is.finite(capacity), capacity > 0,
             capacity == floor(capacity),
             length(ed_capacity) == 1L, is.finite(ed_capacity), ed_capacity >= capacity,
@@ -670,8 +672,43 @@ run_unlimited_demand_study <- function(study, capacity = 500L, ed_capacity = 100
   if ("ED" %in% names(unlimited)) unlimited[["ED"]] <- as.integer(ed_capacity)
   study$config$capacities <- unlimited
   study$config$warmup_capacities <- unlimited
-  run_scenario_study(study, design, expand = FALSE, output_dir = output_dir,
+  result <- run_scenario_study(study, design, expand = FALSE, output_dir = output_dir,
                      reference_id = reference_id, mode = "unlimited_demand", cache_dir = cache_dir)
+  # Simulation-free counterpart on the same design (plus the no-surge baseline):
+  # stored with the DES result so make_unlimited_comparison() can contrast them.
+  if (analytic) {
+    result$analytic <- run_unlimited_analytic_study(study, rbind(
+      data.frame(scenario_id = "baseline", rate = 0, duration = 0), design))
+    if (!is.null(output_dir)) {
+      for (name in c("trajectory", "peaks", "parameters")) {
+        utils::write.csv(result$analytic[[name]],
+          file.path(output_dir, paste0("analytic_", name, ".csv")), row.names = FALSE)
+      }
+      saveRDS(result, file.path(output_dir, "study.rds"))
+    }
+  }
+  result
+}
+
+# Analytic (M(t)/G/infinity) occupancy for every scenario of a design, no simulation.
+# See R/analitic/occupancy_analytic.R for the model and its assumptions.
+run_unlimited_analytic_study <- function(study, design, units = c("GenMed", "ICU"),
+                                         levels = c(0.05, 0.5, 0.75, 0.95),
+                                         step = 0.05, output_step = 0.25) {
+  stopifnot(all(c("scenario_id", "rate", "duration") %in% names(design)))
+  config <- study$config
+  per_scenario <- lapply(seq_len(nrow(design)), function(i) {
+    analytic <- analytic_unlimited_demand(
+      config$patient_profiles, config$profile_prob, design$rate[[i]], design$duration[[i]],
+      study$sim_days, baseline = config$baseline, surge_process = config$arrival_process,
+      units = units, step = step, output_step = output_step, levels = levels)
+    list(trajectory = dplyr::mutate(analytic$trajectory, scenario_id = design$scenario_id[[i]]),
+         peaks = dplyr::mutate(analytic$peaks, scenario_id = design$scenario_id[[i]]),
+         parameters = dplyr::mutate(analytic$parameters, scenario_id = design$scenario_id[[i]]))
+  })
+  stats::setNames(lapply(c("trajectory", "peaks", "parameters"), function(name) {
+    dplyr::bind_rows(lapply(per_scenario, `[[`, name))
+  }), c("trajectory", "peaks", "parameters"))
 }
 
 # Step 2: optimize only explicitly selected IDs from a completed first-stage study.
