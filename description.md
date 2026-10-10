@@ -52,7 +52,7 @@ Flow**, and **Advanced Flow Settings** (collapsed by default).
 | Option | Intended use |
 |---|---|
 | **Create profiles manually** | Build a custom hospital configuration and custom patient trajectories. |
-| **Use predefined profiles** | Load a built-in NDMS-Based Classification profile set: UC Davis calibrated profiles, Completed, Regional hospital, Tertiary hospital, or Community acute-care hospital. |
+| **Use predefined profiles** | Load a built-in NDMS-Based Classification profile set: UC Davis calibrated profiles, Regional hospital, Tertiary hospital, or Community acute-care hospital. |
 | **Upload profiles from Excel** | Complete the empty Excel template or restore a configuration previously downloaded from the application. |
 
 All predefined sets use the NDMS-Based Classification:
@@ -60,10 +60,9 @@ All predefined sets use the NDMS-Based Classification:
 | Set | Units and beds |
 |---|---|
 | **UC Davis calibrated profiles** | Surge, GenMed and ICU (the configuration used in the manuscript). |
-| **Completed** | All original units (BurnBed, CardiacICU, GenMed, ICU, PhysicalMed, Psychiatric, TransitionalCare). |
 | **Regional hospital** | GenMed 240, ICU 20, Cardiology 12, PhysicalMed 12, TransitionalCare 20; BurnBed pathways rerouted to ICU and Psychiatric to GenMed. |
 | **Tertiary hospital** | GenMed 400, ICU 72, BurnBed 12, Cardiology 18, PhysicalMed 24, Psychiatric 20, TransitionalCare 24. |
-| **Community acute-care hospital** | GenMed 80, ICU 12, TransitionalCare 12; BurnBed and CardiacICU pathways rerouted to ICU, PhysicalMed to TransitionalCare, and Psychiatric to GenMed. Fallbacks: GenMed and TransitionalCare back each other up; ICU has none. |
+| **Community acute-care hospital** | GenMed 80, ICU 12, TransitionalCare 12; BurnBed and Cardiology pathways rerouted to ICU, PhysicalMed to TransitionalCare, and Psychiatric to GenMed. Fallbacks: GenMed and TransitionalCare back each other up; ICU has none. |
 
 Rerouting keeps each step's mean LOS unchanged; it is an illustrative
 adaptation of the NDMS proportions to a smaller unit set, not a calibration.
@@ -272,7 +271,7 @@ the arithmetic mean and CV to log-normal parameters:
 
 `meanlog = log(mean LOS) - sigma^2 / 2`
 
-Built-in surge profiles that carry no per-step variability (the Completed,
+Built-in surge profiles that carry no per-step variability (the
 Regional hospital, Tertiary hospital, and Community acute-care hospital
 NDMS-based sets) use the engine
 default **CV = 0.1** at every step, not the 1/0.24 defaults above; the

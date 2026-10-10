@@ -228,6 +228,14 @@ mod_baseline_server <- function(id, hospital_config) {
     shiny::observeEvent(list(key(), input$profile_csv), {
       import_status(NULL)
     }, ignoreNULL = FALSE)
+    # Disabling civilian arrivals discards every saved civilian profile, so a
+    # later manual entry starts empty instead of from the previous set.
+    shiny::observeEvent(input$enabled, {
+      if (!isTRUE(input$enabled)) {
+        saved(list())
+        import_status(NULL)
+      }
+    }, ignoreInit = TRUE)
     shiny::observeEvent(input$use_predefined_profiles, {
       hospital <- hospital_config()
       result <- tryCatch({
@@ -315,8 +323,9 @@ mod_baseline_server <- function(id, hospital_config) {
     shiny::observe({
       names <- names(profiles())
       selected <- shiny::isolate(input$selected)
-      shiny::updateSelectInput(session, "selected", choices = names,
-                                selected = if (length(selected) == 1L && selected %in% names) selected else names[1])
+      shiny::updateSelectInput(session, "selected", choices = if (length(names)) names else character(),
+                                selected = if (length(selected) == 1L && selected %in% names) selected
+                                           else if (length(names)) names[1] else character())
     })
     shiny::observeEvent(input$save, {
       hospital <- hospital_config()

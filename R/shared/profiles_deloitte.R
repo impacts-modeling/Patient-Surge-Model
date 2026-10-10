@@ -102,8 +102,8 @@ deloitte_injury_paths <- list(
   NS2 = list(unit = "GenMed", los = 5),
   MS1 = list(unit = c("ICU", "GenMed"), los = c(1, 5)),
   MS2 = list(unit = "GenMed", los = 5),
-  TOW1 = list(unit = c("CardiacICU", "GenMed", "TransitionalCare"), los = c(3, 7, 8)),
-  TOW2 = list(unit = c("CardiacICU", "GenMed"), los = c(5, 10)),
+  TOW1 = list(unit = c("Cardiology", "GenMed", "TransitionalCare"), los = c(3, 7, 8)),
+  TOW2 = list(unit = c("Cardiology", "GenMed"), los = c(5, 10)),
   TOW3 = list(unit = "GenMed", los = 10),
   MOW1 = list(unit = c("ICU", "GenMed"), los = c(3, 12)),
   MOW2 = list(unit = c("ICU", "GenMed"), los = c(3, 7)),
@@ -184,7 +184,7 @@ deloitte_expand_probabilities <- function(type_probabilities, population_probabi
 # letters, upper-cased, so this never errors on new units.
 deloitte_unit_short_code <- c(
   ICU = "ICU", GenMed = "GM", BurnBed = "BB", PhysicalMed = "PM",
-  CardiacICU = "CARD", Cardiology = "CARD", TransitionalCare = "TC",
+  Cardiology = "CARD", TransitionalCare = "TC",
   Psychiatric = "PSY", ED = "ED", Surge = "IPSURGE"
 )
 deloitte_abbreviate_units <- function(units) {
@@ -195,19 +195,9 @@ deloitte_abbreviate_units <- function(units) {
   paste(codes, collapse = "_")
 }
 
-fallbacks_list_2 <- list(
-  BurnBed = c("ICU"),
-  CardiacICU = c("ICU"),
-  GenMed = c("PhysicalMed", "TransitionalCare"),
-  ICU = c("CardiacICU"),
-  PhysicalMed = c("GenMed", "TransitionalCare"),
-  Psychiatric = c("GenMed", "PhysicalMed", "TransitionalCare"),
-  TransitionalCare = c("GenMed", "PhysicalMed")
-)
-
 # Regional and Tertiary UC Davis hospitals share the same specialty units as
-# the original Deloitte data except CardiacICU, which UC Davis calls
-# Cardiology; the Regional hospital additionally has no BurnBed or
+# the original Deloitte data (the Deloitte cardiac unit is now named
+# Cardiology everywhere); the Regional hospital additionally has no BurnBed or
 # Psychiatric unit at all.
 tertiary_hospital_fallbacks <- list(
   BurnBed = c("ICU"),
@@ -235,7 +225,7 @@ community_hospital_fallbacks <- list(
   TransitionalCare = c("GenMed")
 )
 
-# Shared builder behind injury_path_test_profile_config() and the
+# Shared builder behind the
 # hospital-specific examples below. Reuses the same Deloitte WIA/DNBI
 # proportions (deloitte_injury_paths/deloitte_*_type_probabilities) for all of
 # them; unit_map only renames or reroutes pathway units to match a target
@@ -340,26 +330,15 @@ deloitte_injury_path_profile_config <- function(source, source_label, fallbacks,
   )
 }
 
-# The original, most granular Deloitte example: all 7 units as Deloitte
-# defined them (CardiacICU, BurnBed, Psychiatric included), no rerouting.
-injury_path_test_profile_config <- function(wia_prob = 0.67) {
-  deloitte_injury_path_profile_config(
-    source = "injury_path_test",
-    source_label = "Grouped injury-path test profiles (WIA 67%)",
-    fallbacks = fallbacks_list_2,
-    wia_prob = wia_prob
-  )
-}
-
 # Example 2: UC Davis Tertiary hospital -- same specialty units as the
-# original Deloitte data, only CardiacICU relabeled to Cardiology. Bed counts
+# original Deloitte data, with the cardiac unit named Cardiology. Bed counts
 # are UC Davis's own published Tertiary capacities, not derived from Deloitte.
 tertiary_hospital_test_profile_config <- function(wia_prob = 0.67) {
   deloitte_injury_path_profile_config(
     source = "tertiary_hospital_test",
     source_label = "Tertiary hospital test profiles (Deloitte-derived; UC Davis Tertiary unit set)",
     fallbacks = tertiary_hospital_fallbacks,
-    unit_map = c(CardiacICU = "Cardiology"),
+
     capacities = c(GenMed = 400, ICU = 72, BurnBed = 12, Cardiology = 18,
                    PhysicalMed = 24, Psychiatric = 20, TransitionalCare = 24),
     wia_prob = wia_prob
@@ -368,7 +347,7 @@ tertiary_hospital_test_profile_config <- function(wia_prob = 0.67) {
 
 # Example 3: UC Davis Regional hospital -- no BurnBed or Psychiatric unit, so
 # those Deloitte pathways are rerouted to the nearest unit the hospital does
-# have (BurnBed -> ICU, Psychiatric -> GenMed); CardiacICU relabeled to
+# have (BurnBed -> ICU, Psychiatric -> GenMed); cardiac unit named
 # Cardiology as in the Tertiary example. Bed counts are UC Davis's own
 # published Regional capacities, not derived from Deloitte.
 regional_hospital_test_profile_config <- function(wia_prob = 0.67) {
@@ -376,7 +355,7 @@ regional_hospital_test_profile_config <- function(wia_prob = 0.67) {
     source = "regional_hospital_test",
     source_label = "Regional hospital test profiles (Deloitte-derived; UC Davis Regional unit set)",
     fallbacks = regional_hospital_fallbacks,
-    unit_map = c(CardiacICU = "Cardiology", BurnBed = "ICU", Psychiatric = "GenMed"),
+    unit_map = c(BurnBed = "ICU", Psychiatric = "GenMed"),
     capacities = c(GenMed = 240, ICU = 20, Cardiology = 12,
                    PhysicalMed = 12, TransitionalCare = 20),
     wia_prob = wia_prob
@@ -385,7 +364,7 @@ regional_hospital_test_profile_config <- function(wia_prob = 0.67) {
 
 # Example 4: Community acute-care hospital -- GenMed, ICU and TransitionalCare
 # only. Deloitte pathways through missing units are rerouted to the nearest
-# available unit (BurnBed and CardiacICU -> ICU, PhysicalMed ->
+# available unit (BurnBed and Cardiology -> ICU, PhysicalMed ->
 # TransitionalCare, Psychiatric -> GenMed); as in the Regional example this is
 # an illustrative adaptation, not a calibrated one. Bed counts are the
 # scenario's assumed capacities, not derived from Deloitte.
@@ -394,7 +373,7 @@ community_hospital_test_profile_config <- function(wia_prob = 0.67) {
     source = "community_hospital_test",
     source_label = "Community acute-care hospital test profiles (Deloitte-derived; GenMed/ICU/TransitionalCare)",
     fallbacks = community_hospital_fallbacks,
-    unit_map = c(BurnBed = "ICU", CardiacICU = "ICU",
+    unit_map = c(BurnBed = "ICU", Cardiology = "ICU",
                  PhysicalMed = "TransitionalCare", Psychiatric = "GenMed"),
     capacities = c(GenMed = 80, ICU = 12, TransitionalCare = 12),
     wia_prob = wia_prob

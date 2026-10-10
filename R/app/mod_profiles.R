@@ -5,7 +5,6 @@ hospital_profile_units <- c(
   "General Medicine" = "GenMed",
   "ICU" = "ICU",
   "Burn Bed" = "BurnBed",
-  "Cardiac ICU" = "CardiacICU",
   "Cardiology" = "Cardiology",
   "Physical Medicine" = "PhysicalMed",
   "Psychiatric" = "Psychiatric",
@@ -54,14 +53,13 @@ capacity_label <- function(civilian_enabled) {
 # configs ("deloitte_test" is kept for the UC Davis set used in the manuscript).
 ndms_profile_sources <- c(
   "UC Davis calibrated profiles" = "deloitte_test",
-  "Completed" = "injury_path_test",
   "Regional hospital" = "regional_hospital_test",
   "Tertiary hospital" = "tertiary_hospital_test",
   "Community acute-care hospital" = "community_hospital_test"
 )
 
 # Predefined civilian profiles (data/) matching each hospital source; any other
-# source (manual, Excel, Completed) uses the default UC Davis-based file.
+# source (manual, Excel) uses the default UC Davis-based file.
 civilian_profile_files <- c(
   deloitte_test = "baseline_civilian_profiles.csv",
   regional_hospital_test = "baseline_civilian_profiles_regional.csv",
@@ -503,7 +501,7 @@ hospital_profiles_ui <- function(id) {
             title = "Patient profile source",
             status = "info",
             solidHeader = TRUE,
-            width = 3,
+            width = 2,
             rintrojs::introBox(
               shiny::radioButtons(
                 ns("profile_source"),
@@ -556,33 +554,6 @@ hospital_profiles_ui <- function(id) {
             )
           ),
           shinydashboard::box(
-            title = "Fallbacks",
-            status = "info",
-            solidHeader = TRUE,
-            width = 3,
-            rintrojs::introBox(
-              shiny::tagList(
-                shiny::selectInput(ns("fallback_unit"), "Primary unit", choices = NULL),
-                shiny::selectizeInput(
-                  ns("fallback_options"), "Fallback units", choices = NULL, multiple = TRUE
-                ),
-                shiny::actionButton(ns("add_fallback"), "Save fallback", class = "btn-primary"),
-                shiny::actionButton(ns("remove_fallback"), "Remove fallback"),
-                shiny::helpText("Select a primary unit to edit its existing alternatives. Alternatives are tried in the displayed order."),
-                shiny::verbatimTextOutput(ns("fallbacks_summary"))
-              ),
-              data.step = 4,
-              data.intro = paste(
-                "<strong>Configure fallback beds.</strong><br>",
-                "When a primary unit is full, the model tries these alternatives",
-                "in the displayed order. If none is available, the patient is",
-                "counted in the primary-unit queue. When a bed is released, the oldest",
-                "compatible request receives it, respecting the ordered fallbacks."
-              ),
-              data.position = "top"
-            )
-          ),
-          shinydashboard::box(
             title = "Profile arrival percentages",
             status = "info",
             solidHeader = TRUE,
@@ -614,10 +585,37 @@ hospital_profiles_ui <- function(id) {
             )
           ),
           shinydashboard::box(
+            title = "Fallbacks",
+            status = "info",
+            solidHeader = TRUE,
+            width = 3,
+            rintrojs::introBox(
+              shiny::tagList(
+                shiny::selectInput(ns("fallback_unit"), "Primary unit", choices = NULL),
+                shiny::selectizeInput(
+                  ns("fallback_options"), "Fallback units", choices = NULL, multiple = TRUE
+                ),
+                shiny::actionButton(ns("add_fallback"), "Save fallback", class = "btn-primary"),
+                shiny::actionButton(ns("remove_fallback"), "Remove fallback"),
+                shiny::helpText("Select a primary unit to edit its existing alternatives. Alternatives are tried in the displayed order."),
+                shiny::tableOutput(ns("fallbacks_summary"))
+              ),
+              data.step = 4,
+              data.intro = paste(
+                "<strong>Configure fallback beds.</strong><br>",
+                "When a primary unit is full, the model tries these alternatives",
+                "in the displayed order. If none is available, the patient is",
+                "counted in the primary-unit queue. When a bed is released, the oldest",
+                "compatible request receives it, respecting the ordered fallbacks."
+              ),
+              data.position = "top"
+            )
+          ),
+          shinydashboard::box(
             title = "Configuration status",
             status = "success",
             solidHeader = TRUE,
-            width = 3,
+            width = 4,
             style = "overflow-x: auto;",
             rintrojs::introBox(
               shiny::uiOutput(ns("configuration_status")),
@@ -709,7 +707,6 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
     fallbacks <- shiny::reactiveVal(list())
     confirmed_profile_probabilities <- shiny::reactiveVal(NULL)
     deloitte_config <- deloitte_test_profile_config()
-    injury_path_config <- injury_path_test_profile_config(wia_prob = 0.67)
     regional_hospital_config <- regional_hospital_test_profile_config(wia_prob = 0.67)
     tertiary_hospital_config <- tertiary_hospital_test_profile_config(wia_prob = 0.67)
     community_hospital_config <- community_hospital_test_profile_config(wia_prob = 0.67)
@@ -746,7 +743,6 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       switch(
         source,
         deloitte_test = deloitte_config,
-        injury_path_test = injury_path_config,
         regional_hospital_test = regional_hospital_config,
         tertiary_hospital_test = tertiary_hospital_config,
         community_hospital_test = community_hospital_config,
@@ -885,7 +881,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
     })
 
     shiny::observe({
-      units <- selected_units()
+      units <- setdiff(selected_units(), names(internal_hospital_units))
       primary <- input$fallback_unit
       selected_primary <- if (!is.null(primary) && primary %in% units) primary else ""
       shiny::updateSelectInput(
@@ -899,7 +895,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
     shiny::observeEvent(list(input$fallback_unit, selected_units()), {
       primary <- input$fallback_unit
       if (is.null(primary)) primary <- ""
-      fallback_choices <- setdiff(selected_units(), primary)
+      fallback_choices <- setdiff(selected_units(), c(primary, names(internal_hospital_units)))
       selected_fallbacks <- intersect(fallbacks()[[primary]], fallback_choices)
       shiny::updateSelectizeInput(
         session,
@@ -928,7 +924,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
     })
 
     output$trajectory_units_ui <- shiny::renderUI({
-      units <- selected_units()
+      units <- setdiff(selected_units(), names(internal_hospital_units))
       shiny::req(length(units) > 0)
       pathway_step_inputs(input, session, "unit", trajectory_unit_count(),
                           trajectory_form_version(), trajectory_draft(), units)
@@ -1036,9 +1032,12 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
     shiny::observe({
       profile_names <- names(patient_profiles())
       selected <- shiny::isolate(input$remove_profile_name)
+      # With no profiles, clear the selector explicitly; otherwise the browser
+      # keeps showing the last selected (now deleted) profile.
       shiny::updateSelectInput(
-        session, "remove_profile_name", choices = profile_names,
-        selected = if (length(selected) == 1L && selected %in% profile_names) selected else profile_names[1]
+        session, "remove_profile_name", choices = if (length(profile_names)) profile_names else character(),
+        selected = if (length(selected) == 1L && selected %in% profile_names) selected
+                   else if (length(profile_names)) profile_names[1] else character()
       )
     })
 
@@ -1103,7 +1102,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
         shiny::numericInput(
           session$ns(input_id),
           paste(profile_name, "arrival percentage (%)"),
-          value = percentage,
+          value = round(percentage, 1),
           min = 0,
           max = 100,
           step = 0.01
@@ -1116,7 +1115,9 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       if (length(profiles) == 0) return(numeric())
       stats::setNames(vapply(names(profiles), function(profile_name) {
         value <- input[[configuration_input_id("prob", profile_name)]]
-        if (is.null(value)) default_profile_percentage(profile_name) else value
+        exact <- default_profile_percentage(profile_name)
+        # Inputs display 1 decimal; an untouched field keeps its exact loaded value.
+        if (is.null(value) || isTRUE(abs(value - round(exact, 1)) < 1e-9)) exact else value
       }, numeric(1)), names(profiles))
     })
 
@@ -1206,7 +1207,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       shiny::updateSelectizeInput(
         session,
         "fallback_options",
-        choices = selected_units(),
+        choices = setdiff(selected_units(), names(internal_hospital_units)),
         selected = character(),
         server = TRUE
       )
@@ -1221,8 +1222,14 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       shiny::updateSelectizeInput(session, "fallback_options", selected = character())
     })
 
-    output$fallbacks_summary <- shiny::renderPrint({
-      print(fallbacks())
+    output$fallbacks_summary <- shiny::renderTable({
+      current <- fallbacks()
+      if (length(current) == 0) return(data.frame(Unit = character(), Fallback = character()))
+      data.frame(
+        Unit = names(current),
+        Fallback = vapply(current, paste, character(1), collapse = ", "),
+        row.names = NULL
+      )
     })
 
     capacities <- shiny::reactive({
