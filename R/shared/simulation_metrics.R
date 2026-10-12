@@ -119,8 +119,7 @@ bed_wait_table <- function(run) {
 
 # One boarding episode = one visit to a .boarding_for__<unit> logical
 # resource: the time a patient held some other bed while waiting to reach
-# `unit` -- either boarding between pathway steps, or occupying a fallback
-# and watching for the primary unit. This is bed-held wait time, distinct
+# `unit` while boarding between pathway steps. This is bed-held wait time, distinct
 # from bed_wait_summary()'s bed-less queue time (.waiting_for__, now only
 # possible on a pathway's first step). An episode still open at the horizon
 # contributes its elapsed duration so far (a conservative lower bound),

@@ -151,8 +151,7 @@ boarding_resource <- function(primary) {
 
 # A shared dispatcher preserves FIFO among requests that can use a free bed,
 # with one priority tier above it: a patient who already holds a bed
-# elsewhere -- boarding between pathway steps, or occupying a fallback and
-# watching for its primary unit to free up -- is served ahead of a patient
+# elsewhere -- boarding between pathway steps -- is served ahead of a patient
 # with no bed at all making a fresh request for the same unit (only possible
 # on a pathway's first step). Reservations make selection and seize atomic
 # across simultaneous events.

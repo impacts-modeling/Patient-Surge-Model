@@ -1,11 +1,14 @@
 .Rproj.user
+.RDataTmp
 .Rhistory
 .RData
 .Ruserdata
 AGENTS.md
 Patient-Surge-Model.Rproj
 outputs
-paper
+paper_data
+paper/warm_up.png
 .rscignore
 PatientSurgeModel
 PACKAGE_CREATION_COMPLETE.md
+Rplots.pdf

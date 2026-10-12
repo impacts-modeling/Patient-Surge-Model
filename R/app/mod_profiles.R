@@ -18,8 +18,8 @@ hospital_profile_units <- c(
 # ED never fills.
 unlimited_capacity_placeholder <- 10000L
 # ED is always part of the hospital with the placeholder capacity above; it is
-# never shown as an editable unit or bed count, but remains available to
-# trajectories and fallbacks.
+# never shown as an editable unit or bed count. Civilian pathways start there;
+# it is not offered in surge trajectories or fallback rules.
 internal_hospital_units <- c(ED = unlimited_capacity_placeholder)
 editable_hospital_units <- hospital_profile_units[!hospital_profile_units %in% names(internal_hospital_units)]
 
@@ -473,8 +473,9 @@ hospital_profiles_ui <- function(id) {
             )
           ),
           shiny::helpText(
-            "The ED is always part of the hospital and available to trajectories and fallbacks.",
-            "Its capacity is fixed at 10,000 beds (practically unlimited), so it is not listed here."
+            "The ED is always part of the hospital.",
+            "Its capacity is fixed at 10,000 beds (practically unlimited), so it is not listed here.",
+            "Civilian pathways start in the ED; it is not offered in surge trajectories or fallbacks."
           ),
           data.step = 2,
           data.intro = paste(
@@ -483,7 +484,7 @@ hospital_profiles_ui <- function(id) {
             "arrivals the values are the beds available to the surge (defaults assume",
             "95% occupancy in GenMed and ICU and 50% elsewhere); with civilian arrivals",
             "they are total beds. The ED is always included with practically unlimited",
-            "capacity (10,000 beds) and is not editable."
+            "capacity (10,000 beds) and is not editable. Civilian pathways start there; surge trajectories and fallbacks do not use it."
           ),
           data.position = "bottom"
         )

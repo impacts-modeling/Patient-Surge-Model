@@ -6,11 +6,12 @@ The project supports hospital capacity planning and scenario analysis. Users can
 
 ## Main features
 
-- **Hospital configuration:** select units and enter beds: total beds with routine civilian flow, or beds available to the surge without it (defaults assume 95% occupancy in GenMed and ICU and 50% elsewhere, rounded up). The ED is always included with a fixed capacity of 10,000 beds and is not shown in results.
+- **Hospital configuration:** select units and enter beds: total beds with routine civilian flow, or beds available to the surge without it (defaults assume 95% occupancy in GenMed and ICU and 50% elsewhere, rounded up). The ED is always included with a fixed capacity of 10,000 beds, is not shown in results, and is used only by civilian pathways: it is not offered in surge trajectories or fallback rules.
 - **Patient profiles:** define arrival percentages and ordered care pathways with a mean length of stay and SD per unit, or load a predefined NDMS-Based Classification set (UC Davis calibrated profiles, Regional hospital, Tertiary hospital, Community acute-care hospital).
-- **Routine civilian flow:** configure civilian profiles and constant arrival rates, with a warm-up before the surge. Predefined civilian profiles match the selected predefined hospital.
+- **Routine civilian flow:** configure civilian profiles and constant arrival rates, with a warm-up before the surge. Predefined civilian profiles match the selected predefined hospital. Disabling **Enable routine civilian arrivals** clears all saved civilian profiles.
 - **Fallback placement:** specify ordered alternative units when the preferred unit has no available bed.
 - **Repeated simulations:** explore occupancy, queues, bottlenecks, boarding, and bed waits across replications.
+- **Unlimited-capacity scenario:** compute expected occupancy (with a 5th-95th percentile band) without bed limits and without simulation, using an exact analytic calculation; it also provides the starting point of the capacity search.
 - **Bed-expansion estimates:** search for additional GenMed and ICU beds and simulate the expanded scenario.
 - **Import and export:** exchange surge configurations through Excel, civilian profiles through CSV, and download simulation reports as PDF.
 
@@ -34,7 +35,7 @@ Each patient is randomly assigned a profile using the configured arrival probabi
 
 - **Arrivals:** surge arrivals are evenly spaced or Poisson at the configured daily rate during the arrival period; profile assignment is random. With civilian flow disabled the hospital starts empty and the first surge arrival is at day 0. With civilian flow enabled, day 0 is surge onset after warm-up, and each civilian profile keeps its own constant rate (evenly spaced or Poisson) throughout warm-up and follow-up.
 - **Length of stay:** inpatient stays follow a log-normal distribution with the configured mean and SD per step (`sigma = sqrt(log(1 + SD^2 / mean^2))`). A blank SD defaults to 1 x mean for ICU and 0.24 x mean for other units; built-in NDMS-based sets without per-step variability use CV = 0.1.
-- **Bed allocation:** patients request the primary unit and its configured fallbacks at once and take the first free bed, preferring the primary. A patient in a fallback moves to the primary as soon as it frees up.
+- **Bed allocation:** patients request the primary unit and its configured fallbacks at once and take the first free bed, preferring the primary. A patient placed in a fallback completes that step there and is not transferred if the primary frees up.
 - **Waiting:** bed acquisition is event-driven; there is no periodic recheck. A patient with no bed waits in the primary unit's queue.
 - **Boarding:** after a step, patients keep their current bed until the next unit has a bed, then release it; they never hold two beds.
 - **Ambulatory profiles:** patients without an inpatient pathway receive a 0.1-day delay and occupy no hospital bed.
@@ -46,9 +47,9 @@ The server combines resource and patient monitoring data across replications to 
 
 For each replication, the search computes the mean wait for a first bed (days, while holding no bed) in GenMed and in ICU during observation. Because civilian pathways start in the ED, these waits come in practice from surge patients. A replication complies when both means are within their limits.
 
-The search first evaluates current capacity, including additional beds already entered in the HxS fields. If expansion is needed, it runs an unconstrained-demand reference, raises failing units to that reference, grows units that still fail, and refines GenMed/ICU combinations within an evaluation budget.
+The search first evaluates current capacity, including additional beds already entered in the HxS fields. If expansion is needed, it computes the simulation-free unlimited-capacity occupancy (see `R/analitic/occupancy_analytic.R`), raises failing units to a starting capacity taken from a percentile of its peak (never lowering them), grows units that still fail by doubling increments, and refines GenMed/ICU combinations within an evaluation budget. The starting capacity is only where the search begins; every candidate is evaluated with the full simulation.
 
-The active configuration (`bed_search_configs$development` in `R/01_config.R`) requires joint compliance in at least **75%** of 20 replications per candidate, using the observed proportion. Candidates are then checked once on an independent 20-replication bank. This empirical criterion is not a statistical confidence level or a guarantee of real-world performance, and recommendations are not proven global minima. Applying a recommendation updates the HxS fields; running the simulation again refreshes the plots and tables.
+The active configuration (`bed_search_configs$development` in `R/01_config.R`) requires joint compliance (GenMed and ICU within their limits in the same replication) in at least **75%** of 20 replications per candidate, using the observed proportion. Candidates that pass are then checked once on an independent 20-replication bank, and that holdout result is what the app reports. The manuscript preset (`bed_search_configs$paper`) uses 40 search and 50 holdout replications. This empirical criterion is not a statistical confidence level or a guarantee of real-world performance, and recommendations are not proven global minima. Applying a recommendation updates the HxS fields; running the simulation again refreshes the plots and tables.
 
 When civilian flow is enabled, candidates include both populations. Warm-up uses existing beds; added beds are activated at surge onset. This implementation does not estimate emergency activation delays or automatically separate an existing civilian capacity deficit from surge-related expansion.
 
@@ -56,7 +57,7 @@ When civilian flow is enabled, candidates include both populations. Warm-up uses
 
 Civilian profiles are independent of surge profiles and use the selected hospital units and shared fallback rules. In **Routine Civilian Flow**, enter a profile name and patients/day, and build the ordered pathway unit by unit with a mean stay and optional SD for each unit, or load or import CSV profiles. Saved civilian profile lists are kept separately by hospital source and unit selection within the current session; rates may be fractional.
 
-Warm-up is a fixed duration (**Warm-up duration**, 110 days by default). No automated stability test is run: choose the duration from raw-occupancy plots of the civilian flow (see `paper/plot_raw_dynamics.R`) and report those plots as the justification. A fixed warm-up does not by itself establish equilibrium; assess sensitivity to the warm-up duration before reporting scientific results.
+Warm-up is a fixed duration (**Warm-up duration**, 30 days by default; the manuscript runs set it explicitly). No automated stability test is run: choose the duration from raw-occupancy plots of the civilian flow (see `paper/plot_raw_dynamics.R`) and report those plots as the justification. A fixed warm-up does not by itself establish equilibrium; assess sensitivity to the warm-up duration before reporting scientific results.
 
 The same simulation environment continues after warm-up. Existing patients, bed occupancy, queues, and scheduled civilian arrivals remain intact. Day 0 denotes surge onset; the selected simulation duration excludes warm-up. Patients still in care at the final horizon remain marked as incomplete.
 
@@ -114,7 +115,7 @@ The dashboard does not export these raw tables; use `run_hospital_scenario()` (a
 
 ## Run locally
 
-The package setup file identifies R 4.5.2 as the development version. Install the dependencies from R if needed:
+The code was developed with R 4.5.2 (`R/00_packages.R`); `manifest.json` records the packages used for deployment. Install the dependencies from R if needed:
 
 ```r
 install.packages(c(
@@ -152,15 +153,20 @@ Patient-Surge-Model/
 |-- app.R                              # Entry point and source loading order
 |-- README.md                          # Project overview and setup
 |-- description.md                     # In-app user documentation
+|-- LICENSE                            # MIT license
 |-- manifest.json                      # Deployment dependency manifest (regenerate after moving files)
+|-- www/                               # Static assets for the app
 |-- data/
 |   |-- baseline_civilian_profiles.csv            # Default civilian profiles (UC Davis units)
+|   |-- baseline_civilian_profiles_uc_davis.csv   # UC Davis civilian profiles (reference copy)
 |   |-- baseline_civilian_profiles_regional.csv   # Civilian profiles for the Regional hospital
 |   |-- baseline_civilian_profiles_tertiary.csv   # Civilian profiles for the Tertiary hospital
 |   `-- baseline_civilian_profiles_community.csv  # Civilian profiles for the Community hospital
 |-- R/
 |   |-- 00_packages.R                  # Package loading
 |   |-- 01_config.R                    # Runtime and search settings
+|   |-- analitic/
+|   |   `-- occupancy_analytic.R       # Simulation-free occupancy under unlimited capacity
 |   |-- core/                          # Simulation engine, shared by the app and paper/
 |   |   |-- hospital_trajectory.R      # Patient flow and capacity search
 |   |   |-- baseline_flow.R            # Civilian arrivals and warm-up functions
@@ -175,18 +181,33 @@ Patient-Surge-Model/
 |       |-- ui_main.R                  # Results, documentation, and styling
 |       |-- mod_profiles.R             # Hospital setup, surge profiles and Excel exchange
 |       |-- mod_baseline.R             # Civilian configuration UI and server
+|       |-- mod_unlimited.R            # Unlimited-capacity (analytic) scenario
 |       `-- report_functions.R         # Result tables and PDF report generation
 |-- paper/                             # Manuscript scenarios and figures, no Shiny (see paper/README.md)
-|   |-- run_manuscript_scenarios.R     # Study orchestration; calls R/core and R/shared only
+|   |-- run_manuscript_scenarios.R     # Study orchestration; sources R/core, R/shared and R/analitic only
 |   |-- run_all_scenarios.R            # Runs the manuscript scenarios
-|   |-- generate_manuscript_tables.R   # Manuscript tables
-|   |-- Cleaning.Rmd                   # UC Davis data calibration notebook
-|   `-- manuscript/                    # LaTeX source and figures
+|   |-- make_unlimited_comparison.R    # Analytic vs simulated unlimited capacity; warm-up check
+|   |-- generate_manuscript_tables.R   # Manuscript table rows
+|   |-- generate_surge_profile_table.R # Surge-profile table
+|   |-- plot_raw_dynamics.R            # Raw-occupancy plots used to choose the warm-up
+|   `-- Cleaning.Rmd                   # UC Davis data calibration notebook (data not distributed)
 |-- outputs/                           # Generated study results (figures, tables, caches)
 `-- rsconnect/                         # Deployment metadata
 ```
 
-`app.R` loads the configuration, shared data/metrics, simulation engine, profile modules, and interface before launching Shiny. The profile module returns a reactive hospital configuration to `app_server.R`, which coordinates simulation runs, bed searches, and reporting. `paper/run_manuscript_scenarios.R` sources only `R/core/` and `R/shared/`, never `R/app/`, so the same simulation engine drives both the dashboard and the manuscript scenarios without duplication.
+`app.R` loads the configuration, shared data/metrics, simulation engine, profile modules, and interface before launching Shiny. The profile module returns a reactive hospital configuration to `app_server.R`, which coordinates simulation runs, bed searches, and reporting. `paper/run_manuscript_scenarios.R` sources only `R/core/`, `R/shared/` and `R/analitic/`, never `R/app/`, so the same simulation engine drives both the dashboard and the manuscript scenarios without duplication.
+
+## Reproducing the manuscript results
+
+The manuscript scenarios run without Shiny. From the repository root:
+
+```r
+source("paper/run_manuscript_scenarios.R")
+load_study_functions()
+study <- make_study_config()
+```
+
+Then call the study functions described in `paper/README.md` (for example `run_main_example()` and `run_volume_and_concentration_study()`), or run `paper/run_all_scenarios.R`. Search settings come from `bed_search_configs$paper` in `R/01_config.R`; the warm-up length, seeds and scenario definitions are set explicitly in the scripts, and results are written to `outputs/`. Capacity-search results depend on these settings and on the random seed, so report both.
 
 ## Interpretation and limitations
 
@@ -195,3 +216,7 @@ This is a simplified bed-capacity model. It does not explicitly model staffing, 
 The expansion criterion is a mean wait, so individual patients can wait longer than the limit. The queue summary's queued patient-time fraction is a dimensionless ratio, not a duration in days. Patients remaining at the simulation horizon also affect the interpretation of patient-level summaries.
 
 The project also supports preparation of a scientific manuscript describing the implemented model. Methods and findings should distinguish scenario inputs, assumptions, stochastic mechanisms, search criteria, and derived outputs, and remain consistent with the code used to produce them.
+
+## License
+
+Released under the [MIT License](LICENSE).

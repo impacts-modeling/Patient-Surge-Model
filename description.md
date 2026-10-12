@@ -90,20 +90,19 @@ to the new default. The PDF report labels the beds "Total Available Beds" or
 
 The **ED** is always part of the hospital with a fixed capacity of 10,000 beds
 (practically unlimited, so it never fills); it is not listed or editable and
-remains available to trajectories and fallback rules. Selectable units are:
+is used by civilian pathways (every civilian pathway starts there), but it is not offered as a unit in surge trajectories or fallback rules. Selectable units are:
 
 - **Surge**
 - **GenMed**
 - **ICU**
 - **BurnBed**
-- **Cardiac ICU**
 - **Cardiology**
 - **PhysicalMed**
 - **Psychiatric**
 - **TransitionalCare**
 
 Only selected hospital units can be used in patient trajectories or fallback
-rules. The bed-expansion optimizer requires both **GenMed** and **ICU**.
+rules, and the ED is excluded from surge trajectories and fallbacks. The bed-expansion optimizer requires both **GenMed** and **ICU**.
 
 ### Creating patient trajectories
 
@@ -125,7 +124,7 @@ delay and does not occupy a hospital bed.
 ### Arrival percentages
 
 Each profile receives a percentage of total patient arrivals. Percentages must
-be non-negative and must sum to **100%** before the configuration can be used.
+be non-negative and must sum to **100%** before the configuration can be used. Predefined percentages are shown rounded to one decimal, but the exact loaded values are used until a field is edited.
 
 ### Fallback rules
 
@@ -141,16 +140,13 @@ reaches a trajectory step, the model:
 
 Bed acquisition is **event-driven, not a periodic recheck**: a waiting patient
 is placed the instant any requested bed (primary or fallback) becomes free,
-not on a fixed daily cycle. If the patient is placed in a fallback, it keeps
-watching the primary unit at the same time. Should the primary free up before
-this step's length of stay is over, the patient transfers there immediately --
-with priority over a fresh request for that same bed -- and continues with only
-the remaining stay, so the step's total duration is unchanged by the transfer.
-The patient remains one logical patient throughout, is counted in the queue of
-the requested primary unit while waiting, and can occupy no more than one bed
-at a time. A patient who already holds a bed (boarding between pathway steps,
-or occupying a fallback while watching for the primary) is dispatched ahead of
-a patient with no bed making a fresh request for that same unit.
+not on a fixed daily cycle. A patient placed in a fallback completes the entire
+step there with the length of stay assigned to that step; the placement is not
+revisited, so the patient is not transferred if the primary frees up before the
+step ends. The patient is counted in the queue of the requested primary unit
+while waiting and can occupy no more than one bed at a time. A patient who
+already holds a bed (boarding between pathway steps) is dispatched ahead of a
+patient with no bed making a fresh request for that same unit.
 
 The fallback list shown in the application always corresponds to the currently
 selected profile source. A unit cannot be its own fallback.
@@ -190,18 +186,18 @@ defaults to SD = 1 x mean stay for ICU steps and 0.24 x mean stay for every othe
 unit. The civilian arrival process and warm-up settings are in **Advanced Flow
 Settings**. These profiles share hospital beds and fallback
 rules with surge patients. Fractional rates are supported. Profile lists are
-retained for each hospital source and unit selection during the current session.
+retained for each hospital source and unit selection during the current session. Unchecking **Enable routine civilian arrivals** clears all saved civilian profiles, so manual entry starts empty after re-enabling.
 
 **Use predefined civilian profiles** loads the UC Davis-based civilian file that
 matches the selected predefined hospital:
 `data/baseline_civilian_profiles_regional.csv`, `_tertiary.csv`, or
-`_community.csv`. Every other source uses `data/baseline_civilian_profiles.csv`
-(ED, GenMed, Surge and ICU pathways). In the Regional, Tertiary and Community
+`_community.csv`. Every other source (manual or Excel) uses `data/baseline_civilian_profiles.csv`
+(ED, GenMed, Surge and ICU pathways); the pathway units must be selected in the hospital. In the Regional, Tertiary and Community
 files every pathway is ED -> unit, and arrival rates are set so that expected
 occupancy (rate x 6-day mean stay) is 85% of that unit's beds.
 
 Before the surge, the model runs civilian arrivals alone (warm-up). The warm-up
-is a fixed duration set in **Advanced Flow Settings** (110 days by default).
+is a fixed duration set in **Advanced Flow Settings** (30 days by default).
 No automated stability test is run: choose the duration from raw-occupancy
 plots of the civilian flow, and assess sensitivity to it for scientific use.
 A fixed warm-up does not by itself establish equilibrium, and overloaded
@@ -286,8 +282,7 @@ realized treatment times.
 After completing a trajectory step, a patient keeps the current bed until a bed
 for the next step is obtained (**boarding**) and then releases it, so a patient
 never holds more than one bed. Time spent holding a bed while waiting for
-another unit -- between steps, or in a fallback while watching for the primary
-unit -- is reported under **Boarding Times**. A wait with no bed held at all
+the next unit -- between pathway steps -- is reported under **Boarding Times**. A wait with no bed held at all
 (only possible at a pathway's first step) is reported under **Bed Waiting
 Times**. Queues have no fixed capacity and the model does not include patient
 abandonment.

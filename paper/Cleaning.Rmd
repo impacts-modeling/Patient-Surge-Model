@@ -1,0 +1,605 @@
+---
+title: "UC Davis data: parameter calibration and profile generation"
+author: "Cris"
+date: "2025-06-03"
+output: html_document
+---
+
+This notebook has one job: build UC Davis civilian-arrival profiles from the
+UC Davis extract (`data/baseline_civilian_profiles_uc_davis.csv`), and check
+that the underlying data supports the values that go into it. The Patient
+Surge Model app does not read this file directly: its predefined civilian
+profiles are the checked-in `data/baseline_civilian_profiles*.csv` files
+(see `civilian_profile_file()` in `R/app/mod_profiles.R`), and its surge
+"UC Davis calibrated profiles" option is the NDMS-based
+`deloitte_test_profile_config()` in `R/shared/profiles_deloitte.R`.
+Everything here follows the flow structure and calibration formulas of
+`2026_Assessing_the_hospital_occupancy_under_a_surge_event/main.tex`
+(Sections 2.2 and 2.5), restricted to the app's reduced three-unit
+configuration (ICU, GenMed = Davis' Med-Surg/Tele, Surge = Davis' IP Surge)
+and restricted to what the data actually contains -- no parameter is filled
+in from an external/illustrative source.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(fitdistrplus)
+Sys.setlocale("LC_TIME", "English")
+```
+
+# 1. Load and merge Davis data into one unified daily table
+
+All four source sheets are merged once, by date, into a single wide table
+`davis_daily` (one row per day, uppercase column names): `Capacity` and
+`ADT Summary` and `ICU DownUp` from the IMPACTS extract, plus
+`Patient Surge Model ED Data` from the separate ED workbook. Every later
+section -- consistency checks and parameter calibration alike -- reads from
+this one table (or `davis_long`, its per-unit reshape below), instead of
+each rebuilding its own merge.
+
+```{r, warning=FALSE}
+impacts_path <- "davis_data/IMPACTS Data Extract_V2_Jun25.xlsx"
+ed_path <- "davis_data/Patient and Viral Surge Data_V4.xlsx"
+
+raw_capacity <- readxl::read_excel(impacts_path, sheet = "Capacity")
+raw_adt <- readxl::read_excel(impacts_path, sheet = "ADT Summary") |>
+  dplyr::rename(DAY_DT = DateValue)
+raw_icu_downup <- readxl::read_excel(impacts_path, sheet = "ICU DownUp") |>
+  dplyr::rename(DAY_DT = Transfer_Date)
+raw_ed <- readxl::read_excel(ed_path, sheet = "Patient Surge Model ED Data") |>
+  dplyr::rename(DAY_DT = ED_ARRIVAL_IMPUTED_DT)
+
+parse_day <- function(x) as.Date(lubridate::parse_date_time(x, c("%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d")))
+
+davis_daily <- raw_capacity |>
+  dplyr::mutate(DAY_DT = parse_day(DAY_DT)) |>
+  dplyr::full_join(raw_adt |> dplyr::mutate(DAY_DT = parse_day(DAY_DT)), by = "DAY_DT") |>
+  dplyr::full_join(raw_icu_downup |> dplyr::mutate(DAY_DT = parse_day(DAY_DT)), by = "DAY_DT") |>
+  dplyr::full_join(raw_ed |> dplyr::mutate(DAY_DT = parse_day(DAY_DT)), by = "DAY_DT") |>
+  dplyr::mutate(dplyr::across(-DAY_DT, ~ suppressWarnings(as.numeric(.)))) |>
+  dplyr::arrange(DAY_DT)
+
+names(davis_daily) <- toupper(names(davis_daily))
+
+davis_daily <- davis_daily |>
+  dplyr::mutate(
+    YEAR = factor(format(DAY_DT, "%Y"), levels = c("2020", "2021", "2022", "2023", "2024", "2025")),
+    DAY = factor(weekdays(DAY_DT),
+                 levels = c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")),
+    MONTH = factor(months(DAY_DT),
+                   levels = c("January", "February", "March", "April", "May", "June", "July",
+                              "August", "September", "October", "November", "December")),
+    AVERAGE_ED_WAITING_INTERVAL_DAYS = AVERAGE_ED_WAITING_INTERVAL / 1440,
+    AVERAGE_ED_BOARDING_INTERVAL_DAYS = AVERAGE_ED_BOARDING_INTERVAL / 1440
+  )
+
+# The app's reduced unit set and the Davis column-suffix each maps to. Note
+# AvgLengthOfStay's Med-Surg/Tele column is the one Davis field using the
+# short suffix "MED" instead of "MED_SURG_TELE" -- every other field
+# (Admit_, Discharges_, OCC_BEDS_, ...) uses the full suffix. This map is the
+# single place that quirk needs to be handled.
+unit_map <- c(ICU = "ICU", GenMed = "MED_SURG_TELE", Surge = "IP_SURGE")
+los_col <- c(ICU = "AVGLENGTHOFSTAY_ICU", GenMed = "AVGLENGTHOFSTAY_MED", Surge = "AVGLENGTHOFSTAY_IP_SURGE")
+
+davis_daily_2025 <- davis_daily |> dplyr::filter(YEAR %in% c("2024", "2025"))
+```
+
+# 2. Reshape to a per-unit long table (for consistency checks)
+
+```{r}
+reshape_units <- function(data, cols, prefix, value_name) {
+  data |>
+    dplyr::select(dplyr::all_of(c("DAY_DT", "YEAR", "DAY", "MONTH", cols))) |>
+    tidyr::pivot_longer(cols = dplyr::all_of(cols), names_to = "Unit", values_to = value_name) |>
+    dplyr::mutate(Unit = stringr::str_remove(Unit, paste0("^", prefix)))
+}
+
+vars_adm <- c("ICU", "MED_SURG_TELE", "IP_SURGE")
+tt_beds_cols <- paste0("TTL_BEDS_", vars_adm)
+admit_cols <- paste0("ADMIT_", vars_adm)
+discharge_cols <- paste0("DISCHARGES_", vars_adm)
+occ_cols <- paste0("OCC_BEDS_", vars_adm)
+los_cols <- unname(los_col)
+
+davis_long <- purrr::reduce(
+  list(
+    reshape_units(davis_daily, tt_beds_cols, "TTL_BEDS_", "tt_beds"),
+    reshape_units(davis_daily, admit_cols, "ADMIT_", "admitted"),
+    reshape_units(davis_daily, discharge_cols, "DISCHARGES_", "discharges"),
+    reshape_units(davis_daily, occ_cols, "OCC_BEDS_", "occupied"),
+    reshape_units(davis_daily, los_cols, "AVGLENGTHOFSTAY_", "los") |>
+      dplyr::mutate(Unit = ifelse(Unit == "MED", "MED_SURG_TELE", Unit))
+  ),
+  dplyr::full_join, by = c("DAY_DT", "YEAR", "DAY", "MONTH", "Unit")
+) |>
+  dplyr::mutate(occupied_pct = 100 * occupied / tt_beds)
+```
+
+```{r}
+annual_occupancy <- davis_long |>
+  dplyr::group_by(YEAR, Unit) |>
+  dplyr::summarise(
+    n_days = sum(!is.na(occupied)),
+    mean_occupied = mean(occupied, na.rm = TRUE),
+    mean_total_beds = mean(tt_beds, na.rm = TRUE),
+    mean_occupied_pct = mean(occupied_pct, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+annual_occupancy_weighted <- davis_long |>
+  dplyr::filter(!is.na(occupied), !is.na(tt_beds), tt_beds > 0) |>
+  dplyr::group_by(YEAR, Unit) |>
+  dplyr::summarise(
+    annual_occupancy_pct = 100 * sum(occupied) / sum(tt_beds),
+    .groups = "drop"
+  )
+```
+
+
+# 3. Data consistency checks
+
+## Length-of-stay distribution vs. a fitted log-normal
+
+Sanity check that the log-normal CV used for each unit's CV_values in the
+profile CSV is a reasonable fit to the observed daily-average LOS series
+(a proxy for patient-level dispersion, since only day-level averages are
+available -- see the caveat on `fit_lognormal_cv()` below).
+
+```{r, warning=FALSE}
+fit_lognormal_cv <- function(x) {
+  fit <- MASS::fitdistr(stats::na.omit(x), "lognormal")
+  sigma <- unname(fit$estimate["sdlog"])
+  sqrt(exp(sigma^2) - 1)
+}
+
+lognormal_fit_2025 <- davis_long |>
+  dplyr::filter(YEAR  %in% c("2024", "2025"), !is.na(los), los > 0) |>
+  dplyr::group_by(Unit) |>
+  dplyr::summarise(mean_los = mean(los), cv = fit_lognormal_cv(los), .groups = "drop")
+lognormal_fit_2025
+
+davis_long |> dplyr::filter(YEAR  %in% c("2024", "2025")) |>
+  ggplot(aes(x = los,y=after_stat(density))) +
+  geom_freqpoly(binwidth = 1) +
+  facet_wrap(~Unit, scales = "free") +
+  coord_cartesian(xlim = c(0, 30)) +
+  labs(title = "2025 length-of-stay distribution by unit", x = "Length of stay (days)", y = "Density") +
+  theme_minimal()
+```
+
+## Occupancy over time
+
+```{r fig.height=5, fig.width=9}
+ggplot(davis_long, aes(x = DAY_DT, y = occupied_pct, color = Unit)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(se = FALSE) +
+  facet_wrap(~Unit, scales = "free") +
+  labs(title = "Occupancy (% of total beds) by unit", x = NULL, y = "Occupied (%)") +
+  theme_minimal()
+```
+
+## ICU transfer counts vs. Little's Law (used by the transfer-rate calibration below)
+
+The `ICU DownUp` sheet's per-unit transfer counts feed directly into
+`calibrate_transfer_rates()` below. Before trusting them, cross-check them
+against occupancy and LOS via Little's Law: a single tracked outflow column
+cannot legitimately exceed the unit's total implied departure rate.
+
+```{r}
+inflow_cols <- c("ED_TO_ICU", "MED_SURG_TELE_TO_ICU", "NICU_TO_ICU", "PEDS_TO_ICU", "PICU_TO_ICU",
+                  "WMN_PAV_TO_ICU", "OBSTETRICS_TO_ICU", "IP_SURGE_TO_ICU")
+outflow_cols <- c("ICU_TO_ED", "ICU_TO_MED_SURG_TELE", "ICU_TO_NICU", "ICU_TO_PEDS", "ICU_TO_PICU",
+                   "ICU_TO_WMN_PAV", "ICU_TO_OBSTETRICS", "ICU_TO_IP_SURGE")
+
+total_inflow_tracked <- sum(sapply(inflow_cols, function(cn) mean(davis_daily_2025[[cn]], na.rm = TRUE)))
+total_outflow_tracked <- sum(sapply(outflow_cols, function(cn) mean(davis_daily_2025[[cn]], na.rm = TRUE)))
+icu_occupancy <- mean(davis_daily_2025$OCC_BEDS_ICU, na.rm = TRUE)
+icu_los <- mean(davis_daily_2025$AVGLENGTHOFSTAY_ICU, na.rm = TRUE)
+littles_law_departure_rate <- icu_occupancy / icu_los
+icu_to_medsurg <- mean(davis_daily_2025$ICU_TO_MED_SURG_TELE, na.rm = TRUE)
+
+cat(sprintf("Tracked ICU inflow (sum of *_TO_ICU)   = %.2f/day\n", total_inflow_tracked))
+cat(sprintf("Tracked ICU outflow (sum of ICU_TO_*)  = %.2f/day\n", total_outflow_tracked))
+cat(sprintf("ADMIT_ICU                               = %.2f/day\n", mean(davis_daily_2025$ADMIT_ICU, na.rm = TRUE)))
+cat(sprintf("DISCHARGES_ICU (hospital exit from ICU) = %.2f/day\n", mean(davis_daily_2025$DISCHARGES_ICU, na.rm = TRUE)))
+cat(sprintf("Little's Law implied total departures   = OCC_BEDS_ICU / LOS = %.2f/%.2f = %.2f/day\n",
+            icu_occupancy, icu_los, littles_law_departure_rate))
+cat(sprintf("ICU_TO_MED_SURG_TELE alone               = %.2f/day (%.0f%% of the Little's-Law total)\n",
+            icu_to_medsurg, 100 * icu_to_medsurg / littles_law_departure_rate))
+cat("=> Internally inconsistent: ICU-linked transfer rates below (eps_S, eps_M) should be read as\n",
+    "   approximate, not validated, until this is resolved.\n")
+```
+
+## What the data does NOT support
+
+Checked directly against the raw sheet columns (`Capacity`, `ADT Summary`,
+`ICU DownUp`, `Patient Surge Model ED Data`):
+
+- **No per-unit split between ED-origin and direct/transfer admissions.**
+  `ADT Summary`'s `Admit_<unit>` is a single total per unit, combining all
+  admission sources. `Accpt_Trnsfrs_ICU_*` / `Accpt_Trnsfrs_Non_ICU_*` exist,
+  but only split by ICU/non-ICU and age group (Peds/Adult/Unspecified), not
+  by destination unit (GenMed vs. Surge) -- so the paper's $A_S, A_M, A_I$
+  (external inflows bypassing ED) cannot be calibrated separately from ED
+  admissions with this extract. Every admission below is therefore modeled
+  as `ED -> unit`, matching how `Admit_<unit>` was already used before this
+  reorganization -- not because every admission is truly ED-origin, but
+  because the data does not let ED-origin and direct admissions be told
+  apart.
+- **No Med-Surg/Tele <-> IP Surge transfer counts.** `ICU DownUp` only
+  tracks flows into/out of ICU; a direct Surge<->GenMed transfer is not
+  observed in either direction. `calibrate_transfer_rates()` below sets both
+  `varphi_M` (Surge -> GenMed) and `psi_S` (GenMed -> Surge) to 0 rather than
+  substituting a value from elsewhere.
+- **ICU-linked transfer counts are internally inconsistent** with a
+  Little's-Law check on ICU's own occupancy and LOS (see above) -- so
+  `eps_S`/`eps_M` (ICU -> Surge / ICU -> GenMed), while used, should be
+  treated as approximate.
+
+# 4. ED parameters (2025)
+
+```{r}
+min_to_day <- 1 / 1440
+
+ed_param <- function(x_min) {
+  x_days <- x_min * min_to_day
+  m <- mean(x_days, na.rm = TRUE)
+  s <- stats::sd(x_days, na.rm = TRUE)
+  data.frame(mean_days = m, sd_days = s, cv = s / m, median_days = stats::median(x_days, na.rm = TRUE))
+}
+
+ed_parameters_2025 <- dplyr::bind_rows(
+  waiting = ed_param(davis_daily_2025$AVERAGE_ED_WAITING_INTERVAL),
+  los = ed_param(davis_daily_2025$AVERAGE_ED_LOS_INTERVAL),
+  boarding = ed_param(davis_daily_2025$AVERAGE_ED_BOARDING_INTERVAL),
+  .id = "interval"
+)
+ed_arrivals_2025 <- davis_daily_2025 |>
+  dplyr::summarise(mean_arrivals_per_day = mean(DAILY_ED_ARRIVALS, na.rm = TRUE),
+                    median_arrivals_per_day = median(DAILY_ED_ARRIVALS, na.rm = TRUE),
+                    mean_lwbt_per_day = mean(DAILY_LWBT_COUNT, na.rm = TRUE))
+
+ed_parameters_2025
+ed_arrivals_2025
+
+# Patient Surge Model input for the "ED" pathway step: door-to-provider wait
+# time, used as the ED step's mean LOS/CV. ED *boarding* is not a model
+# input -- it is produced by the model once ED is chained to GenMed/ICU/
+# Surge, and the observed AVERAGE_ED_BOARDING_INTERVAL is kept only as an
+# external validation target to compare simulated boarding against.
+ed_step_los_days <- ed_parameters_2025$mean_days[ed_parameters_2025$interval == "waiting"]
+ed_step_cv <- ed_parameters_2025$cv[ed_parameters_2025$interval == "waiting"]
+cat(sprintf("ED step (model input): mean LOS = %.4f days, CV = %.4f\n", ed_step_los_days, ed_step_cv))
+cat(sprintf("Validation target (NOT a model input): observed mean ED boarding = %.4f days (CV = %.4f)\n",
+            ed_parameters_2025$mean_days[ed_parameters_2025$interval == "boarding"],
+            ed_parameters_2025$cv[ed_parameters_2025$interval == "boarding"]))
+```
+
+# 5. Parameter calibration (paper Section 2.5)
+
+Every function below reads only from `davis_daily_2025`/`ed_parameters_2025`/
+`ed_arrivals_2025`; nothing is filled in from the paper's Appendix or any
+other non-Davis source.
+
+```{r}
+# Returns 0 (with a warning) instead of erroring when a Davis extract column
+# is absent, so a genuinely missing field reads as "not observed", not a
+# crash.
+col_sum <- function(data, col) {
+  if (!col %in% names(data)) {
+    warning(sprintf("Column '%s' not found; treating its contribution as 0.", col))
+    return(0)
+  }
+  sum(data[[col]], na.rm = TRUE)
+}
+col_mean <- function(data, col) {
+  if (!col %in% names(data)) {
+    warning(sprintf("Column '%s' not found; treating its contribution as 0.", col))
+    return(0)
+  }
+  mean(data[[col]], na.rm = TRUE)
+}
+
+# sigma (ED -> treatment), xi (boarding -> admission), omega (LWBS); paper
+# Section 2.5.1.
+calibrate_ed_rates <- function(ed_parameters, ed_arrivals) {
+  mean_wait_days <- max(ed_parameters$mean_days[ed_parameters$interval == "waiting"], 1e-6)
+  mean_board_days <- max(ed_parameters$mean_days[ed_parameters$interval == "boarding"], 1e-6)
+
+  sigma <- 1 / mean_wait_days
+  xi <- 1 / mean_board_days
+
+  f <- ed_arrivals$mean_lwbt_per_day / ed_arrivals$mean_arrivals_per_day
+  f <- min(max(f, 0), 0.9999)
+  omega <- sigma * f / max(1 - f, 1e-9)
+
+  data.frame(
+    parameter = c("sigma", "omega", "xi"),
+    value = c(sigma, omega, xi),
+    description = c(
+      "ED -> treatment rate (1/mean waiting time)",
+      "LWBS rate (competing-exponential with sigma)",
+      "Boarding -> admission rate (1/mean boarding time, common to all units)"
+    )
+  )
+}
+
+# p_S, p_M, p_I: proportion of treated ED patients admitted to each unit,
+# using total Admit_<unit> as the numerator (no ED-specific admit count
+# exists -- see "What the data does NOT support" above) and observed
+# seen-total (arrivals - LWBS) as the denominator. q = p_S + p_M + p_I.
+calibrate_admission_proportions <- function(davis_daily_2025, unit_map) {
+  seen_total <- sum(davis_daily_2025$DAILY_ED_ARRIVALS, na.rm = TRUE) -
+    sum(davis_daily_2025$DAILY_LWBT_COUNT, na.rm = TRUE)
+
+  proportions <- lapply(names(unit_map), function(model_unit) {
+    p <- col_sum(davis_daily_2025, paste0("ADMIT_", unit_map[[model_unit]])) / seen_total
+    data.frame(unit = model_unit, p = p)
+  }) |> dplyr::bind_rows()
+
+  proportions$q <- sum(proportions$p)
+  proportions
+}
+
+# gamma: treatment completion rate, backed out from mean ED LOS since
+# treatment time is not directly measured.
+calibrate_treatment_rate <- function(ed_rates, admission_proportions, mean_los_days) {
+  mean_wait_days <- 1 / ed_rates$value[ed_rates$parameter == "sigma"]
+  mean_board_days <- 1 / ed_rates$value[ed_rates$parameter == "xi"]
+  q <- admission_proportions$q[1]
+  mean_service_days <- mean_los_days - mean_wait_days - q * mean_board_days
+  data.frame(parameter = "gamma", value = 1 / mean_service_days,
+             description = "Treatment completion rate (1/mean treatment time)")
+}
+
+# varphi (from Surge), psi (from GenMed), epsilon (from ICU): flow-balance
+# estimator r_XY = transitions(X -> Y) / bed-days(X), paper Section 2.5.2.
+# varphi_M (Surge -> GenMed) and psi_S (GenMed -> Surge) are 0: that
+# transfer is not tracked in either direction in this extract (see "What the
+# data does NOT support" above) -- not filled in from any other source.
+calibrate_transfer_rates <- function(davis_daily_2025) {
+  bed_days_S <- col_sum(davis_daily_2025, "OCC_BEDS_IP_SURGE")
+  bed_days_M <- col_sum(davis_daily_2025, "OCC_BEDS_MED_SURG_TELE")
+  bed_days_I <- col_sum(davis_daily_2025, "OCC_BEDS_ICU")
+
+  dplyr::bind_rows(
+    data.frame(from_unit = "Surge", to_unit = "GenMed", parameter = "varphi_M",
+               value = 0, observed = FALSE, note = "Surge <-> GenMed not tracked in the Davis extract"),
+    data.frame(from_unit = "Surge", to_unit = "ICU", parameter = "varphi_I",
+               value = col_sum(davis_daily_2025, "IP_SURGE_TO_ICU") / bed_days_S, observed = TRUE, note = NA),
+    data.frame(from_unit = "Surge", to_unit = "Discharge", parameter = "varphi_D",
+               value = col_sum(davis_daily_2025, "DISCHARGES_IP_SURGE") / bed_days_S, observed = TRUE, note = NA),
+
+    data.frame(from_unit = "GenMed", to_unit = "Surge", parameter = "psi_S",
+               value = 0, observed = FALSE, note = "GenMed <-> Surge not tracked in the Davis extract"),
+    data.frame(from_unit = "GenMed", to_unit = "ICU", parameter = "psi_I",
+               value = col_sum(davis_daily_2025, "MED_SURG_TELE_TO_ICU") / bed_days_M, observed = TRUE, note = NA),
+    data.frame(from_unit = "GenMed", to_unit = "Discharge", parameter = "psi_D",
+               value = col_sum(davis_daily_2025, "DISCHARGES_MED_SURG_TELE") / bed_days_M, observed = TRUE, note = NA),
+
+    data.frame(from_unit = "ICU", to_unit = "Surge", parameter = "eps_S",
+               value = col_sum(davis_daily_2025, "ICU_TO_IP_SURGE") / bed_days_I, observed = TRUE,
+               note = "Approximate: fails the Little's-Law check above"),
+    data.frame(from_unit = "ICU", to_unit = "GenMed", parameter = "eps_M",
+               value = col_sum(davis_daily_2025, "ICU_TO_MED_SURG_TELE") / bed_days_I, observed = TRUE,
+               note = "Approximate: fails the Little's-Law check above"),
+    data.frame(from_unit = "ICU", to_unit = "Discharge", parameter = "eps_D",
+               value = col_sum(davis_daily_2025, "DISCHARGES_ICU") / bed_days_I, observed = TRUE, note = NA)
+  )
+}
+
+# Top-level: runs all of the above and returns one tidy list of data frames.
+calibrate_paper_parameters_davis <- function(davis_daily_2025, ed_parameters, ed_arrivals, unit_map) {
+  ed_rates <- calibrate_ed_rates(ed_parameters, ed_arrivals)
+  admission_proportions <- calibrate_admission_proportions(davis_daily_2025, unit_map)
+  mean_los_days <- ed_parameters$mean_days[ed_parameters$interval == "los"]
+  gamma <- calibrate_treatment_rate(ed_rates, admission_proportions, mean_los_days)
+  transfer_rates <- calibrate_transfer_rates(davis_daily_2025)
+
+  list(
+    ed_rates = dplyr::bind_rows(ed_rates, gamma),
+    admission_proportions = admission_proportions,
+    transfer_rates = transfer_rates
+  )
+}
+```
+
+```{r}
+paper_parameters_davis <- calibrate_paper_parameters_davis(
+  davis_daily_2025 = davis_daily_2025,
+  ed_parameters = ed_parameters_2025,
+  ed_arrivals = ed_arrivals_2025,
+  unit_map = unit_map
+)
+
+paper_parameters_davis$ed_rates
+paper_parameters_davis$admission_proportions
+paper_parameters_davis$transfer_rates
+```
+
+# 6. Build UC Davis civilian profiles
+
+Builds `data/baseline_civilian_profiles_uc_davis.csv`, in the same
+`Profile, Patients_per_day, Pathway, Mean_stays_days, CV_values` schema as
+`data/baseline_civilian_profiles.csv` (see `R/app/mod_baseline.R`). Every
+patient is modeled as `ED -> <unit>[-> <second unit>]` -- a single entry
+type, since the data cannot distinguish ED-origin from direct/transfer
+admissions (Section 3 above). A patient's unit sequence has at most one
+transfer (matching the app's existing profile depth): the destination (a
+second unit, or discharge) is chosen with the competing-exponential
+probability $r_{XY} / \sum_Z r_{XZ}$ from `calibrate_transfer_rates()`, and
+the time spent in the first unit is $1 / \sum_Z r_{XZ}$ (same construction
+already used for $\omega$ above). If a transfer occurs, the second step's
+duration reuses that unit's overall mean LOS, since neither the data nor the
+paper separately estimates a residual LOS after transfer.
+
+```{r}
+# One row per destination (another unit, or "Discharge") for a given source
+# unit, with its routing probability and the mean time spent in the source
+# unit before that exit (1 / total exit rate).
+unit_exit_branches <- function(transfer_rates, source_unit) {
+  rows <- transfer_rates |> dplyr::filter(.data$from_unit == source_unit, .data$value > 0)
+  total_rate <- sum(rows$value)
+  rows |>
+    dplyr::transmute(from_unit, to_unit, probability = value / total_rate,
+                      mean_days_in_source = 1 / total_rate)
+}
+
+# Same CV convention already used across the app's profile configs (see
+# default_cv_for_unit() in R/shared/profiles_deloitte.R): 1 for ICU steps,
+# 0.24 otherwise.
+cv_for_unit_step <- function(unit) if (unit == "ICU") 1 else 0.24
+
+build_unit_profiles <- function(source_unit, entry_patients_per_day, transfer_rates,
+                                 ed_step_los_days, ed_step_cv, second_step_los_days) {
+  if (is.na(entry_patients_per_day) || entry_patients_per_day <= 0) return(NULL)
+  branches <- unit_exit_branches(transfer_rates, source_unit)
+
+  nr = 2
+  purrr::map_dfr(seq_len(nrow(branches)), function(i) {
+    branch <- branches[i, ]
+    transferred <- branch$to_unit != "Discharge"
+
+    units <- c("ED", source_unit, if (transferred) branch$to_unit)
+    stays <- c(ed_step_los_days, branch$mean_days_in_source,
+               if (transferred) second_step_los_days[[branch$to_unit]])
+    cvs <- c(ed_step_cv, cv_for_unit_step(source_unit),
+             if (transferred) cv_for_unit_step(branch$to_unit))
+
+    data.frame(
+      Profile = paste(c("ED", source_unit, if (transferred) branch$to_unit), collapse = "_"),
+      Patients_per_day = round(entry_patients_per_day * branch$probability,nr),
+      Pathway = paste(units, collapse = ", "),
+      Mean_stays_days = paste(round(stays, nr), collapse = ","),
+      CV_values = paste(round(cvs, nr), collapse = ",")
+    )
+  })
+}
+
+build_uc_davis_profiles <- function(davis_daily_2025, paper_parameters_davis, unit_map,
+                                     ed_step_los_days, ed_step_cv) {
+  second_step_los_days <- stats::setNames(
+    sapply(names(unit_map), function(model_unit) col_mean(davis_daily_2025, los_col[[model_unit]])),
+    names(unit_map)
+  )
+
+  lapply(names(unit_map), function(model_unit) {
+    entry_rate <- col_mean(davis_daily_2025, paste0("ADMIT_", unit_map[[model_unit]]))
+    build_unit_profiles(model_unit, entry_rate, paper_parameters_davis$transfer_rates,
+                        ed_step_los_days, ed_step_cv, second_step_los_days)
+  }) |> dplyr::bind_rows()
+}
+```
+
+```{r}
+uc_davis_profiles <- build_uc_davis_profiles(
+  davis_daily_2025 = davis_daily_2025,
+  paper_parameters_davis = paper_parameters_davis,
+  unit_map = unit_map,
+  ed_step_los_days = ed_step_los_days,
+  ed_step_cv = ed_step_cv
+)
+
+uc_davis_profiles
+
+write.csv(uc_davis_profiles, "../data/baseline_civilian_profiles_uc_davis.csv", row.names = FALSE)
+```
+```{r}
+# Separar los parámetros de cada etapa de las trayectorias.
+profile_parameters <- uc_davis_profiles |>
+  dplyr::transmute(
+    profile_id = dplyr::row_number(),
+    Unit = as.character(Pathway),
+    mean_los = as.character(Mean_stays_days),
+    cv = as.character(CV_values)
+  ) |>
+  tidyr::separate_longer_delim(
+    cols = c(Unit, mean_los, cv),
+    delim = ","
+  ) |>
+  dplyr::mutate(
+    Unit = trimws(Unit),
+    mean_los = as.numeric(trimws(mean_los)),
+    cv = as.numeric(trimws(cv))
+  )
+
+# Mostrar valores únicos sin ceros decimales innecesarios.
+format_values <- function(x, digits = 2) {
+  values <- sort(unique(x[!is.na(x)]))
+
+  formatted <- formatC(values, format = "f", digits = digits) |>
+    sub(pattern = "0+$", replacement = "") |>
+    sub(pattern = "\\.$", replacement = "")
+
+  paste(formatted, collapse = ", ")
+}
+
+# Estancias de ED.
+ed_los <- profile_parameters |>
+  dplyr::filter(Unit == "ED") |>
+  dplyr::pull(mean_los)
+
+ed_note <- if (length(ed_los) == 0L) {
+  ""
+} else if (dplyr::n_distinct(ed_los) == 1L) {
+  sprintf(
+    paste0(
+      "The mean length of stay in the emergency department (ED) ",
+      "is %s days (approximately %s hours). "
+    ),
+    format_values(ed_los),
+    format_values(ed_los * 24, digits = 2)
+  )
+} else {
+  sprintf(
+    "Mean lengths of stay in ED vary by profile: %s days. ",
+    format_values(ed_los)
+  )
+}
+
+# CV por unidad, en el orden en que aparecen en la tabla.
+cv_by_unit <- profile_parameters |>
+  dplyr::group_by(Unit) |>
+  dplyr::summarise(
+    cv_values = format_values(cv),
+    .groups = "drop"
+  ) |>
+  dplyr::arrange(match(Unit, unique(profile_parameters$Unit)))
+
+cv_note <- paste0(
+  "The coefficients of variation for LOS by unit are: ",
+  paste(
+    sprintf("%s (%s)", cv_by_unit$Unit, cv_by_unit$cv_values),
+    collapse = "; "
+  ),
+  ". Multiple values indicate variation across profiles. "
+)
+
+table_note <- paste0(
+  "\\medskip\n",
+  "\\begin{minipage}{0.95\\linewidth}\n",
+  "\\footnotesize\n",
+  "\\textit{Notes:} ",
+  ed_note,
+  cv_note,
+  "Arrival rates represent expected numbers of patients per day. ",
+  "Values are rounded for presentation.\n",
+  "\\end{minipage}\n"
+)
+
+latex_output <- sub(
+  "\\end{table}",
+  paste0(table_note, "\\end{table}"),
+  as.character(latex_table),
+  fixed = TRUE
+)
+
+#writeLines(latex_output, "patient_profiles.tex")
+cat(latex_output)
+
+```
+
