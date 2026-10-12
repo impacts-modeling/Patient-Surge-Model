@@ -76,7 +76,8 @@ slice_resource_history <- function(resources, start, end, shift = start) {
 run_baseline_simulation <- function(capacities, duration, n_patients, sim_days,
                                     patient_profiles, profile_prob, fallbacks, baseline,
                                     warmup_capacities = capacities, arrival_process = "even",
-                                    monitor_patients = TRUE, monitor_ed = TRUE) {
+                                    monitor_patients = TRUE, monitor_ed = TRUE,
+                                    credit_boarding_time = TRUE) {
   stopifnot(is.logical(monitor_patients), length(monitor_patients) == 1L,
             !is.na(monitor_patients),
             is.logical(monitor_ed), length(monitor_ed) == 1L, !is.na(monitor_ed))
@@ -97,6 +98,7 @@ run_baseline_simulation <- function(capacities, duration, n_patients, sim_days,
   env <- simmer::simmer("civilian-and-surge")
   dispatcher <- new_bed_dispatcher(env, names(capacities))
   attr(env, "bed_dispatcher") <- dispatcher
+  attr(env, "credit_boarding_time") <- isTRUE(credit_boarding_time)
   for (unit in names(warmup_capacities)) {
     mon <- should_monitor_resource(unit, monitor_ed)
     env <- simmer::add_resource(env, unit, capacity = as.integer(warmup_capacities[[unit]]),

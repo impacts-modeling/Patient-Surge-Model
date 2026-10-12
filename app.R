@@ -24,4 +24,6 @@ shiny::shinyApp(
   ui = app_ui(),
   server = app_server
 )
-# falta ver que no se pase las letras del margen del sider bar
+
+
+# End

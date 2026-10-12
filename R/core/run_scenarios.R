@@ -32,7 +32,8 @@ run_hospital_scenario <- function(config, duration, n_patients, sim_days,
     sim <- run_simulation(config$capacities, duration, n_patients, sim_days,
                           config$patient_profiles, config$profile_prob, config$fallbacks,
                           baseline = baseline, warmup_capacities = warmup_capacities,
-                          arrival_process = arrival_process)
+                          arrival_process = arrival_process,
+                          credit_boarding_time = !isFALSE(config$credit_boarding_time))
     metadata <- attr(sim, "civilian_metadata")
     decorate <- function(rows) {
       dplyr::mutate(rows, replication = .env$replication, scenario_id = .env$scenario_id,
@@ -85,6 +86,7 @@ run_hospital_scenario <- function(config, duration, n_patients, sim_days,
                            warmup_days = if (is.null(metadata)) 0 else metadata$surge_start,
                            sim_days = sim_days, seed = seed,
                            arrival_process = arrival_process,
+                           credit_boarding_time = !isFALSE(config$credit_boarding_time),
                            actual_surge_arrivals = sum(arrivals$population == "surge")))
   }, future.seed = as.integer(seed))
   tables <- stats::setNames(lapply(names(results[[1]]), function(name) {

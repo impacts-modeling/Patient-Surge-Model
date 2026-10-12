@@ -38,7 +38,10 @@ make_study_config <- function(project_dir = ".",
                               civilian_file = file.path(project_dir, "data/baseline_civilian_profiles.csv"),
                               sim_days = 50, num_sims = 40L, seed = 2026L,
                               warmup = list(), search = list(), mode = c("paper", "development"),
-                              workers = 4L) {
+                              workers = 4L,
+                              # Default on: boarding time in an inpatient bed
+                              # counts toward the next unit's stay; ED boarding is never credited.
+                              credit_boarding_time = TRUE) {
   mode <- match.arg(mode)
   profiles <- deloitte_test_profile_config()
   civilian <- utils::read.csv(civilian_file, stringsAsFactors = FALSE)
@@ -66,7 +69,8 @@ make_study_config <- function(project_dir = ".",
   baseline$arrival_rates <- stats::setNames(civilian$Patients_per_day, civilian$Profile)
   config <- list(capacities = capacities, warmup_capacities = capacities,
                  patient_profiles = profiles$patient_profiles, profile_prob = profiles$profile_prob,
-                 fallbacks = profiles$fallbacks, baseline = baseline, arrival_process = "even")
+                 fallbacks = profiles$fallbacks, baseline = baseline, arrival_process = "even",
+                 credit_boarding_time = !isFALSE(credit_boarding_time))
   validate_patient_configuration(capacities, config$patient_profiles, config$profile_prob, config$fallbacks)
   validate_baseline_config(baseline, capacities, config$fallbacks)
   app_presets <- read_app_search_presets(project_dir)
@@ -468,7 +472,8 @@ run_scenario_study <- function(study, design, expand = FALSE, output_dir = NULL,
       patient_profiles = study$config$patient_profiles, profile_prob = study$config$profile_prob,
       fallbacks = study$config$fallbacks, baseline = study$config$baseline,
       warmup_capacities = study$config$warmup_capacities,
-      arrival_process = study$config$arrival_process), study$search)
+      arrival_process = study$config$arrival_process,
+      credit_boarding_time = !isFALSE(study$config$credit_boarding_time)), study$search)
     search_key <- study_fingerprint(list(engine = engine, args = args))
     search_path <- file.path(cache_dir, paste0(search_key, "_search.rds"))
     search_hit <- file.exists(search_path)

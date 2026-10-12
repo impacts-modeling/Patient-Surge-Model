@@ -82,6 +82,37 @@ build_body <- function() {
           .main-sidebar details.sidebar-section:not([open]) > summary::after {
             transform: translateY(-50%) rotate(-90deg);
           }
+          /* AdminLTE sets white-space: nowrap inside the sidebar menu; let help text wrap. */
+          .main-sidebar .help-block {
+            white-space: normal;
+          }
+          .main-sidebar .sidebar-info-icon {
+            color: #8aa4af;
+            font-size: 14px;
+            font-weight: normal;
+            margin-left: 5px;
+          }
+          .main-sidebar .sidebar-info-icon:hover,
+          .main-sidebar .sidebar-info-icon:focus,
+          .main-sidebar .sidebar-info-icon[aria-expanded='true'] {
+            color: #ffffff;
+            text-decoration: none;
+          }
+          /* Keep the selected value of narrow sidebar selects on one line. */
+          .main-sidebar .selectize-input > .item {
+            max-width: calc(100% - 16px);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          /* Start below floated input columns; otherwise the help text's negative
+             top margin pulls its first line beside the left column. */
+          .main-sidebar .sidebar-info-text {
+            clear: both;
+          }
+          .main-sidebar .sidebar-info-text .help-block {
+            margin: -4px 0 8px;
+          }
           "
         )
       ),

@@ -290,6 +290,13 @@ abandonment.
 Fallback placement uses an available substitute bed but retains the LOS assigned
 to the original trajectory step.
 
+**Boarding credit.** Time spent boarding in an inpatient bed counts toward the stay in
+the next unit. When the bed is obtained the patient stays for the assigned LOS minus
+the time already waited; if the wait reaches the whole assigned LOS, that step is
+considered served without a bed and the patient continues with the next step of the
+pathway, keeping the bed currently held. The credit is never applied to ED boarding.
+Boarding episodes therefore end either when the bed is obtained or when the stay is
+served while waiting. Care received while boarding is not otherwise modeled.
 ## 5. Estimating bed expansion
 
 The optimizer estimates additional **GenMed** and **ICU** beds. Its acceptance

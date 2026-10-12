@@ -38,7 +38,7 @@ Each call runs the civilian baseline and the scenarios of its design and, by def
 - **Horizon and replications:** `sim_days = 50`, `num_sims = 40` descriptive replications per scenario, `seed = 2026`.
 - **Warm-up:** fixed duration, `baseline_defaults()$warmup_days` (30 days) unless overridden with `warmup = list(warmup_days = ...)`. The manuscript driver sets it explicitly in `run_all_scenarios.R`. No automated stability test is run: choose and justify the duration from raw-occupancy plots (`plot_raw_dynamics.R`) and assess sensitivity to it.
 - **Workers:** `workers = 4` is a local setting of this pipeline; it is unrelated to `workers` in `R/01_config.R`, which sizes the deployed app.
-
+- **Boarding credit:** `credit_boarding_time = TRUE` (default) credits boarding time in an inpatient bed toward the next unit's stay (never ED boarding), and the manuscript results use it. `make_study_config(credit_boarding_time = FALSE)` runs the comparison model where waiting never shortens the next stay; use a separate `output_dir` and cache for that run.
 Pre-event capacity is identical across comparisons, and expansion beds are activated at day 0 (surge onset). Seeds are shared across scenarios for paired contrasts. The capacity search uses its own seeds (`search_seed = seed + 300000`) and an independent final evaluation. A failed search produces neither an expanded scenario nor a recommendation.
 
 Custom example:

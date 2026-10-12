@@ -12,6 +12,25 @@ app_server <- function(input, output, session) {
       unlimited_selected = unlimited_mode)
     mod_unlimited_server("unlimited", analytic_data)
     baseline_config <- mod_baseline_server("baseline", surge_config)
+    # Number of simulations is capped lower when every replication includes a
+    # civilian warm-up (civilian-only runs always do). The input's max only
+    # limits the spinner, so run_sim also checks the typed value.
+    max_num_sims <- shiny::reactive({
+      max_num_sims_for(isTRUE(input[["baseline-enabled"]]) || civilian_only())
+    })
+    shiny::observeEvent(max_num_sims(), {
+      limit <- max_num_sims()
+      current <- shiny::isolate(input$num_sims)
+      if (!is.null(current) && is.finite(current) && current > limit) {
+        shiny::updateNumericInput(session, "num_sims", max = limit, value = limit)
+        shiny::showNotification(
+          sprintf("Number of simulations reduced to %d, the maximum for this scenario.", limit),
+          type = "message", duration = 6)
+      } else {
+        shiny::updateNumericInput(session, "num_sims", max = limit)
+      }
+    })
+
     profile_config <- shiny::reactive({
       config <- surge_config()
       if (is.null(config)) return(NULL)
@@ -120,7 +139,19 @@ app_server <- function(input, output, session) {
         )
         return(invisible(NULL))
       }
-  
+      num_sims <- input$num_sims
+      if (!unlimited_mode() &&
+          (is.null(num_sims) || !is.finite(num_sims) || num_sims < 1 ||
+           num_sims != floor(num_sims) || num_sims > max_num_sims())) {
+        shiny::showNotification(
+          sprintf("Number of simulations must be a whole number from 1 to %d for this scenario.", max_num_sims()),
+          type = "error",
+          duration = 8
+        )
+        update_calculation_buttons()
+        return(invisible(NULL))
+      }
+
       simulation_running(TRUE)
       update_calculation_buttons()
       on.exit({
@@ -353,6 +384,7 @@ app_server <- function(input, output, session) {
             baseline = config$baseline,
             warmup_capacities = config$capacities,
             arrival_process = config$arrival_process,
+            credit_boarding_time = !isFALSE(config$credit_boarding_time),
             final_num_sims = bed_search_config$final_num_sims,
             num_sims = bed_search_config$num_sims,
             max_evaluations = bed_search_config$max_evaluations,

@@ -14,7 +14,19 @@ if (workers > 1L) {
 }
 
 # Interactive development defaults; final manuscript runs need a separate pilot.
-app_development_config <- list(sim_days = 50L, num_sims = 10L, simulation_seed = 2026L)
+# max_num_sims_*: largest "Number of simulations" accepted by the dashboard, to
+# keep run times (and hosted sessions on Connect Cloud) manageable. Civilian
+# flow adds a warm-up to every replication, so its limit is lower.
+app_development_config <- list(sim_days = 50L, num_sims = 10L, simulation_seed = 2026L,
+                               max_num_sims_civilian = 30L, max_num_sims_surge_only = 60L)
+
+max_num_sims_for <- function(civilian_enabled) {
+  if (isTRUE(civilian_enabled)) {
+    app_development_config$max_num_sims_civilian
+  } else {
+    app_development_config$max_num_sims_surge_only
+  }
+}
 # One exact-threshold search bank; final evaluation uses independent seeds.
 # Every field here is forwarded as-is to find_n_needed() (see its definition
 # in R/core/hospital_trajectory.R for the full explanation of each argument).

@@ -196,7 +196,17 @@ new_bed_dispatcher <- function(env, units) {
     }
     if (length(signals)) signals else ".no_bed_allocated"
   }
+  # A patient that gives up its request (credited boarding time) drops any pending
+  # request and any bed already reserved for it, so no capacity is leaked.
+  cancel <- function() {
+    patient <- simmer::get_name(env)
+    state$requests[[patient]] <- NULL
+    state$priority[[patient]] <- NULL
+    state$reservations[[patient]] <- NULL
+    invisible(NULL)
+  }
   list(register = register, dispatch = dispatch, signal_for = signal_for,
+       cancel = cancel,
        assigned = function() state$reservations[[simmer::get_name(env)]],
        claim = function() {
          state$reservations[[simmer::get_name(env)]] <- NULL
@@ -219,6 +229,15 @@ new_bed_dispatcher <- function(env, units) {
 # waiting -- a fresh arrival or a patient boarding into their next step --
 # not to someone already being cared for in a fallback). Whichever unit the
 # patient ends this step in becomes `previous_unit` for the next step.
+#
+# Boarding credit (attr(env, "credit_boarding_time"), default on; FALSE gives the
+# comparison model where waiting never shortens the next stay): while a
+# patient boards in an inpatient bed (never the ED), the time already waited
+# counts toward this step's length of stay. On obtaining a bed the stay is
+# `LOS - wait`; if the wait reaches the whole LOS the request is cancelled (the
+# dispatcher also drops any bed reserved for it), the bed already held is kept, and
+# the patient continues with the next step. The LOS is drawn when the request
+# starts, from the same per-patient service-time matrix, so draws are unchanged.
 run_pathway_step <- function(env, profile_name, profile, fallbacks,
                              step_index, previous_unit, service_time_for) {
   dispatcher <- attr(env, "bed_dispatcher")
@@ -231,17 +250,28 @@ run_pathway_step <- function(env, profile_name, profile, fallbacks,
   primary <- profile$unit[[step_index]]
   candidates <- unique(c(primary, fallbacks[[primary]]))
   held <- !is.null(previous_unit)
+  # Sensitivity option: boarding time in an inpatient unit counts toward the next stay.
+  # Never applies to ED boarding (the ED does not deliver the next unit's care).
+  credit <- held && isTRUE(attr(env, "credit_boarding_time")) &&
+    !identical(previous_unit, "ED")
   waiting_resource <- if (held) boarding_resource(primary) else logical_queue_resource(primary)
   my_signal <- function() dispatcher$signal_for(simmer::get_name(env))
   step_service_time <- service_time_for(step_index)
   id <- paste(profile_name, step_index, sep = "_")
+  los_key <- paste0(".", id, "_los")
+  start_key <- paste0(".", id, "_request_time")
 
   continuation_for <- function(unit) {
     # Whether `unit` is the primary or a fallback, the patient completes the
     # full step here -- a fallback stay is not revisited if the primary frees
     # up mid-step (see the design note above run_pathway_step()).
+    stay <- if (credit) {
+      # The wait already elapsed counts toward this step's length of stay.
+      function() max(0, simmer::get_attribute(env, los_key) -
+                        (simmer::now(env) - simmer::get_attribute(env, start_key)))
+    } else step_service_time
     simmer::trajectory(paste0(id, "_in_", unit)) |>
-      simmer::timeout(step_service_time) |>
+      simmer::timeout(stay) |>
       simmer::join(run_pathway_step(env, profile_name, profile, fallbacks,
                                     step_index + 1L, unit, service_time_for))
   }
@@ -256,16 +286,46 @@ run_pathway_step <- function(env, profile_name, profile, fallbacks,
     option = function() match(dispatcher$assigned(), candidates),
     continue = rep(TRUE, length(candidate_branches))), candidate_branches))
 
-  simmer::trajectory(paste0(id, "_request")) |>
-    simmer::seize(waiting_resource, 1) |>
+  # Credited boarding: if the wait reaches this step's whole length of stay, the
+  # patient stops requesting, keeps the bed already held (the step was served while
+  # boarding) and moves on to the next step of the pathway.
+  step_served_while_waiting <- simmer::trajectory(paste0(id, "_served_while_waiting")) |>
+    simmer::set_attribute(paste0(".", id, "_cancel"), function() {
+      dispatcher$cancel()
+      0
+    }) |>
+    simmer::untrap(my_signal) |>
+    simmer::release(waiting_resource, 1) |>
+    simmer::send(dispatcher$dispatch) |>
+    simmer::join(run_pathway_step(env, profile_name, profile, fallbacks,
+                                  step_index + 1L, previous_unit, service_time_for))
+  await <- simmer::trajectory(paste0(id, "_await"))
+  if (credit) {
+    await <- await |>
+      simmer::renege_in(function() max(0, simmer::get_attribute(env, los_key) -
+                                          (simmer::now(env) - simmer::get_attribute(env, start_key))),
+                        out = step_served_while_waiting, keep_seized = TRUE)
+  }
+  await <- await |> simmer::wait()
+
+  request <- simmer::trajectory(paste0(id, "_request")) |>
+    simmer::seize(waiting_resource, 1)
+  if (credit) {
+    request <- request |>
+      simmer::set_attribute(los_key, step_service_time) |>
+      simmer::set_attribute(start_key, function() simmer::now(env))
+  }
+  request <- request |>
     simmer::trap(my_signal) |>
     simmer::set_attribute(paste0(".", id, "_request"),
       function() dispatcher$register(candidates, priority = held)) |>
     simmer::send(dispatcher$dispatch) |>
     simmer::branch(function() if (is.null(dispatcher$assigned())) 1L else 2L,
       continue = c(TRUE, TRUE),
-      simmer::trajectory(paste0(id, "_await")) |> simmer::wait(),
-      simmer::trajectory(paste0(id, "_ready"))) |>
+      await,
+      simmer::trajectory(paste0(id, "_ready")))
+  if (credit) request <- request |> simmer::renege_abort()
+  request |>
     simmer::untrap(my_signal) |>
     simmer::release(waiting_resource, 1) |>
     simmer::join(take_bed)
@@ -309,7 +369,10 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
                            patient_profiles, profile_prob, fallbacks = list(),
                            recheck_interval_days = 1, baseline = NULL,
                            warmup_capacities = capacities, arrival_process = "even",
-                           monitor_patients = TRUE, monitor_ed = TRUE) {
+                           monitor_patients = TRUE, monitor_ed = TRUE,
+                           credit_boarding_time = TRUE) {
+  stopifnot(is.logical(credit_boarding_time), length(credit_boarding_time) == 1L,
+            !is.na(credit_boarding_time))
   stopifnot(is.logical(monitor_patients), length(monitor_patients) == 1L,
             !is.na(monitor_patients),
             is.logical(monitor_ed), length(monitor_ed) == 1L, !is.na(monitor_ed))
@@ -324,7 +387,7 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
     return(run_baseline_simulation(capacities, duration, n_patients, sim_days,
                                     patient_profiles, profile_prob, fallbacks, baseline,
                                     warmup_capacities, arrival_process, monitor_patients,
-                                    monitor_ed))
+                                    monitor_ed, credit_boarding_time))
   }
   validate_patient_configuration(capacities, patient_profiles, profile_prob, fallbacks)
   stopifnot(
@@ -334,6 +397,7 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
   )
   hospital_sim <- simmer::simmer("hospital-simulation")
   attr(hospital_sim, "bed_dispatcher") <- new_bed_dispatcher(hospital_sim, names(capacities))
+  attr(hospital_sim, "credit_boarding_time") <- credit_boarding_time
   for (unit_name in names(capacities)) {
     mon <- should_monitor_resource(unit_name, monitor_ed)
     hospital_sim <- simmer::add_resource(
@@ -776,6 +840,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
                           workers = 1, search_seed = 2026, verbose = FALSE,
                           baseline = NULL, warmup_capacities = capacities,
                           arrival_process = "even", final_num_sims = 50L,
+                          credit_boarding_time = TRUE,
                           # incremental is the default and the only one used by the app and the
                           # manuscript pipeline; analytical (a closed-form mean-stay approximation,
                           # not simulation-based) remains available for comparison/benchmarking but
@@ -935,7 +1000,8 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
     simulation_args <- list(capacities = simulation_capacities, duration = duration,
       n_patients = n_patients, sim_days = sim_days, patient_profiles = patient_profiles,
       profile_prob = profile_prob, fallbacks = fallbacks, baseline = baseline,
-      warmup_capacities = warmup_capacities, arrival_process = arrival_process)
+      warmup_capacities = warmup_capacities, arrival_process = arrival_process,
+      credit_boarding_time = credit_boarding_time)
     thresholds <- c(GenMed = wait_time_limit_GenMed, ICU = wait_time_limit_ICU)
 
     run_batch <- function(batch_ids, batch_seed) {

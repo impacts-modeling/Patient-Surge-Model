@@ -1,4 +1,25 @@
 # Sidebar UI ------------------------------------------------------------
+# Info icon placed right after a label; clicking it shows or hides the matching
+# sidebar_info_text() (hidden by default) using the Bootstrap 3 collapse plugin
+# bundled with shinydashboard. The icon is a link, so clicking it inside a
+# checkbox label does not toggle the checkbox.
+with_info <- function(label, info_id) {
+  shiny::tagList(
+    label,
+    shiny::tags$a(
+      href = paste0("#", info_id), class = "sidebar-info-icon", role = "button",
+      `data-toggle` = "collapse", `aria-expanded` = "false", `aria-controls` = info_id,
+      title = "Show information", shiny::icon("circle-info")
+    )
+  )
+}
+
+# A div (not helpText's <p>) so it can also hold conditionalPanel()s.
+sidebar_info_text <- function(info_id, ...) {
+  shiny::div(id = info_id, class = "collapse sidebar-info-text",
+             shiny::div(class = "help-block", ...))
+}
+
 build_sidebar <- function() {
   col1 <- 6
   search_config <- bed_search_configs$development
@@ -25,14 +46,17 @@ build_sidebar <- function() {
       )
     ),
     shiny::div(style = "padding: 0 10px;",
-      shiny::selectInput("scenario_mode", "Scenario to run",
+      shiny::selectInput("scenario_mode", with_info("Scenario to run", "info_scenario_mode"),
         choices = c("Surge event" = "surge", "Routine civilian operation only" = "civilian_only",
                     "Unlimited capacity (analytic)" = "unlimited"),
         selected = "surge"),
-      shiny::conditionalPanel("input.scenario_mode == 'civilian_only'",
-        shiny::helpText("Enable Routine Civilian Flow and save civilian profiles in Hospital Setup. Surge profiles are not required.")),
-      shiny::conditionalPanel("input.scenario_mode == 'unlimited'",
-        shiny::helpText("Occupancy under unlimited capacity is computed analytically (no simulation). Bed counts, replications and seed are not used."))
+      sidebar_info_text("info_scenario_mode",
+        shiny::conditionalPanel("input.scenario_mode == 'surge'",
+          "Surge arrivals, plus routine civilian flow if it is enabled in Hospital Setup."),
+        shiny::conditionalPanel("input.scenario_mode == 'civilian_only'",
+          "Enable Routine Civilian Flow and save civilian profiles in Hospital Setup. Surge profiles are not required."),
+        shiny::conditionalPanel("input.scenario_mode == 'unlimited'",
+          "Occupancy under unlimited capacity is computed analytically (no simulation). Bed counts, replications and seed are not used."))
     ),
     sidebarMenu(
       id = "sidebarid",
@@ -49,25 +73,49 @@ build_sidebar <- function() {
                 width = col1,
                 shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
                   shiny::numericInput("n_patients", "Surge Patients per Day", min = 1, max = 20, value = 10, step = "any")),
-                shiny::numericInput("sim_days", "Observation Duration (days)", min = 1, max = 50, value = app_development_config$sim_days)
+                # Keep the icon on the label's second line so this label stays two
+                # lines tall, aligned with "Number of simulations" beside it.
+                shiny::numericInput("sim_days",
+                                    shiny::tagList("Observation ", shiny::span(class = "text-nowrap",
+                                      with_info("Duration (days)", "info_sim_days"))),
+                                    min = 1, max = 50, value = app_development_config$sim_days)
               ),
               shiny::column(
                 width = col1,
                 shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
                   shiny::numericInput("duration", "Surge Arrival Period (days)", min = 1, max = 30, value = 10)),
                 shiny::conditionalPanel("input.scenario_mode != 'unlimited'",
-                  shiny::numericInput("num_sims", "Number of simulations", min = 1, max = 20, value = app_development_config$num_sims))
+                  shiny::numericInput("num_sims",
+                                      shiny::tagList("Number of ", shiny::span(class = "text-nowrap",
+                                        with_info("simulations", "info_num_sims"))),
+                                      min = 1,
+                                      max = max_num_sims_for(FALSE), value = app_development_config$num_sims))
+              )
+            ),
+            sidebar_info_text("info_sim_days",
+              "Day 0 starts observation and surge arrivals. With civilian flow enabled, warm-up occurs before day 0."),
+            sidebar_info_text("info_num_sims", sprintf(
+              "At most %d simulations with routine civilian arrivals enabled (every replication includes a warm-up) and %d without, to keep run times manageable.",
+              max_num_sims_for(TRUE), max_num_sims_for(FALSE))),
+            shiny::fluidRow(
+              shiny::column(
+                width = col1,
+                shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
+                  shiny::selectInput("surge_arrival_process",
+                    shiny::tagList("Surge arrival ", shiny::span(class = "text-nowrap",
+                      with_info("process", "info_surge_arrival_process"))),
+                    choices = c("Even" = "even", "Poisson" = "poisson"),
+                    selected = "even"))
+              ),
+              shiny::column(
+                width = col1,
+                shiny::conditionalPanel("input.scenario_mode != 'unlimited'",
+                  shiny::numericInput("simulation_seed", "Simulation seed", value = app_development_config$simulation_seed, min = 1, step = 1))
               )
             ),
             shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
-              shiny::selectInput("surge_arrival_process", "Surge arrival process",
-                choices = c("Evenly spaced" = "even", "Poisson (random arrivals)" = "poisson"),
-                selected = "even"),
-              shiny::helpText("For Poisson arrivals, patients/day is the mean rate; the actual count varies. The observation duration must cover the full arrival period.")),
-            shiny::conditionalPanel("input.scenario_mode != 'unlimited'",
-              shiny::numericInput("simulation_seed", "Simulation seed", value = app_development_config$simulation_seed, min = 1, step = 1)),
-            shiny::helpText(sprintf("Day 0 starts observation and surge arrivals. With civilian flow enabled, warm-up occurs before day 0. Bed search uses %d replications per candidate and %d independent final replications in development mode.",
-              search_config$num_sims, search_config$final_num_sims))
+              sidebar_info_text("info_surge_arrival_process",
+                "For Poisson arrivals, patients/day is the mean rate; the actual count varies. The observation duration must cover the full arrival period."))
           ),
           id = "tour_simulation_parameters",
           data.step = 8,
@@ -103,22 +151,23 @@ build_sidebar <- function() {
           shiny::tags$details(
             class = "sidebar-section", open = NA,
             shiny::tags$summary("Calculate HxS Expansion"),
-            shiny::h4("Maximum Mean Wait Limits (Days):"),
+            shiny::h4(with_info("Maximum Mean Wait Limits (Days):", "info_wait_limits")),
+            sidebar_info_text("info_wait_limits", paste(compliance_note, sprintf(
+              "Bed search uses %d replications per candidate and %d independent final replications in development mode.",
+              search_config$num_sims, search_config$final_num_sims))),
             shiny::fluidRow(
-              shiny::column(width = 6, shiny::numericInput("congestion_index", "GedMed", min = 0.01, max = 30, value = 1, step = 0.5)),
+              shiny::column(width = 6, shiny::numericInput("congestion_index", "GenMed", min = 0.01, max = 30, value = 1, step = 0.5)),
               shiny::column(width = 6, shiny::numericInput("congestion_index_icu", "ICU", min = 0.01, max = 30, value = 1, step = 0.5))
             ),
-            shiny::helpText(paste(
-              compliance_note
-            )),
             shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
               shiny::actionButton("run_N", "Estimate Bed Expansion", class = "btn-primary")),
-            shiny::h4("Additional Bed Capacity:"),
+            shiny::h4(with_info("Additional Bed Capacity:", "info_hxs")),
+            sidebar_info_text("info_hxs",
+              "HxS additions apply to the selected scenario. Use zero additions to evaluate existing capacity."),
             shiny::fluidRow(
-              shiny::column(width = 6, shiny::numericInput("genmed_msf", "HxS GedMed", min = 0, max = 100, value = 0)),
+              shiny::column(width = 6, shiny::numericInput("genmed_msf", "HxS GenMed", min = 0, max = 100, value = 0)),
               shiny::column(width = 6, shiny::numericInput("icu_msf", "HxS ICU", min = 0, max = 100, value = 0))
-            ),
-            shiny::helpText("HxS additions apply to the selected scenario. Use zero additions to evaluate existing capacity.")
+            )
           ),
           id = "tour_bed_expansion",
           data.step = 10,

@@ -11,9 +11,8 @@ unlimited_assumption_note <- paste(
   "exactly from the model inputs (Poisson civilian arrivals; evenly spaced or Poisson surge arrivals;",
   "log-normal stays discretised on a 0.05-day grid). The band is the 5th-95th percentile of the number",
   "of occupied beds at that instant (a prediction band for the random occupancy, not a confidence",
-  "interval); it has no Monte Carlo error but ignores uncertainty in the inputs. Peaks are the peak",
-  "over time of the expected occupancy and of the pointwise percentiles, not the distribution of the",
-  "maximum. Bed counts, queues, waits and boarding do not apply to this scenario."
+  "interval). Peaks are the peak over time of the expected occupancy and of the pointwise percentiles,",
+  "not the distribution of the maximum. Bed counts, queues, waits and boarding do not apply to this scenario."
 )
 
 # config: surge configuration with $baseline and $arrival_process (profile_config()).
@@ -82,11 +81,11 @@ mod_unlimited_ui <- function(id) {
     shiny::fluidRow(
       shinydashboard::box(
         title = "Expected Occupied Beds (Unlimited Capacity)", status = "success",
-        solidHeader = TRUE, width = 8, collapsible = TRUE,
+        solidHeader = TRUE, width = 7, collapsible = TRUE,
         plotly::plotlyOutput(ns("occupancy_plot"))
       ),
       shinydashboard::box(
-        title = "Peak Occupancy", status = "success", solidHeader = TRUE, width = 4,
+        title = "Peak Occupancy", status = "success", solidHeader = TRUE, width = 5,
         collapsible = TRUE,
         shiny::tableOutput(ns("peak_table")),
         style = "overflow-x: auto;"
@@ -104,8 +103,7 @@ mod_unlimited_server <- function(id, analytic_data) {
         return(shiny::div(class = "alert alert-info",
           "Unlimited capacity selected. Click Run Simulation to compute the analytic occupancy (no simulation is run)."))
       }
-      shiny::div(class = "alert alert-info", unlimited_assumption_note, shiny::tags$br(),
-        sprintf("Computed in %.1f seconds.", data$elapsed_seconds))
+      shiny::div(class = "alert alert-info", unlimited_assumption_note)
     })
     output$occupancy_plot <- plotly::renderPlotly({
       shiny::req(analytic_data())

@@ -297,6 +297,7 @@ build_report_params <- function(input, profile_config) {
     list(
       `Scenario` = if (civilian_only) "Routine civilian operation only" else "Surge event",
       `Surge arrival process` = profile_config$arrival_process,
+      `Boarding time credited toward next stay` = !isFALSE(profile_config$credit_boarding_time),
       `Surge Patients per Day` = if (civilian_only) 0 else input$n_patients,
       `Surge Arrival Period (days)` = if (civilian_only) 0 else input$duration,
       `Simulation Duration (days)` = input$sim_days,

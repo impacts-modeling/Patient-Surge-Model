@@ -38,7 +38,7 @@ Each patient is randomly assigned a profile using the configured arrival probabi
 - **Bed allocation:** patients request the primary unit and its configured fallbacks at once and take the first free bed, preferring the primary. A patient placed in a fallback completes that step there and is not transferred if the primary frees up.
 - **Waiting:** bed acquisition is event-driven; there is no periodic recheck. A patient with no bed waits in the primary unit's queue.
 - **Boarding:** after a step, patients keep their current bed until the next unit has a bed, then release it; they never hold two beds.
-- **Ambulatory profiles:** patients without an inpatient pathway receive a 0.1-day delay and occupy no hospital bed.
+- **Boarding credit:** the time already waited while boarding in an inpatient bed counts toward the next unit's stay: on obtaining the bed the patient stays for the assigned LOS minus the wait, and if the wait reaches the whole stay that step is considered served and the patient continues with the next step. ED boarding is never credited. This is always on in the app and the manuscript runs; calling `run_simulation()`, `find_n_needed()` or `run_hospital_scenario()` (`config$credit_boarding_time`) with `FALSE` gives the comparison model where waiting never shortens the next stay.
 - **Observation period:** runs stop at the selected horizon, so patients may still be waiting or receiving care when observation ends.
 
 The server combines resource and patient monitoring data across replications to produce plots and summary tables. Replications can run in parallel, depending on available cores and the runtime configuration.
