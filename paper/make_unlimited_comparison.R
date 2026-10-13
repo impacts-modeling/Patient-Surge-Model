@@ -156,7 +156,8 @@ make_unlimited_comparison <- function(unlimited_dir = "outputs/unlimited_demand_
       ggplot2::geom_line(ggplot2::aes(y = .data$des_mean, color = "DES mean"), linetype = "dashed") +
       ggplot2::geom_vline(xintercept = 0, linetype = "dotted") +
       ggplot2::facet_grid(rows = ggplot2::vars(.data$resource), cols = ggplot2::vars(.data$scenario_label),
-                          scales = "free_y") +
+                          scales = "free_y",
+                          labeller = ggplot2::labeller(resource = figure_unit_label)) +
       ggplot2::labs(x = "Days from surge onset (negative = civilian warm-up)", y = "Occupied beds",
         color = NULL, fill = NULL,
         caption = "Unlimited capacity. DES band: empirical 5-95% across replications; analytic band: 5-95% of the exact distribution.") +
@@ -166,7 +167,8 @@ make_unlimited_comparison <- function(unlimited_dir = "outputs/unlimited_demand_
       ggplot2::geom_line(ggplot2::aes(y = .data$des_fraction, color = "DES"), linetype = "dashed") +
       ggplot2::geom_hline(yintercept = c(0.95, 0.99), linetype = "dotted") +
       ggplot2::geom_vline(xintercept = warmup, linetype = "dotdash") +
-      ggplot2::facet_wrap(ggplot2::vars(.data$resource)) +
+      ggplot2::facet_wrap(ggplot2::vars(.data$resource),
+                          labeller = ggplot2::labeller(resource = figure_unit_label)) +
       ggplot2::labs(x = "Days since the start of the civilian warm-up",
         y = "Expected occupancy / equilibrium occupancy", color = NULL,
         caption = sprintf("Civilian flow only, unlimited capacity. Dotted: 95%% and 99%%; dash-dot: warm-up length (%g days).", warmup)) +

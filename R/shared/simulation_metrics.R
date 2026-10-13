@@ -55,6 +55,10 @@ bed_wait_summary <- function(run, confidence_level = 0.95, completed_only = TRUE
     dplyr::group_by(.data$scenario_id, .data$replication, .data$resource, .data$population, .data$cohort) |>
     dplyr::summarise(requests = dplyr::n(), pending = sum(!.data$resolved),
       mean_wait_days = if (all(.data$resolved)) mean(.data$wait_days) else NA_real_,
+      # Observed-time mean over ALL requests: a resolved request contributes its wait, a
+      # pending one the time waited up to the horizon. Right-censored, so a lower bound of
+      # the true mean whenever requests are pending (equal to it when none are).
+      mean_observed_wait_days = mean(.data$elapsed_wait_days),
       percent_observed_waiting = 100 * mean(.data$elapsed_wait_days > 1e-10),
       mean_resolved_wait_days = safe_mean(.data$wait_days, NA_real_),
       mean_resolved_positive_wait_days = safe_mean(.data$wait_days[.data$wait_days > 1e-10], NA_real_),
@@ -66,6 +70,8 @@ bed_wait_summary <- function(run, confidence_level = 0.95, completed_only = TRUE
       total_requests = sum(.data$requests), pending_requests = sum(.data$pending),
       sd_mean_wait = stats::sd(.data$mean_wait_days),
       mean_wait_days = mean(.data$mean_wait_days),
+      sd_observed_wait = stats::sd(.data$mean_observed_wait_days),
+      mean_observed_wait_days = mean(.data$mean_observed_wait_days),
       percent_observed_waiting = mean(.data$percent_observed_waiting),
       # Unlike mean_wait_days (NA for the whole replication if even one
       # request in it is unresolved), this drops only the individual
@@ -82,6 +88,11 @@ bed_wait_summary <- function(run, confidence_level = 0.95, completed_only = TRUE
         pmax(1, .data$replications_with_requests - 1)) * .data$mcse,
       upper = .data$mean_wait_days + stats::qt((1 + confidence_level) / 2,
         pmax(1, .data$replications_with_requests - 1)) * .data$mcse,
+      mcse_observed = .data$sd_observed_wait / sqrt(.data$replications_with_requests),
+      lower_observed = .data$mean_observed_wait_days - stats::qt((1 + confidence_level) / 2,
+        pmax(1, .data$replications_with_requests - 1)) * .data$mcse_observed,
+      upper_observed = .data$mean_observed_wait_days + stats::qt((1 + confidence_level) / 2,
+        pmax(1, .data$replications_with_requests - 1)) * .data$mcse_observed,
       mcse_resolved = .data$sd_resolved_wait / sqrt(.data$replications_with_resolved),
       lower_resolved = .data$mean_resolved_wait_days - stats::qt((1 + confidence_level) / 2,
         pmax(1, .data$replications_with_resolved - 1)) * .data$mcse_resolved,
@@ -145,13 +156,21 @@ boarding_time_summary <- function(run) {
     dplyr::group_by(.data$scenario_id, .data$replication, .data$resource, .data$population) |>
     dplyr::summarise(episodes = dplyr::n(), pending = sum(!.data$resolved),
       maximum_boarding_days = safe_max(.data$boarding_days),
-      mean_boarding_days = safe_mean(.data$boarding_days), .groups = "drop")
+      mean_boarding_days = safe_mean(.data$boarding_days),
+      # Share of episodes with a positive boarding time, and the mean among them
+      # (zero-length episodes, where the bed was available at once, are excluded).
+      percent_boarded = 100 * mean(.data$boarding_days > 1e-10),
+      mean_positive_boarding_days = safe_mean(.data$boarding_days[.data$boarding_days > 1e-10], NA_real_),
+      .groups = "drop")
   summary <- replications |>
     dplyr::group_by(.data$scenario_id, .data$resource, .data$population) |>
     dplyr::summarise(replications_with_episodes = dplyr::n(),
       total_episodes = sum(.data$episodes), pending_episodes = sum(.data$pending),
       mean_maximum_boarding_days = safe_mean(.data$maximum_boarding_days),
-      mean_boarding_days = safe_mean(.data$mean_boarding_days), .groups = "drop")
+      mean_boarding_days = safe_mean(.data$mean_boarding_days),
+      percent_boarded = safe_mean(.data$percent_boarded, NA_real_),
+      mean_positive_boarding_days = safe_mean(.data$mean_positive_boarding_days, NA_real_),
+      .groups = "drop")
   list(episodes = episodes, replications = replications, summary = summary)
 }
 
@@ -162,6 +181,8 @@ boarding_time_table <- function(run) {
     dplyr::transmute(Unit = .data$resource, Population = .data$population,
       `Mean of replication maxima (days)` = round(.data$mean_maximum_boarding_days, 3),
       `Mean boarding time (days)` = round(.data$mean_boarding_days, 3),
+      `Boarded (%)` = round(.data$percent_boarded, 1),
+      `Mean boarding among boarded (days)` = round(.data$mean_positive_boarding_days, 3),
       `Total episodes` = .data$total_episodes, `Pending at horizon` = .data$pending_episodes)
 }
 
@@ -235,10 +256,11 @@ compare_hospital_scenarios <- function(reference, comparison, confidence_level =
 
 # Daily intervals are [day - 1, day). Carry the state at the start of each
 # day forward, including days without events; exclude the terminal endpoint.
-# One row per scenario/resource/replication/day (time-weighted daily mean).
-# Shared by the dashboard plot
-# and the manuscript figures so both report the same daily-peak definition.
-daily_peak_by_replication <- function(data, var = "server") {
+# One row per scenario/resource/replication/day: the mean of the system states recorded
+# within the day (each event and the day boundaries), NOT weighted by how long each state
+# lasted. Shared by the dashboard plot and the manuscript figures so both report the same
+# daily definition (formerly named daily_peak_by_replication).
+daily_mean_by_replication <- function(data, var = "server") {
   stopifnot(all(c("time", "resource", "replication", var) %in% names(data)))
   keys <- intersect(c("scenario_id", "resource", "replication"), names(data))
   data |>
@@ -260,12 +282,14 @@ daily_peak_by_replication <- function(data, var = "server") {
 }
 
 # Percentiles describe between-replication variability, not confidence intervals.
-make_daily_peak_summary <- function(data, var = "server") {
-  daily <- daily_peak_by_replication(data, var)
+# `mean_val` is the mean across replications of the daily values; lower/upper are their
+# 10th and 90th percentiles.
+make_daily_mean_summary <- function(data, var = "server") {
+  daily <- daily_mean_by_replication(data, var)
   daily |>
     dplyr::group_by(dplyr::across(dplyr::all_of(intersect(
       c("scenario_id", "time1", "resource"), names(daily))))) |>
-    dplyr::summarise(median_val = mean(.data$daily_mean, na.rm = TRUE),
+    dplyr::summarise(mean_val = mean(.data$daily_mean, na.rm = TRUE),
       lower = as.numeric(stats::quantile(.data$daily_mean, .1, type = 7)),
       upper = as.numeric(stats::quantile(.data$daily_mean, .9, type = 7)),
       replications = dplyr::n(), .groups = "drop")
@@ -283,7 +307,7 @@ make_resource_plot <- function(data, var = "server") {
     paste("Value of", var)
   )
 
-  plot_data <- make_daily_peak_summary(data, var = var)
+  plot_data <- make_daily_mean_summary(data, var = var)
   plot_data$series <- if ("scenario_id" %in% names(plot_data) &&
                            length(unique(plot_data$scenario_id)) > 1L) {
     paste(plot_data$scenario_id, plot_data$resource, sep = " / ")
@@ -299,9 +323,9 @@ make_resource_plot <- function(data, var = "server") {
         name = paste(series[[i]], "P10–P90"), legendgroup = series[[i]],
         fillcolor = colors[[i]], opacity = .18, line = list(color = "transparent"),
         showlegend = FALSE, hoverinfo = "skip") |>
-      plotly::add_lines(data = rows, x = ~time1, y = ~median_val,
+      plotly::add_lines(data = rows, x = ~time1, y = ~mean_val,
         name = series[[i]], legendgroup = series[[i]], line = list(color = colors[[i]], width = 2),
-        text = ~paste0("Day: ", time1, "<br>Mean of daily means: ", median_val,
+        text = ~paste0("Day: ", time1, "<br>Mean of daily means: ", mean_val,
           "<br>P10–P90: ", round(lower, 2), "–", round(upper, 2)),
         hoverinfo = "text+name")
   }

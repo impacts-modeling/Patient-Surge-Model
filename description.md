@@ -413,8 +413,8 @@ Result plots and tables leave out the ED, whose capacity is fixed at 10,000 beds
 ### Daily Mean Occupied Beds
 
 This plot shows occupied beds by hospital unit over time. Within each simulation,
-the time-weighted mean occupancy of each day is computed; the line is the mean
-of those daily means across simulations, and the shaded band spans their 10th
+the mean of the occupancy states recorded within each day is computed (each state counts once, not weighted by its duration), giving a daily series per simulation; the line is the mean
+of those daily values across simulations, and the shaded band spans their 10th
 to 90th percentiles.
 
 ### Daily Mean Queue Length
@@ -457,7 +457,7 @@ the average number of days a patient waited.
 for the listed unit (mean of each replication's longest episode, and mean
 episode duration). **Bed Waiting Times** reports waits with no bed held,
 including zero waits, for every request that obtained a bed during observation;
-the 95% CI describes Monte Carlo uncertainty in the mean.
+the 95% CI describes Monte Carlo uncertainty in the mean. Both tables also show the share of requests that waited and, for Boarding Times, the mean boarding time among boarded patients (Bed Waiting Times shows the share that waited), since the means include zero-length episodes.
 
 ### Unlimited capacity (analytic)
 

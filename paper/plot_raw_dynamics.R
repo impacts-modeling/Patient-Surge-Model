@@ -106,11 +106,11 @@ civilian_trajectories <- dplyr::bind_rows(lapply(names(capacity_regimes), functi
 # Figure 1: median + P10-P90 band across replications
 # ---------------------------------------------------------------------------
 # Same daily-mean + between-replication band already used for the manuscript's
-# own figures (make_daily_peak_summary() in R/shared/simulation_metrics.R).
-#civilian_daily_summary <- make_daily_peak_summary(civilian_trajectories, var = "server")
+# own figures (make_daily_mean_summary() in R/shared/simulation_metrics.R).
+#civilian_daily_summary <- make_daily_mean_summary(civilian_trajectories, var = "server")
 
 # p_manuscript <- ggplot(civilian_daily_summary,
-#                        aes(x = time1, y = median_val, color = scenario_id, fill = scenario_id)) +
+#                        aes(x = time1, y = mean_val, color = scenario_id, fill = scenario_id)) +
 #   geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.15, color = NA) +
 #   geom_line() +
 #   facet_wrap(~resource, ncol = 1, scales = "free_y") +
@@ -127,7 +127,7 @@ civilian_trajectories <- dplyr::bind_rows(lapply(names(capacity_regimes), functi
 # ---------------------------------------------------------------------------
 # Figure 2: every replication's own daily-mean trajectory
 # ---------------------------------------------------------------------------
-civilian_daily_replications <- daily_peak_by_replication(civilian_trajectories, var = "server")
+civilian_daily_replications <- daily_mean_by_replication(civilian_trajectories, var = "server")
 civilian_daily_replications <- civilian_trajectories |>
   dplyr::filter(scenario_id == "paper") |>
   dplyr::filter(resource != "ED", resource != "Surge")

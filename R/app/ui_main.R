@@ -166,7 +166,7 @@ build_body <- function() {
                     "<strong>Occupancy and queues over time</strong><br>",
                     "Use the interactive plots to compare occupied beds and",
                     "patients waiting across hospital units and days. Each line shows the mean",
-                    "of time-weighted daily means across replications; the shaded band shows the",
+                    "of the replication-specific daily means across replications; the shaded band shows the",
                     "10th–90th percentiles. The ED (fixed at 10,000 beds) is not shown."
                   ),
                   data.position = "left"

@@ -198,7 +198,9 @@ summarize_study_runs <- function(runs) {
     dplyr::group_by(.data$scenario_id, .data$resource, .data$metric) |>
     dplyr::group_modify(function(rows, key) study_mean_interval(rows$value)) |>
     dplyr::ungroup()
-  waits <- lapply(runs, bed_wait_summary)
+  # All requests, not only those of discharged patients, so requests still waiting at the
+  # horizon are counted (pending_requests) instead of being dropped.
+  waits <- lapply(runs, bed_wait_summary, completed_only = FALSE)
   # Civilian patients board (hold some other bed, or an ED bed between
   # pathway steps) rather than generate a bed-less GenMed/ICU wait request in
   # this model; bed_wait_summary()'s wait_summary above is populated only for
@@ -207,16 +209,16 @@ summarize_study_runs <- function(runs) {
   # reports it -- the manuscript pipeline had not exported it until now.
   boardings <- lapply(runs, boarding_time_summary)
   # Same daily-mean definition as the dashboard plot (make_resource_plot):
-  # one time-weighted mean per scenario/resource/replication/day, then the
+  # one mean of the recorded states (not time-weighted) per scenario/resource/replication/day, then the
   # mean and 10th-90th percentile band across replications. These are daily
   # means, not daily peaks, and the band is between-replication spread, not
   # a CI. ED is excluded from the dashboard plots but retained here.
   daily <- dplyr::bind_rows(lapply(c("server", "queue"), function(variable) {
-    daily_peak_by_replication(resources, variable) |>
+    daily_mean_by_replication(resources, variable) |>
       dplyr::mutate(metric = variable)
   }))
   daily_summary <- dplyr::bind_rows(lapply(c("server", "queue"), function(variable) {
-    make_daily_peak_summary(resources, var = variable) |>
+    make_daily_mean_summary(resources, var = variable) |>
       dplyr::mutate(metric = variable)
   }))
   list(resource_replications = metrics, resource_summary = summary,
@@ -252,6 +254,10 @@ scenario_labels <- function(scenario_id, design) {
             design_lookup$rate[match_index], design_lookup$duration[match_index]))
   ifelse(expanded, paste0(label, "_expanded"), label)
 }
+
+# Display label for facet strips: the dedicated inpatient surge unit is shown as "IP Surge"
+# (the data keep the resource name "Surge").
+figure_unit_label <- function(x) ifelse(as.character(x) == "Surge", "IP Surge", as.character(x))
 
 make_study_figures <- function(tables, mode = c("paper", "unlimited_demand")) {
   mode <- match.arg(mode)
@@ -314,7 +320,7 @@ make_study_figures <- function(tables, mode = c("paper", "unlimited_demand")) {
     if (nrow(unit_data) == 0) return(NULL)
 
     p <- ggplot2::ggplot(unit_data,
-      ggplot2::aes(x = .data$time1 - 0.5, y = .data$median_val, color = .data$scenario_id,
+      ggplot2::aes(x = .data$time1 - 0.5, y = .data$mean_val, color = .data$scenario_id,
                    fill = .data$scenario_id, linetype = .data$linetype)) +
       ggplot2::geom_ribbon(ggplot2::aes(ymin = .data$lower, ymax = .data$upper),
                            alpha = 0.12, color = NA, na.rm = TRUE) +
@@ -335,7 +341,7 @@ make_study_figures <- function(tables, mode = c("paper", "unlimited_demand")) {
   unit_plots <- unit_plots[!vapply(unit_plots, is.null, logical(1))]
 
   figures <- list(trajectories = ggplot2::ggplot(daily,
-    ggplot2::aes(x = .data$time1 - 0.5, y = .data$median_val, color = .data$scenario_id,
+    ggplot2::aes(x = .data$time1 - 0.5, y = .data$mean_val, color = .data$scenario_id,
                  fill = .data$scenario_id, linetype = .data$linetype)) +
     ggplot2::geom_ribbon(ggplot2::aes(ymin = .data$lower, ymax = .data$upper),
                          alpha = 0.12, color = NA, na.rm = TRUE) +
@@ -344,10 +350,11 @@ make_study_figures <- function(tables, mode = c("paper", "unlimited_demand")) {
     ggplot2::scale_color_manual(values = scenario_colors, guide = ggplot2::guide_legend(nrow = 2)) +
     ggplot2::scale_fill_manual(values = scenario_colors, guide = "none") +
     ggplot2::facet_wrap(ggplot2::vars(measure, resource),
-                       ncol = length(unit_order), scales = "free_y") +
+                       ncol = length(unit_order), scales = "free_y",
+                       labeller = ggplot2::labeller(resource = figure_unit_label)) +
     ggplot2::labs(x = "Days after surge onset (daily interval midpoint)", y = NULL,
       color = "Scenario", fill = "Scenario",
-      caption = paste("Mean and 10th-90th percentile band of daily peak occupancy across replications.")) +
+      caption = paste("Mean and 10th-90th percentile band of the daily means of occupancy across replications.")) +
     ggplot2::theme_bw() + ggplot2::theme(legend.position = "top"))
   
   waits <- tables$wait_summary |>
@@ -357,7 +364,8 @@ make_study_figures <- function(tables, mode = c("paper", "unlimited_demand")) {
     figures$resolved_waits <- ggplot2::ggplot(waits,
       ggplot2::aes(x = .data$scenario_id, y = .data$mean_resolved_wait_days, fill = .data$population)) +
       ggplot2::geom_col(position = "dodge", na.rm = TRUE) +
-      ggplot2::facet_wrap(ggplot2::vars(resource, cohort), scales = "free_y") +
+      ggplot2::facet_wrap(ggplot2::vars(resource, cohort), scales = "free_y",
+                          labeller = ggplot2::labeller(resource = figure_unit_label)) +
       ggplot2::labs(x = NULL, y = "Mean resolved-request wait (days)", fill = "Population",
         caption = "Resolved requests only; consult pending-request counts in the accompanying table.") +
       ggplot2::theme_bw() +
@@ -365,7 +373,8 @@ make_study_figures <- function(tables, mode = c("paper", "unlimited_demand")) {
     figures$pending_requests <- ggplot2::ggplot(waits,
       ggplot2::aes(x = .data$scenario_id, y = .data$pending_requests, fill = .data$population)) +
       ggplot2::geom_col(position = "dodge") +
-      ggplot2::facet_wrap(ggplot2::vars(resource, cohort), scales = "free_y") +
+      ggplot2::facet_wrap(ggplot2::vars(resource, cohort), scales = "free_y",
+                          labeller = ggplot2::labeller(resource = figure_unit_label)) +
       ggplot2::labs(x = NULL, y = "Pending requests (sum across replications)", fill = "Population") +
       ggplot2::theme_bw() +
       ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 35, hjust = 1), legend.position = "top")

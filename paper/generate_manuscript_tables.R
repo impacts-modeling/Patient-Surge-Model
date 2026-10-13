@@ -78,9 +78,14 @@ label_for <- c(volume_10 = "10 & 10", reference = "15 & 10 (reference)",
 # ever named ICU as its primary unit here) must still print something --
 # sprintf() silently returns character(0) when any argument has zero length,
 # which otherwise makes cat() print nothing for that row with no warning.
+# Observed-time mean over all requests: a pending request counts the time waited up to the
+# horizon, so the value is a lower bound of the true mean whenever requests are pending
+# (equal to it when none are). It requires wait_summary.csv from completed_only = FALSE.
+stopifnot("mean_observed_wait_days" %in% names(w))
 wait_cell <- function(rows) {
   if (!nrow(rows)) return("-- (no requests)")
-  sprintf("%s (%s--%s)", fmt(rows$mean_wait_days * 24), fmt(rows$lower * 24), fmt(rows$upper * 24))
+  sprintf("%s (%s--%s)", fmt(rows$mean_observed_wait_days * 24),
+          fmt(rows$lower_observed * 24), fmt(rows$upper_observed * 24))
 }
 # boarding_time_summary()'s summary has no confidence interval (unlike
 # bed_wait_summary()); build the same 90% central Student-t interval used
@@ -97,13 +102,37 @@ boarding_cell <- function(id, unit) {
   half_width <- stats::qt(0.95, n - 1) * stats::sd(x) / sqrt(n) * 24
   sprintf("%s (%s--%s)", fmt(m), fmt(m - half_width), fmt(m + half_width))
 }
+# Share of requests that waited and mean wait among those that did (hours). Civilian
+# values come from the boarding replications, surge values from wait_summary.csv; both
+# are averaged across replications. The cohort means above include zero waits.
+stopifnot(all(c("percent_boarded", "mean_positive_boarding_days") %in% names(board_rep)),
+          all(c("percent_observed_waiting", "mean_resolved_positive_wait_days") %in% names(w)))
+civilian_share_cell <- function(id, unit) {
+  rows <- board_rep[board_rep$scenario_id == id & board_rep$resource == unit &
+    board_rep$population == "civilian", ]
+  if (!nrow(rows)) return("-- & --")
+  sprintf("%s & %s", fmt(mean(rows$percent_boarded, na.rm = TRUE)),
+          fmt(mean(rows$mean_positive_boarding_days, na.rm = TRUE) * 24))
+}
+surge_share_cell <- function(rows) {
+  if (!nrow(rows)) return("-- & -- & --")
+  sprintf("%s & %s & %s", fmt(rows$percent_observed_waiting),
+          fmt(rows$mean_resolved_positive_wait_days * 24),
+          fmt(100 * rows$pending_requests / rows$total_requests, 1))
+}
+cat("Columns: unit & rate & duration & civilian mean (CI) & civilian % boarded & civilian mean among boarded",
+    "& surge mean (CI) & surge % waiting & surge mean among waiting & surge % pending at horizon\n")
 for (unit in c("GenMed", "ICU")) {
   for (id in names(label_for)) {
     sur <- w[w$scenario_id == id & w$resource == unit & w$population == "surge", ]
-    cat(sprintf("%s & %s & %s & %s \\\\\n", unit, label_for[[id]], boarding_cell(id, unit), wait_cell(sur)))
+    cat(sprintf("%s & %s & %s & %s & %s & %s \\\\\n", unit, label_for[[id]],
+                boarding_cell(id, unit), civilian_share_cell(id, unit),
+                wait_cell(sur), surge_share_cell(sur)))
   }
 }
-cat("Pending requests check, wait (should all be 0):", all(w$pending_requests == 0), "\n")
+cat("Pending surge requests at the horizon, GenMed/ICU (sum over replications):",
+    paste(sprintf("%s %s=%d", w$scenario_id, w$resource, w$pending_requests)[w$resource %in% c("GenMed", "ICU")],
+          collapse = "; "), "\n")
 cat("Pending episodes check, boarding (should all be 0):",
     sum(read.csv(file.path(constrained_dir, "boarding_summary.csv"))$pending_episodes), "\n")
 
@@ -266,10 +295,9 @@ for (id in names(label_for3)) {
 cat("\\bottomrule\n\\end{tabular}\n")
 
 cat(
-  "\nPending requests check (should all be 0):",
-  all(wait3$pending_requests == 0),
-  all(wait3_expanded$pending_requests == 0),
-  "\n"
+  "\nPending requests at the horizon, before/after expansion (sum over replications; ",
+  "means above are lower bounds when > 0): ",
+  sum(wait3$pending_requests), " / ", sum(wait3_expanded$pending_requests), "\n", sep = ""
 )
 
 # ---------------------------------------------------------------------------

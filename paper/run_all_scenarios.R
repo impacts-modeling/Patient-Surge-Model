@@ -18,11 +18,11 @@ unlimited_comparison$figures$warmup         # comprobación del warm-up
 unlimited_comparison$peak_table             # picos DES contra analítico
 unlimited_comparison$warmup_reached         # primer día en 95% y 99% del equilibrio
 
-cbind( unlimited_comparison$trajectory |> dplyr::filter(time ==0) |>
-  dplyr::select(analytic_mean ) ,
-
-unlimited_comparison$trajectory |> dplyr::filter(time ==50) |>
-  dplyr::select(analytic_mean ))
+# cbind( unlimited_comparison$trajectory |> dplyr::filter(time ==0) |>
+#   dplyr::select(analytic_mean ) ,
+# 
+# unlimited_comparison$trajectory |> dplyr::filter(time ==50) |>
+#   dplyr::select(analytic_mean ))
    
 
 # 

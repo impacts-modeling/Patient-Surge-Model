@@ -716,7 +716,7 @@ estimate_peak_unit_demand <- function(patient_profiles, profile_prob, n_patients
 # exact identity: the time integral of that resource's `server` count equals
 # the sum of every episode's duration (an episode still open at the horizon
 # contributes only its elapsed portion), and the number of episodes equals the
-# number of times `server` increased. It covers episodes where a patient requests a bed
+# number of times `server` increased (counted on the raw events, see below). It covers episodes where a patient requests a bed
 # while holding none at all (only possible on a pathway's first step -- see
 # new_bed_dispatcher()/build_trajectory()). Given this project's profile
 # configuration, civilian pathways always start at ED, so a civilian's first
@@ -746,7 +746,17 @@ waiting_state_summary <- function(simulation, units, sim_days) {
     }
     dt <- diff(rows$time)
     person_days <- sum(utils::head(rows$server, -1) * dt)
-    episodes <- sum(pmax(0, diff(rows$server)))
+    # Episodes are counted on the raw, unsliced events: slicing keeps only the last
+    # state at the window start, so a request made exactly at `start` (the first
+    # surge arrival at day 0) would otherwise vanish from the count (a zero wait) or
+    # be treated as already in progress (a positive wait), overstating the mean. The
+    # implicit state before the first event is 0, so the first increase is counted
+    # too. Assumes no episode began before `start` and is still open at it, which
+    # holds here: surge requests begin at `start` and civilians never wait bed-less.
+    raw_rows <- waiting[waiting$resource == unit_name, , drop = FALSE]
+    raw_rows <- raw_rows[order(raw_rows$time), , drop = FALSE]
+    increases <- pmax(0, diff(c(0, raw_rows$server)))
+    episodes <- sum(increases[raw_rows$time >= start & raw_rows$time < end])
     data.frame(resource = unit_name, mean_wait_days = safe_fraction(person_days, episodes))
   }))
 }

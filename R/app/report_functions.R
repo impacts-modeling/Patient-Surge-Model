@@ -242,9 +242,9 @@ boarding_results_table <- function(simulation_data) {
 add_resource_plot_page <- function(resources, var = "server") {
   # Same daily-mean definition as the dashboard plot and the manuscript
   # figures: mean of daily means across replications, 10th-90th
-  # percentile band. See make_daily_peak_summary in simulation_metrics.R.
+  # percentile band. See make_daily_mean_summary in simulation_metrics.R.
   resources <- hide_internal_units(resources, "resource")
-  plot_data <- make_daily_peak_summary(resources, var = var)
+  plot_data <- make_daily_mean_summary(resources, var = var)
   y_label <- switch(
     var,
     "server" = "Number of Beds Occupied",
@@ -260,7 +260,7 @@ add_resource_plot_page <- function(resources, var = "server") {
 
   plot_obj <- ggplot2::ggplot(
     plot_data,
-    ggplot2::aes(x = time1, y = median_val, color = resource, fill = resource)
+    ggplot2::aes(x = time1, y = mean_val, color = resource, fill = resource)
   ) +
     ggplot2::geom_ribbon(ggplot2::aes(ymin = lower, ymax = upper),
                          alpha = 0.15, color = NA, na.rm = TRUE) +
