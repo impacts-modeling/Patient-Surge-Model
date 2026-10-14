@@ -68,7 +68,7 @@ deloitte_test_profile_config <- function() {
 
   list(
     source = "deloitte_test",
-    source_label = "UC Davis calibrated profiles (NDMS-based; Surge/GenMed/ICU)",
+    source_label = "UC Davis calibrated profiles (NDMS-based; IP Surge/GenMed/ICU)",
     units = c("Surge", "GenMed", "ICU"),
     patient_profiles = patient_profiles,
     profile_prob = profile_counts / sum(profile_counts),

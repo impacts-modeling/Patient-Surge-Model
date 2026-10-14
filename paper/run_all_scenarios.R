@@ -6,7 +6,7 @@ study <- make_study_config(warmup = list(warmup_days = 80))
 
 
 # Unlimited-capacity occupancy: simulated (DES) and analytic, stored in the same folder.
-demand <- run_unlimited_demand_study(study, output_dir = "outputs/unlimited_demand_01")
+demand <- run_unlimited_demand_study(study, capacity = 10000L, output_dir = "outputs/unlimited_demand_01")
 
 # Figure and tables contrasting the analytic and the simulated unlimited-capacity occupancy,
 # and checking the warm-up length (no simulation; reads the runs saved above).

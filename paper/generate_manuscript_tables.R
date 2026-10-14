@@ -47,10 +47,11 @@ cat("\n================ Table: capacity-constrained queue burden ===============
 d2 <- read.csv(file.path(constrained_dir, "resource_summary.csv"))
 design2 <- read.csv(file.path(constrained_dir, "design.csv"))
 row_order <- c("baseline", "volume_10", "reference", "volume_20", "concentration_5", "concentration_15")
+
+for (unit in c("GenMed", "ICU", "Surge ")) {
 for (id in row_order) {
   design_row <- if (id == "baseline") data.frame(rate = NA, duration = NA, total_surge_arrivals = NA)
-                else design2[design2$scenario_id == id, ]
-  for (unit in c("GenMed", "ICU", "Surge ")) {
+  else design2[design2$scenario_id == id, ]
     mq <- d2$mean[d2$scenario_id == id & d2$resource == unit & d2$metric == "avg_queue_length"]
     pq <- d2$mean[d2$scenario_id == id & d2$resource == unit & d2$metric == "max_queue_length"]
     pc <- d2$mean[d2$scenario_id == id & d2$resource == unit & d2$metric == "percent_at_capacity"]
@@ -58,12 +59,12 @@ for (id in row_order) {
     dur_txt <- if (is.na(design_row$duration)) "--" else design_row$duration
     tot_txt <- if (is.na(design_row$total_surge_arrivals)) "--" else design_row$total_surge_arrivals
     cat(sprintf("%s & %s & %s & %s & %s & %s & %s \\\\\n",
-      rate_txt, dur_txt, tot_txt, unit, fmt(mq), fmt(pq), fmt(pc)))
+                rate_txt, dur_txt, tot_txt, unit, fmt(mq), fmt(pq), fmt(pc)))
   }
 }
 
 # ---------------------------------------------------------------------------
-cat("\n================ Table: GenMed/ICU delays (hours, 90%/95% CI) ================\n")
+cat("\n================ Table 5: GenMed/ICU delays (hours, 95% CI) ================\n")
 # Civilians board (hold ED or a fallback bed) rather than generate a
 # bed-less GenMed/ICU wait request in this model, so wait_summary.csv only
 # has surge rows for GenMed/ICU (see boarding_time_summary() in
@@ -88,9 +89,9 @@ wait_cell <- function(rows) {
           fmt(rows$lower_observed * 24), fmt(rows$upper_observed * 24))
 }
 # boarding_time_summary()'s summary has no confidence interval (unlike
-# bed_wait_summary()); build the same 90% central Student-t interval used
-# throughout this pipeline (study_mean_interval() in
-# paper/run_manuscript_scenarios.R) directly from the per-replication means.
+# bed_wait_summary(), which uses confidence_level = 0.95); build the same 95%
+# central Student-t interval directly from the per-replication means so civilian
+# and surge delays share one confidence level.
 boarding_cell <- function(id, unit) {
   x <- board_rep$mean_boarding_days[board_rep$scenario_id == id & board_rep$resource == unit &
     board_rep$population == "civilian"]
@@ -99,12 +100,14 @@ boarding_cell <- function(id, unit) {
   if (!n) return("-- (no episodes)")
   m <- mean(x) * 24
   if (n < 2) return(sprintf("%s (n=1, no CI)", fmt(m)))
-  half_width <- stats::qt(0.95, n - 1) * stats::sd(x) / sqrt(n) * 24
+  half_width <- stats::qt(0.975, n - 1) * stats::sd(x) / sqrt(n) * 24
   sprintf("%s (%s--%s)", fmt(m), fmt(m - half_width), fmt(m + half_width))
 }
+
 # Share of requests that waited and mean wait among those that did (hours). Civilian
 # values come from the boarding replications, surge values from wait_summary.csv; both
 # are averaged across replications. The cohort means above include zero waits.
+# ---------------------------------------------------------------------------
 stopifnot(all(c("percent_boarded", "mean_positive_boarding_days") %in% names(board_rep)),
           all(c("percent_observed_waiting", "mean_resolved_positive_wait_days") %in% names(w)))
 civilian_share_cell <- function(id, unit) {
@@ -137,7 +140,7 @@ cat("Pending episodes check, boarding (should all be 0):",
     sum(read.csv(file.path(constrained_dir, "boarding_summary.csv"))$pending_episodes), "\n")
 
 # ---------------------------------------------------------------------------
-cat("\n================ Table: capacity search outcomes ================\n")
+cat("\n================ Table 6: capacity search outcomes ================\n")
 # Each scenario below was optimized independently (its own optimize_study_scenarios()
 # call and output_dir), so the four CSVs are read separately per scenario and
 # row-bound rather than read once from a single shared optimized_dir.
@@ -161,61 +164,19 @@ for (id in names(label_for3)) {
   e <- exp3[exp3$scenario_id == id, ]
   n_eval <- sum(hist3$scenario_id == id & hist3$stage == "search")
   j <- joint3[joint3$scenario_id == id, ]
-  cat(sprintf("%s & %d & %d & %d & Joint & %d/%d & %s & %s--%s \\\\\n",
+  cat(sprintf("%s & %d & %d  & Joint & %d/%d & %s & %s--%s \\\\\n",
     label_for3[[id]], e$GenMed_added, e$ICU_added, n_eval,
-    j$successes, j$replications, fmt(100 * j$probability, 1),
+     j$replications, fmt(100 * j$probability, 1),
     fmt(100 * j$lower_95, 1), fmt(100 * j$upper_95, 1)
     ))
   for (unit in c("GenMed", "ICU")) {
     m <- marg3[marg3$scenario_id == id & marg3$resource == unit, ]
-    cat(sprintf("%s & %d & %d & %d & %s & %d/%d & %s & %s--%s \\\\\n",
-      label_for3[[id]], e$GenMed_added, e$ICU_added, n_eval, unit,
+    cat(sprintf("%s & %d & %d & %s & %d/%d & %s & %s--%s \\\\\n",
+      label_for3[[id]], e$GenMed_added, e$ICU_added, unit,
       m$successes, m$replications, fmt(100 * m$probability, 1),
       fmt(100 * m$lower_95, 1), fmt(100 * m$upper_95, 1)))
   }
 }
-
-# ---------------------------------------------------------------------------
-# Accepted expanded capacity vs. the peak simultaneous occupancy observed for
-# the same scenario under unrestricted capacity (the first table above).
-# Accepted capacity = the study's starting capacity (saved in each study.rds,
-# not hardcoded here) plus the beds the search added (expansion.csv). Reuses
-# d1 (unrestricted-capacity resource_summary), exp3 and label_for3 from above.
-cat("\n================ Table: accepted capacity vs. unrestricted peak ================\n")
-base_capacity_by_scenario <- lapply(optimized_dirs3, function(d) {
-  readRDS(file.path(d, "study.rds"))$study$config$capacities
-})
-stopifnot(length(unique(lapply(base_capacity_by_scenario, function(x) x[c("GenMed", "ICU")]))) == 1L)
-base_capacity <- base_capacity_by_scenario[[1]]
-
-cat(
-  "\\begin{table}\n",
-  "\\tbl{Accepted expanded capacity compared with the peak simultaneous occupancy ",
-  "observed for the same scenario under unrestricted capacity ",
-  "(Table~\\ref{tab:unrestricted_demand}). A negative difference means the accepted ",
-  "capacity was below the unrestricted-capacity peak; the joint criterion permits ",
-  "this because brief queueing is tolerated.}\n",
-  "{\\begin{tabular}{llcccc} \\toprule\n",
-  "Scenario & Unit & Unrestricted peak & Accepted capacity & Difference & Difference (\\%) \\\\ \\midrule\n",
-  sep = ""
-)
-for (id in names(label_for3)) {
-  e <- exp3[exp3$scenario_id == id, ]
-  stopifnot(nrow(e) == 1L)
-  if (!isTRUE(as.logical(e$accepted))) {
-    warning("Scenario '", id, "' has no accepted expansion; its row shows a non-accepted candidate.")
-  }
-  for (unit in c("GenMed", "ICU")) {
-    unrestricted_peak <- d1$mean[d1$scenario_id == id & d1$resource == unit & d1$metric == "max_capacity"]
-    stopifnot(length(unrestricted_peak) == 1L)
-    accepted_capacity <- base_capacity[[unit]] + e[[paste0(unit, "_added")]]
-    difference <- accepted_capacity - unrestricted_peak
-    cat(sprintf("%s & %s & %s & %d & %s & %s \\\\\n",
-      label_for3[[id]], unit, fmt(unrestricted_peak), as.integer(accepted_capacity),
-      fmt(difference), fmt(100 * difference / unrestricted_peak)))
-  }
-}
-cat("\\bottomrule\n\\end{tabular}}\n\\label{tab:optim_vs_unrestricted}\n\\end{table}\n")
 
 # ---------------------------------------------------------------------------
 # Wait burden before (current capacity) and after the accepted expansion --
@@ -225,7 +186,7 @@ cat("\\bottomrule\n\\end{tabular}}\n\\label{tab:optim_vs_unrestricted}\n\\end{ta
 # are, by this model's civilian-always-starts-at-ED convention, effectively
 # specific to surge requests (see waiting_state_summary() in
 # R/core/hospital_trajectory.R and the manuscript's Section 3.4).
-cat("\n================ Table: wait burden before/after expansion ================\n")
+cat("\n================ Table 7: wait burden before/after expansion ================\n")
 
 wait3 <- read_per_scenario3("wait_summary.csv")
 
@@ -252,16 +213,12 @@ cat(
   sep = ""
 )
 
-for (id in names(label_for3)) {
-  e <- exp3[exp3$scenario_id == id, ]
-  
-  stopifnot(nrow(e) == 1L)
-  
-  if (id != names(label_for3)[1]) {
-    cat("\\addlinespace\n")
-  }
-  
-  for (unit in c("GenMed", "ICU")) {
+for (unit in c("GenMed", "ICU")) {
+  for (id in names(label_for3)) {
+    e <- exp3[exp3$scenario_id == id, ]
+    
+    stopifnot(nrow(e) == 1L)
+    
     before <- wait3[
       wait3$scenario_id == id &
         wait3$resource == unit &
@@ -276,9 +233,9 @@ for (id in names(label_for3)) {
         wait3_expanded$cohort == "Requested during observation",
     ]
     
-    stopifnot(nrow(before) == 1L, nrow(after) == 1L)
+    stopifnot(nrow(before) == 1L, nrow(after) <= 1L)  # no expanded run when the search was not validated
     
-    scenario_label <- if (unit == "GenMed") label_for3[[id]] else ""
+    scenario_label <- label_for3[[id]]#if (unit == "GenMed") label_for3[[id]] else ""
     added_beds <- e[[paste0(unit, "_added")]]
     
     cat(sprintf(
@@ -286,10 +243,11 @@ for (id in names(label_for3)) {
       scenario_label,
       unit,
       wait_cell(before),
-      wait_cell(after),
+      if (nrow(after) == 0L) "-- (no validated expansion)" else wait_cell(after),
       added_beds
     ))
   }
+  if (unit == "GenMed") cat("\\addlinespace\n")
 }
 
 cat("\\bottomrule\n\\end{tabular}\n")
@@ -302,7 +260,7 @@ cat(
 
 # ---------------------------------------------------------------------------
 # Queue burden before (current capacity) and after expansion
-cat("\n================ Table: queue burden before/after expansion ================\n")
+cat("\n================ Table 8: queue burden before/after expansion ================\n")
 
 queue3 <- read_per_scenario3("resource_summary.csv")
 
@@ -336,16 +294,13 @@ cat(
   sep = ""
 )
 
+
+for (unit in c("GenMed", "ICU")) {
 for (id in names(label_for3)) {
   e <- exp3[exp3$scenario_id == id, ]
 
   stopifnot(nrow(e) == 1L)
 
-  if (id != names(label_for3)[1]) {
-    cat("\\addlinespace\n")
-  }
-
-  for (unit in c("GenMed", "ICU")) {
     before <- queue3[
       queue3$scenario_id == id &
         queue3$resource == unit,
@@ -356,7 +311,7 @@ for (id in names(label_for3)) {
         queue3_expanded$resource == unit,
     ]
 
-    scenario_label <- if (unit == "GenMed") label_for3[[id]] else ""
+    scenario_label <- label_for3[[id]]#if (unit == "GenMed") label_for3[[id]] else ""
     added_beds <- e[[paste0(unit, "_added")]]
 
     cat(sprintf(
@@ -369,10 +324,69 @@ for (id in names(label_for3)) {
       queue_cell(after, "max_queue_length"),
       added_beds
     ))
-  }
+}
+  if (unit == "GenMed") cat("\\addlinespace\n")
 }
 
 cat("\\bottomrule\n\\end{tabular}\n")
+
+# ---------------------------------------------------------------------------
+# Accepted expanded capacity vs. the peak simultaneous occupancy observed for
+# the same scenario under unrestricted capacity (the first table above).
+# Accepted capacity = the study's starting capacity (saved in each study.rds,
+# not hardcoded here) plus the beds the search added (expansion.csv). Reuses
+# d1 (unrestricted-capacity resource_summary), exp3 and label_for3 from above.
+cat("\n================ Table 9: accepted capacity vs. unrestricted peak ================\n")
+base_capacity_by_scenario <- lapply(optimized_dirs3, function(d) {
+  readRDS(file.path(d, "study.rds"))$study$config$capacities
+})
+stopifnot(length(unique(lapply(base_capacity_by_scenario, function(x) x[c("GenMed", "ICU")]))) == 1L)
+base_capacity <- base_capacity_by_scenario[[1]]
+
+# Analytic (simulation-free) unrestricted-capacity peaks saved by run_unlimited_demand_study():
+# peak over the whole horizon of the P50 and P75 of the occupancy at each instant. P75 is the
+# level used to initialize the capacity search. "--" is printed if the analytic file is missing.
+analytic_peaks_file <- file.path(unrestricted_dir, "analytic_peaks.csv")
+analytic_peaks <- if (file.exists(analytic_peaks_file)) read.csv(analytic_peaks_file) else NULL
+analytic_peak_cell <- function(id, unit, statistic) {
+  if (is.null(analytic_peaks)) return("--")
+  value <- analytic_peaks$peak_value[analytic_peaks$scenario_id == id &
+                                      analytic_peaks$resource == unit &
+                                      analytic_peaks$statistic == statistic]
+  if (length(value) != 1L) "--" else fmt(value, 0)
+}
+
+cat(
+  "\\begin{table}\n",
+  "\\tbl{Accepted expanded capacity compared with the peak simultaneous occupancy ",
+  "observed for the same scenario under unrestricted capacity ",
+  "(Table~\\ref{tab:unrestricted_demand}). A negative difference means the accepted ",
+  "capacity was below the unrestricted-capacity peak; the joint criterion permits ",
+  "this because brief queueing is tolerated. The analytic P50 and P75 columns give the peak over ",
+  "the whole horizon of the 50th and 75th percentiles of the analytic unrestricted occupancy ",
+  "(P75 initializes the capacity search).}\n",
+  "{\\begin{tabular}{llcccccc} \\toprule\n",
+  "Scenario & Unit & Unrestricted peak & Analytic P50 & Analytic P75 & Accepted capacity & Difference & Difference (\\%) \\\\ \\midrule\n",
+  sep = ""
+)
+for (unit in c("GenMed", "ICU")) {
+for (id in names(label_for3)) {
+  e <- exp3[exp3$scenario_id == id, ]
+  stopifnot(nrow(e) == 1L)
+  if (!isTRUE(as.logical(e$accepted))) {
+    warning("Scenario '", id, "' has no accepted expansion; its row shows a non-accepted candidate.")
+  }
+    unrestricted_peak <- d1$mean[d1$scenario_id == id & d1$resource == unit & d1$metric == "max_capacity"]
+    stopifnot(length(unrestricted_peak) == 1L)
+    accepted_capacity <- base_capacity[[unit]] + e[[paste0(unit, "_added")]]
+    difference <- accepted_capacity - unrestricted_peak
+    cat(sprintf("%s & %s & %s & %s & %s & %d & %s & %s \\\\\n",
+                label_for3[[id]], unit, fmt(unrestricted_peak),
+                analytic_peak_cell(id, unit, "peak_q0.5"), analytic_peak_cell(id, unit, "peak_q0.75"),
+                as.integer(accepted_capacity), fmt(difference), fmt(100 * difference / unrestricted_peak)))
+  }
+}
+cat("\\bottomrule\n\\end{tabular}}\n\\label{tab:optim_vs_unrestricted}\n\\end{table}\n")
 
 # ---------------------------------------------------------------------------
 cat("\n================ Inline figures cited in the prose ================\n")

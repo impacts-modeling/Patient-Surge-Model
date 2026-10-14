@@ -20,7 +20,7 @@ library(ggplot2)
 # Reuses the paper's own study configuration (paper/run_manuscript_scenarios.R
 # -> make_study_config()) instead of hand-picked capacities/profiles, so this
 # matches 2026_Assessing_the_hospital_occupancy_under_a_surge_event: the same
-# civilian profiles/arrival rates (data/baseline_civilian_profiles.csv) and the
+# civilian profiles/arrival rates (data/baseline_civilian_profiles_uc_davis.csv) and the
 # same capacities used for every volume/concentration/reference scenario in
 # manuscript_scenario_design().
 #
@@ -29,7 +29,7 @@ library(ggplot2)
 # regime*, not one per scenario_id. The two fixed capacity inputs the paper's
 # pipeline starts from are covered:
 #   - "paper": make_study_config()'s capacities (ED is a 999 placeholder).
-#   - "unlimited_demand": every inpatient unit at 500 beds and ED at 100000,
+#   - "unlimited_demand": every inpatient unit at 10000 beds and ED at 100000,
 #     as in run_unlimited_demand_study().
 # (Per-scenario *expanded* capacities from find_n_needed() are search outputs,
 # not fixed inputs, so they are not reproduced here.)
@@ -43,7 +43,7 @@ load_study_functions(".")
 paper_study <- make_study_config(project_dir = ".", mode = "paper")
 
 unlimited_capacities <- stats::setNames(
-  rep(500L, length(paper_study$config$capacities)),
+  rep(10000L, length(paper_study$config$capacities)),
   names(paper_study$config$capacities)
 )
 unlimited_capacities[["Surge"]] <- 15L

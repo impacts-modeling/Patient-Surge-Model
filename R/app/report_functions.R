@@ -220,22 +220,36 @@ hide_internal_units <- function(table, column) {
   table[!table[[column]] %in% names(internal_hospital_units), , drop = FALSE]
 }
 
+# Display label of a hospital unit. Internal identifiers (profiles, CSV/Excel files, simulation
+# resources) keep "Surge"; only what the user sees says "IP Surge".
+unit_display_label <- function(unit) {
+  unit <- as.character(unit)
+  ifelse(unit == "Surge", "IP Surge", unit)
+}
+# Named choices for select inputs: labels are display names, values stay internal identifiers.
+unit_choices <- function(units) stats::setNames(units, unit_display_label(units))
+# Relabels the unit names stored in a data-frame column (tables and plots).
+relabel_units <- function(table, column) {
+  if (column %in% names(table)) table[[column]] <- unit_display_label(table[[column]])
+  table
+}
+
 # Result tables shared by the dashboard and the PDF report.
 utilization_results_table <- function(simulation_data) {
-  hide_internal_units(summary_utilization(simulation_data$resources), "Resource")
+  relabel_units(hide_internal_units(summary_utilization(simulation_data$resources), "Resource"), "Resource")
 }
 
 queue_results_table <- function(simulation_data) {
-  hide_internal_units(summary_queue(simulation_data$resources), "Resource")
+  relabel_units(hide_internal_units(summary_queue(simulation_data$resources), "Resource"), "Resource")
 }
 
 bed_wait_results_table <- function(simulation_data) {
-  table <- hide_internal_units(bed_wait_table(simulation_data), "Unit")
+  table <- relabel_units(hide_internal_units(bed_wait_table(simulation_data), "Unit"), "Unit")
   if (nrow(table)) table else data.frame(Status = "No bed requests with a resolved wait in the observation period.")
 }
 
 boarding_results_table <- function(simulation_data) {
-  table <- hide_internal_units(boarding_time_table(simulation_data), "Unit")
+  table <- relabel_units(hide_internal_units(boarding_time_table(simulation_data), "Unit"), "Unit")
   if (nrow(table)) table else data.frame(Status = "No boarding episodes recorded in the observation period.")
 }
 
@@ -243,7 +257,7 @@ add_resource_plot_page <- function(resources, var = "server") {
   # Same daily-mean definition as the dashboard plot and the manuscript
   # figures: mean of daily means across replications, 10th-90th
   # percentile band. See make_daily_mean_summary in simulation_metrics.R.
-  resources <- hide_internal_units(resources, "resource")
+  resources <- relabel_units(hide_internal_units(resources, "resource"), "resource")
   plot_data <- make_daily_mean_summary(resources, var = var)
   y_label <- switch(
     var,
@@ -277,22 +291,26 @@ build_report_params <- function(input, profile_config) {
   civilian_only <- identical(input$scenario_mode, "civilian_only")
   if (identical(input$scenario_mode, "unlimited")) {
     # Beds, replications, seed and wait limits do not apply to the analytic scenario.
-    return(list(
-      `Scenario` = "Unlimited capacity (analytic)",
-      `Surge arrival process` = profile_config$arrival_process,
-      `Surge Patients per Day` = input$n_patients,
-      `Surge Arrival Period (days)` = input$duration,
+    include_surge <- !isFALSE(input$unlimited_include_surge)
+    return(c(list(
+      `Scenario` = if (include_surge) "Unlimited capacity (analytic)"
+                   else "Unlimited capacity (analytic), routine civilian operation only"),
+      if (include_surge) list(
+        `Surge arrival process` = profile_config$arrival_process,
+        `Surge Patients per Day` = input$n_patients,
+        `Surge Arrival Period (days)` = input$duration),
+      list(
       `Observation Duration (days)` = input$sim_days,
       `Routine civilian flow enabled` = isTRUE(profile_config$baseline$enabled),
       `Civilian arrival process` = profile_config$baseline$arrival_process,
       `Warm-up duration (days)` = profile_config$baseline$warmup_days
-    ))
+    )))
   }
   capacities <- profile_config$capacities
   capacity_params <- as.list(capacities[!names(capacities) %in% names(internal_hospital_units)])
   # Without civilian flow the entered beds are those available to the surge.
   capacity_suffix <- if (isTRUE(profile_config$baseline$enabled)) "Total Beds" else "Total Available Beds"
-  names(capacity_params) <- paste(names(capacity_params), capacity_suffix)
+  names(capacity_params) <- paste(unit_display_label(names(capacity_params)), capacity_suffix)
   c(
     list(
       `Scenario` = if (civilian_only) "Routine civilian operation only" else "Surge event",
@@ -323,7 +341,7 @@ make_profile_configuration_table <- function(profile_config) {
     Profile = names(profiles),
     Trajectory = vapply(
       profiles,
-      function(profile) paste(profile$unit, collapse = " -> "),
+      function(profile) paste(unit_display_label(profile$unit), collapse = " -> "),
       character(1)
     ),
     Mean_stay_days = vapply(profiles, function(profile) format_steps(profile$los), character(1)),
@@ -339,10 +357,10 @@ make_fallback_configuration_table <- function(profile_config) {
     return(data.frame(Primary_unit = "None configured", Fallback_units = ""))
   }
   data.frame(
-    Primary_unit = names(fallbacks),
+    Primary_unit = unit_display_label(names(fallbacks)),
     Fallback_units = vapply(
       fallbacks,
-      function(units) if (length(units) == 0) "None" else paste(units, collapse = " -> "),
+      function(units) if (length(units) == 0) "None" else paste(unit_display_label(units), collapse = " -> "),
       character(1)
     ),
     check.names = FALSE
@@ -350,12 +368,12 @@ make_fallback_configuration_table <- function(profile_config) {
 }
 
 add_unlimited_plot_page <- function(trajectory) {
-  plot_data <- hide_internal_units(trajectory, "resource")
+  plot_data <- relabel_units(hide_internal_units(trajectory, "resource"), "resource")
   plot_obj <- ggplot2::ggplot(plot_data, ggplot2::aes(x = time, color = resource, fill = resource)) +
     ggplot2::geom_ribbon(ggplot2::aes(ymin = q0.05, ymax = q0.95), alpha = 0.15, color = NA) +
     ggplot2::geom_line(ggplot2::aes(y = mean), linewidth = 0.9) +
     ggplot2::labs(title = "Expected Occupied Beds (Unlimited Capacity)",
-      x = "Day (0 = surge onset)", y = "Number of Beds Occupied",
+      x = "Day (0 = start of observation; negative = civilian warm-up)", y = "Number of Beds Occupied",
       color = "Resource", fill = "Resource",
       caption = "Line: expected occupancy; band: 5th-95th percentile of occupancy at each instant (analytic, no simulation).") +
     ggplot2::theme_minimal(base_size = 12) +
@@ -376,13 +394,15 @@ generate_unlimited_pdf_report <- function(file, params, analytic_data, profile_c
     cex = 1.1
   )
   add_report_table_page("Model Parameter Configuration", make_parameter_table(params))
-  add_report_table_page("Surge Patient Profiles", make_profile_configuration_table(profile_config))
+  if (!isFALSE(analytic_data$include_surge)) {
+    add_report_table_page("Surge Patient Profiles", make_profile_configuration_table(profile_config))
+  }
   if (isTRUE(profile_config$baseline$enabled)) {
     baseline <- profile_config$baseline
     civilian_profiles <- dplyr::bind_rows(lapply(names(baseline$profiles), function(name) {
       profile <- baseline$profiles[[name]]
       data.frame(Profile = name, Patients_per_day = baseline$arrival_rates[[name]],
-                 Pathway = paste(profile$unit, collapse = " -> "),
+                 Pathway = paste(unit_display_label(profile$unit), collapse = " -> "),
                  Mean_stays_days = format_steps(profile$los),
                  SD_days = format_steps(civilian_step_sd(profile)))
     }))
@@ -420,7 +440,7 @@ generate_simulation_pdf_report <- function(file, params, simulation_data, profil
     civilian_profiles <- dplyr::bind_rows(lapply(names(baseline$profiles), function(name) {
       profile <- baseline$profiles[[name]]
       data.frame(Profile = name, Patients_per_day = baseline$arrival_rates[[name]],
-                 Pathway = paste(profile$unit, collapse = " -> "),
+                 Pathway = paste(unit_display_label(profile$unit), collapse = " -> "),
                  Mean_stays_days = format_steps(profile$los),
                  SD_days = format_steps(civilian_step_sd(profile)))
     }))

@@ -157,8 +157,7 @@ Patient-Surge-Model/
 |-- manifest.json                      # Deployment dependency manifest (regenerate after moving files)
 |-- www/                               # Static assets for the app
 |-- data/
-|   |-- baseline_civilian_profiles.csv            # Default civilian profiles (UC Davis units)
-|   |-- baseline_civilian_profiles_uc_davis.csv   # UC Davis civilian profiles (reference copy)
+|   |-- baseline_civilian_profiles_uc_davis.csv   # Default civilian profiles (UC Davis units)
 |   |-- baseline_civilian_profiles_regional.csv   # Civilian profiles for the Regional hospital
 |   |-- baseline_civilian_profiles_tertiary.csv   # Civilian profiles for the Tertiary hospital
 |   `-- baseline_civilian_profiles_community.csv  # Civilian profiles for the Community hospital

@@ -16,10 +16,20 @@ unlimited_assumption_note <- paste(
 )
 
 # config: surge configuration with $baseline and $arrival_process (profile_config()).
-run_unlimited_analytic <- function(config, n_patients, duration, sim_days) {
-  stopifnot(is.finite(n_patients), n_patients > 0, is.finite(duration), duration > 0,
-            is.finite(sim_days), sim_days >= duration,
-            config$arrival_process == "poisson" || n_patients == floor(n_patients))
+run_unlimited_analytic <- function(config, n_patients, duration, sim_days, include_surge = TRUE) {
+  if (include_surge) {
+    stopifnot(is.finite(n_patients), n_patients > 0, is.finite(duration), duration > 0,
+              is.finite(sim_days), sim_days >= duration,
+              config$arrival_process == "poisson" || n_patients == floor(n_patients))
+  } else {
+    # Routine civilian operation only: no surge stream, so the civilian flow is required.
+    if (!isTRUE(config$baseline$enabled)) {
+      stop("Enable Routine Civilian Flow in Hospital Setup to compute the civilian-only scenario.", call. = FALSE)
+    }
+    stopifnot(is.finite(sim_days), sim_days > 0)
+    n_patients <- 0
+    duration <- 0
+  }
   units <- setdiff(names(config$capacities), names(internal_hospital_units))
   elapsed <- system.time(
     analytic <- analytic_unlimited_demand(
@@ -28,7 +38,8 @@ run_unlimited_analytic <- function(config, n_patients, duration, sim_days) {
       step = unlimited_grid_step, output_step = unlimited_output_step, levels = unlimited_levels)
   )[["elapsed"]]
   c(analytic, list(scenario_mode = "unlimited", scenario_id = "unlimited_analytic",
-                   profile_config = config, elapsed_seconds = elapsed))
+                   profile_config = config, include_surge = include_surge,
+                   elapsed_seconds = elapsed))
 }
 
 # One row per unit (ED hidden): peak of the expected occupancy and of two percentiles.
@@ -39,9 +50,9 @@ unlimited_peak_table <- function(data) {
   }
   units <- unique(peaks$resource)
   data.frame(
-    Resource = units,
+    Resource = unit_display_label(units),
     `Peak expected occupied beds` = round(vapply(units, value_of, numeric(1), "peak_mean"), 1),
-    `Day of peak (day 0 = surge onset)` = vapply(units, value_of, numeric(1), "peak_mean", "time_of_peak"),
+    `Day of peak (day 0 = start of observation)` = vapply(units, value_of, numeric(1), "peak_mean", "time_of_peak"),
     `Peak 50th percentile (beds)` = vapply(units, value_of, numeric(1), "peak_q0.5"),
     `Peak 95th percentile (beds)` = vapply(units, value_of, numeric(1), "peak_q0.95"),
     check.names = FALSE
@@ -49,7 +60,7 @@ unlimited_peak_table <- function(data) {
 }
 
 make_unlimited_plot <- function(trajectory) {
-  plot_data <- hide_internal_units(trajectory, "resource")
+  plot_data <- relabel_units(hide_internal_units(trajectory, "resource"), "resource")
   units <- unique(plot_data$resource)
   colors <- grDevices::hcl.colors(max(3L, length(units)), "Dark 3")
   p <- plotly::plot_ly()
@@ -69,7 +80,7 @@ make_unlimited_plot <- function(trajectory) {
   p |>
     plotly::layout(
       title = "",
-      xaxis = list(title = "Day (0 = surge onset) - expected occupancy; band: P5-P95"),
+      xaxis = list(title = "Day (0 = start of observation; negative = civilian warm-up) - expected occupancy; band: P5-P95"),
       yaxis = list(title = "Number of Beds Occupied")
     )
 }

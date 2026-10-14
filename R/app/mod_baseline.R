@@ -125,8 +125,8 @@ mod_baseline_ui <- function(id) {
           shiny::helpText(paste(
             "Loads the UC Davis-based civilian profiles that match the predefined hospital selected",
             "above (Regional, Tertiary, or Community acute-care hospital) and replaces the currently",
-            "saved civilian profiles. Any other source uses data/baseline_civilian_profiles.csv",
-            "(ED, General Medicine, Inpatient Surge, and ICU). Every unit in those pathways must be",
+            "saved civilian profiles. Any other source uses data/baseline_civilian_profiles_uc_davis.csv",
+            "(ED, General Medicine, IP Surge, and ICU). Every unit in those pathways must be",
             "selected (ED is always included). Review rates and stays for your hospital."
           )),
           shiny::tags$hr(),
@@ -178,7 +178,7 @@ mod_baseline_ui <- function(id) {
         data.intro = paste(
           "<strong>Routine civilian operation and warm-up.</strong><br>",
           "Enable this flow for a populated hospital before the surge. Civilian arrivals continue during the event.",
-          "Predefined civilian profiles follow the selected predefined hospital (Regional, Tertiary or Community); other sources use the ED, General Medicine, Inpatient Surge and ICU set.",
+          "Predefined civilian profiles follow the selected predefined hospital (Regional, Tertiary or Community); other sources use the ED, General Medicine, IP Surge and ICU set.",
           "Enter a rate and build the ordered pathway unit by unit, with a mean stay and SD (days) for each unit.",
           "Arrival process and the fixed warm-up duration are under Advanced Flow Settings.",
           "Patients and queues remain at day zero. Additional beds activate then. Review baseline stability before comparing surge effects."
@@ -387,7 +387,7 @@ mod_baseline_server <- function(id, hospital_config) {
       dplyr::bind_rows(lapply(names(profiles()), function(name) {
         profile <- profiles()[[name]]
         data.frame(Profile = name, Patients_per_day = profile$rate,
-                   Pathway = paste(profile$unit, collapse = " -> "),
+                   Pathway = paste(unit_display_label(profile$unit), collapse = " -> "),
                    Mean_stays_days = format_steps(profile$los),
                    SD_days = format_steps(civilian_step_sd(profile)))
       }))

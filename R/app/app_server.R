@@ -4,10 +4,12 @@ app_server <- function(input, output, session) {
     analytic_data <- shiny::reactiveVal(NULL)
     civilian_only <- shiny::reactive(identical(input$scenario_mode, "civilian_only"))
     unlimited_mode <- shiny::reactive(identical(input$scenario_mode, "unlimited"))
+    # Unlimited capacity can exclude surge arrivals (routine civilian operation only).
+    unlimited_civilian_only <- shiny::reactive(unlimited_mode() && !isTRUE(input$unlimited_include_surge))
     # The civilian checkbox lives in the baseline module, which itself depends
     # on surge_config, so its state is read here by its namespaced input ID.
     surge_config <- hospital_profiles_server("profiles",
-      require_surge_profiles = shiny::reactive(!civilian_only()),
+      require_surge_profiles = shiny::reactive(!(civilian_only() || unlimited_civilian_only())),
       civilian_enabled = shiny::reactive(isTRUE(input[["baseline-enabled"]])),
       unlimited_selected = unlimited_mode)
     mod_unlimited_server("unlimited", analytic_data)
@@ -171,7 +173,8 @@ app_server <- function(input, output, session) {
       # Unlimited capacity: analytic occupancy, no simulation, beds/seed unused.
       if (unlimited_mode()) {
         tryCatch(shiny::withProgress(message = "Computing analytic occupancy...", value = 0, {
-          results <- run_unlimited_analytic(config, input$n_patients, input$duration, input$sim_days)
+          results <- run_unlimited_analytic(config, input$n_patients, input$duration, input$sim_days,
+                                           include_surge = !unlimited_civilian_only())
           results$report_params <- build_report_params(input, config)
           analytic_data(results)
         }), error = function(error) {
@@ -258,7 +261,7 @@ app_server <- function(input, output, session) {
     find_result <- shiny::reactiveVal(NULL)
     last_patient_profile_signature <- shiny::reactiveVal(NULL)
 
-    shiny::observeEvent(input$scenario_mode, {
+    shiny::observeEvent(list(input$scenario_mode, input$unlimited_include_surge), {
       simulation_data(NULL)
       analytic_data(NULL)
       find_result(NULL)
@@ -613,11 +616,11 @@ app_server <- function(input, output, session) {
     # Results: plots and tables leave out internal units (ED).
     output$resource_plot <- plotly::renderPlotly({
       shiny::req(simulation_data())
-      make_resource_plot(hide_internal_units(simulation_data()$resources, "resource"), var = "server")
+      make_resource_plot(relabel_units(hide_internal_units(simulation_data()$resources, "resource"), "resource"), var = "server")
     })
     output$queue_plot <- plotly::renderPlotly({
       shiny::req(simulation_data())
-      make_resource_plot(hide_internal_units(simulation_data()$resources, "resource"), var = "queue")
+      make_resource_plot(relabel_units(hide_internal_units(simulation_data()$resources, "resource"), "resource"), var = "queue")
     })
     output$utilization_table <- shiny::renderTable({
       shiny::req(simulation_data())

@@ -139,7 +139,7 @@ make_unlimited_comparison <- function(unlimited_dir = "outputs/unlimited_demand_
     dplyr::group_by(.data$resource) |>
     dplyr::summarise(
       warmup_days = warmup,
-      first_day_95 = suppressWarnings(min(.data$day[.data$analytic_fraction >= 0.95])),
+      first_day_95 = suppressWarnings(min(.data$day[.data$analytic_fraction >= 0.975])),
       first_day_99 = suppressWarnings(min(.data$day[.data$analytic_fraction >= 0.99])),
       analytic_fraction_at_warmup_end = .data$analytic_fraction[which.min(abs(.data$day - warmup))],
       des_fraction_at_warmup_end = .data$des_fraction[which.min(abs(.data$day - warmup))],
@@ -159,8 +159,9 @@ make_unlimited_comparison <- function(unlimited_dir = "outputs/unlimited_demand_
                           scales = "free_y",
                           labeller = ggplot2::labeller(resource = figure_unit_label)) +
       ggplot2::labs(x = "Days from surge onset (negative = civilian warm-up)", y = "Occupied beds",
-        color = NULL, fill = NULL,
-        caption = "Unlimited capacity. DES band: empirical 5-95% across replications; analytic band: 5-95% of the exact distribution.") +
+        color = NULL, fill = NULL#,
+        #caption = "Unlimited capacity. DES band: empirical 5-95% across replications; analytic band: 5-95% of the exact distribution."
+        ) +
       ggplot2::theme_bw() + ggplot2::theme(legend.position = "top"),
     warmup = ggplot2::ggplot(baseline_curve, ggplot2::aes(x = .data$day)) +
       ggplot2::geom_line(ggplot2::aes(y = .data$analytic_fraction, color = "Analytic")) +

@@ -32,8 +32,8 @@ Each call runs the civilian baseline and the scenarios of its design and, by def
 
 `make_study_config()` defaults:
 
-- **Capacities:** ICU 84, GenMed 405, Surge 15; the ED is a practically unlimited placeholder.
-- **Profiles:** civilian profiles from `data/baseline_civilian_profiles.csv` (UC Davis) and the reduced Deloitte surge profiles with their current fallbacks (currently GenMed -> Surge).
+- **Capacities:** ICU 84, GenMed 422, IP Surge 15 (ICU and GenMed: mean total beds in the UC Davis capacity data, 2024-2025; IP Surge is limited to 15 so it works as a limited GenMed fallback); the ED is a practically unlimited placeholder.
+- **Profiles:** civilian profiles from `data/baseline_civilian_profiles_uc_davis.csv` (UC Davis) and the reduced Deloitte surge profiles with their current fallbacks (currently GenMed -> Surge).
 - **Arrivals:** evenly spaced surge arrivals and Poisson civilian arrivals. Surge profile assignment and stays remain random.
 - **Horizon and replications:** `sim_days = 50`, `num_sims = 40` descriptive replications per scenario, `seed = 2026`.
 - **Warm-up:** fixed duration, `baseline_defaults()$warmup_days` (30 days) unless overridden with `warmup = list(warmup_days = ...)`. The manuscript driver sets it explicitly in `run_all_scenarios.R`. No automated stability test is run: choose and justify the duration from raw-occupancy plots (`plot_raw_dynamics.R`) and assess sensitivity to it.

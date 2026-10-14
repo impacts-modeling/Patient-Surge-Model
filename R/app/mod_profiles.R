@@ -1,7 +1,7 @@
 # Names are display labels; values are stable internal resource identifiers.
 hospital_profile_units <- c(
   "ED" = "ED",
-  "Inpatient Surge" = "Surge",
+  "IP Surge" = "Surge",
   "General Medicine" = "GenMed",
   "ICU" = "ICU",
   "Burn Bed" = "BurnBed",
@@ -61,7 +61,7 @@ ndms_profile_sources <- c(
 # Predefined civilian profiles (data/) matching each hospital source; any other
 # source (manual, Excel) uses the default UC Davis-based file.
 civilian_profile_files <- c(
-  deloitte_test = "baseline_civilian_profiles.csv",
+  deloitte_test = "baseline_civilian_profiles_uc_davis.csv",
   regional_hospital_test = "baseline_civilian_profiles_regional.csv",
   tertiary_hospital_test = "baseline_civilian_profiles_tertiary.csv",
   community_hospital_test = "baseline_civilian_profiles_community.csv"
@@ -126,7 +126,7 @@ pathway_step_inputs <- function(input, session, field, count, version, draft, un
     switch(
       field,
       unit = shiny::selectInput(session$ns(input_id), paste("Unit", index),
-                                choices = unique(c("None", units, value)), selected = value),
+                                choices = unit_choices(unique(c("None", units, value))), selected = value),
       los = shiny::numericInput(session$ns(input_id), paste("Mean stay", index, "(days)"),
                                 value = value, min = 0.01, step = "any"),
       sd = shiny::numericInput(session$ns(input_id), paste("SD", index, "(days)"),
@@ -805,7 +805,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       shiny::updateCheckboxGroupInput(session, "hospital_units",
                                       selected = setdiff(test_config$units, names(internal_hospital_units)))
       shiny::updateSelectInput(session, "fallback_unit", selected = "")
-      shiny::updateSelectizeInput(session, "fallback_options", choices = test_config$units,
+      shiny::updateSelectizeInput(session, "fallback_options", choices = unit_choices(test_config$units),
                                   selected = character(), server = TRUE)
     }, ignoreInit = FALSE, priority = 100)
 
@@ -852,9 +852,11 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
                               is.finite(configured_capacity)) {
               configured_capacity
             } else if (unit_name == "GenMed") {
-              405
+              422
             } else if (unit_name == "ICU") {
               84
+            } else if (unit_name == "Surge") {
+              15
             } else {
               15
             }
@@ -870,7 +872,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
               width = 4,
               shiny::numericInput(
                 session$ns(input_id),
-                unit_name,
+                unit_display_label(unit_name),
                 min = 0,
                 max = 500,
                 value = default_capacity
@@ -888,7 +890,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       shiny::updateSelectInput(
         session,
         "fallback_unit",
-        choices = c("Select a primary unit" = "", units),
+        choices = c("Select a primary unit" = "", unit_choices(units)),
         selected = selected_primary
       )
     })
@@ -901,7 +903,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       shiny::updateSelectizeInput(
         session,
         "fallback_options",
-        choices = fallback_choices,
+        choices = unit_choices(fallback_choices),
         selected = selected_fallbacks,
         server = TRUE
       )
@@ -1208,7 +1210,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       shiny::updateSelectizeInput(
         session,
         "fallback_options",
-        choices = setdiff(selected_units(), names(internal_hospital_units)),
+        choices = unit_choices(setdiff(selected_units(), names(internal_hospital_units))),
         selected = character(),
         server = TRUE
       )
@@ -1227,8 +1229,8 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       current <- fallbacks()
       if (length(current) == 0) return(data.frame(Unit = character(), Fallback = character()))
       data.frame(
-        Unit = names(current),
-        Fallback = vapply(current, paste, character(1), collapse = ", "),
+        Unit = unit_display_label(names(current)),
+        Fallback = vapply(current, function(units) paste(unit_display_label(units), collapse = ", "), character(1)),
         row.names = NULL
       )
     })
@@ -1346,7 +1348,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
         Trajectory = vapply(
           profiles,
           function(profile) {
-            if (is.null(profile$unit)) "Ambulatory" else paste(profile$unit, collapse = " -> ")
+            if (is.null(profile$unit)) "Ambulatory" else paste(unit_display_label(profile$unit), collapse = " -> ")
           },
           character(1)
         ),

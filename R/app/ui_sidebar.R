@@ -22,6 +22,11 @@ sidebar_info_text <- function(info_id, ...) {
 
 build_sidebar <- function() {
   col1 <- 6
+  # Surge inputs apply to the surge event and to the unlimited-capacity scenario when
+  # surge arrivals are included.
+  surge_inputs_condition <- paste(
+    "input.scenario_mode == 'surge' ||",
+    "(input.scenario_mode == 'unlimited' && input.unlimited_include_surge)")
   search_config <- bed_search_configs$development
   compliance_note <- sprintf(
     "In at least %.1f%% of replications, the mean wait for a first bed (days, while holding no bed) in GenMed and in ICU must both stay within their limits during the observation period.",
@@ -50,13 +55,15 @@ build_sidebar <- function() {
         choices = c("Surge event" = "surge", "Routine civilian operation only" = "civilian_only",
                     "Unlimited capacity (analytic)" = "unlimited"),
         selected = "surge"),
+      shiny::conditionalPanel("input.scenario_mode == 'unlimited'",
+        shiny::checkboxInput("unlimited_include_surge", "Include surge arrivals", value = TRUE)),
       sidebar_info_text("info_scenario_mode",
         shiny::conditionalPanel("input.scenario_mode == 'surge'",
           "Surge arrivals, plus routine civilian flow if it is enabled in Hospital Setup."),
         shiny::conditionalPanel("input.scenario_mode == 'civilian_only'",
           "Enable Routine Civilian Flow and save civilian profiles in Hospital Setup. Surge profiles are not required."),
         shiny::conditionalPanel("input.scenario_mode == 'unlimited'",
-          "Occupancy under unlimited capacity is computed analytically (no simulation). Bed counts, replications and seed are not used."))
+          "Occupancy under unlimited capacity is computed analytically (no simulation). Bed counts, replications and seed are not used. Untick Include surge arrivals to compute routine civilian operation only (it requires Routine Civilian Flow to be enabled in Hospital Setup)."))
     ),
     sidebarMenu(
       id = "sidebarid",
@@ -71,7 +78,7 @@ build_sidebar <- function() {
             shiny::fluidRow(
               shiny::column(
                 width = col1,
-                shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
+                shiny::conditionalPanel(surge_inputs_condition,
                   shiny::numericInput("n_patients", "Surge Patients per Day", min = 1, max = 20, value = 10, step = "any")),
                 # Keep the icon on the label's second line so this label stays two
                 # lines tall, aligned with "Number of simulations" beside it.
@@ -82,7 +89,7 @@ build_sidebar <- function() {
               ),
               shiny::column(
                 width = col1,
-                shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
+                shiny::conditionalPanel(surge_inputs_condition,
                   shiny::numericInput("duration", "Surge Arrival Period (days)", min = 1, max = 30, value = 10)),
                 shiny::conditionalPanel("input.scenario_mode != 'unlimited'",
                   shiny::numericInput("num_sims",
@@ -100,7 +107,7 @@ build_sidebar <- function() {
             shiny::fluidRow(
               shiny::column(
                 width = col1,
-                shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
+                shiny::conditionalPanel(surge_inputs_condition,
                   shiny::selectInput("surge_arrival_process",
                     shiny::tagList("Surge arrival ", shiny::span(class = "text-nowrap",
                       with_info("process", "info_surge_arrival_process"))),
@@ -113,7 +120,7 @@ build_sidebar <- function() {
                   shiny::numericInput("simulation_seed", "Simulation seed", value = app_development_config$simulation_seed, min = 1, step = 1))
               )
             ),
-            shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
+            shiny::conditionalPanel(surge_inputs_condition,
               sidebar_info_text("info_surge_arrival_process",
                 "For Poisson arrivals, patients/day is the mean rate; the actual count varies. The observation duration must cover the full arrival period."))
           ),

@@ -59,7 +59,7 @@ All predefined sets use the NDMS-Based Classification:
 
 | Set | Units and beds |
 |---|---|
-| **UC Davis calibrated profiles** | Surge, GenMed and ICU (the configuration used in the manuscript). |
+| **UC Davis calibrated profiles** | IP Surge, GenMed and ICU (the configuration used in the manuscript). |
 | **Regional hospital** | GenMed 240, ICU 20, Cardiology 12, PhysicalMed 12, TransitionalCare 20; BurnBed pathways rerouted to ICU and Psychiatric to GenMed. |
 | **Tertiary hospital** | GenMed 400, ICU 72, BurnBed 12, Cardiology 18, PhysicalMed 24, Psychiatric 20, TransitionalCare 24. |
 | **Community acute-care hospital** | GenMed 80, ICU 12, TransitionalCare 12; BurnBed and Cardiology pathways rerouted to ICU, PhysicalMed to TransitionalCare, and Psychiatric to GenMed. Fallbacks: GenMed and TransitionalCare back each other up; ICU has none. |
@@ -92,7 +92,7 @@ The **ED** is always part of the hospital with a fixed capacity of 10,000 beds
 (practically unlimited, so it never fills); it is not listed or editable and
 is used by civilian pathways (every civilian pathway starts there), but it is not offered as a unit in surge trajectories or fallback rules. Selectable units are:
 
-- **Surge**
+- **IP Surge**
 - **GenMed**
 - **ICU**
 - **BurnBed**
@@ -191,8 +191,8 @@ retained for each hospital source and unit selection during the current session.
 **Use predefined civilian profiles** loads the UC Davis-based civilian file that
 matches the selected predefined hospital:
 `data/baseline_civilian_profiles_regional.csv`, `_tertiary.csv`, or
-`_community.csv`. Every other source (manual or Excel) uses `data/baseline_civilian_profiles.csv`
-(ED, GenMed, Surge and ICU pathways); the pathway units must be selected in the hospital. In the Regional, Tertiary and Community
+`_community.csv`. Every other source (manual or Excel) uses `data/baseline_civilian_profiles_uc_davis.csv`
+(ED, GenMed, IP Surge and ICU pathways); the pathway units must be selected in the hospital. In the Regional, Tertiary and Community
 files every pathway is ED -> unit, and arrival rates are set so that expected
 occupancy (rate x 6-day mean stay) is 85% of that unit's beds.
 
@@ -465,7 +465,10 @@ Selecting **Unlimited capacity (analytic)** (sidebar, or the **Select unlimited
 capacity** button next to the bed inputs in Hospital Setup) and clicking **Run
 Simulation** computes the expected occupancy of every unit with no bed limit,
 without simulation. The surge and civilian settings are used as in the other
-scenarios; the bed counts, number of simulations and seed are not, and queues,
+scenarios. Untick **Include surge arrivals** (sidebar, when this scenario is
+selected) to compute routine civilian operation only; this requires routine civilian
+flow to be enabled, and the surge inputs and surge profiles are then not needed. The
+bed counts, number of simulations and seed are not used, and queues,
 bed waits and boarding do not apply (nobody waits). The results are:
 
 - **Expected Occupied Beds**: the expected number of occupied beds over time (day

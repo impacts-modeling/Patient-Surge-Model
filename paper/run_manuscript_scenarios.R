@@ -34,8 +34,8 @@ make_study_config <- function(project_dir = ".",
                               # ED = 999 is a practically-unlimited placeholder (hallway/chair
                               # capacity is elastic in practice, not a hard bed count); boarding
                               # time, not this capacity, is what constrains an ED patient.
-                              capacities = c(ICU = 84, GenMed = 405, Surge = 15, ED = 9999),
-                              civilian_file = file.path(project_dir, "data/baseline_civilian_profiles.csv"),
+                              capacities = c(ICU = 84, GenMed = 422, Surge = 15, ED = 9999),
+                              civilian_file = file.path(project_dir, "data/baseline_civilian_profiles_uc_davis.csv"),
                               sim_days = 50, num_sims = 40L, seed = 2026L,
                               warmup = list(), search = list(), mode = c("paper", "development"),
                               workers = 4L,
@@ -259,7 +259,8 @@ scenario_labels <- function(scenario_id, design) {
 # (the data keep the resource name "Surge").
 figure_unit_label <- function(x) ifelse(as.character(x) == "Surge", "IP Surge", as.character(x))
 
-make_study_figures <- function(tables, mode = c("paper", "unlimited_demand")) {
+# base_size sets the font size of every figure (ggplot2 theme_bw); axis, strip and legend text scale with it.
+make_study_figures <- function(tables, mode = c("paper", "unlimited_demand"), base_size = 16) {
   mode <- match.arg(mode)
   daily <- tables$daily_summary |>
     dplyr::filter(resource != "ED")
@@ -330,7 +331,7 @@ make_study_figures <- function(tables, mode = c("paper", "unlimited_demand")) {
       ggplot2::scale_fill_manual(values = scenario_colors, guide = "none") +
       ggplot2::facet_wrap(ggplot2::vars(measure), ncol = 1) +
       ggplot2::labs(x = NULL, y = NULL, color = "Scenario", fill = "Scenario") +
-      ggplot2::theme_bw()
+      ggplot2::theme_bw(base_size = base_size)
 
     # Apply fixed limits if available
     if (unit_res %in% names(y_limits)) {
@@ -347,15 +348,17 @@ make_study_figures <- function(tables, mode = c("paper", "unlimited_demand")) {
                          alpha = 0.12, color = NA, na.rm = TRUE) +
     ggplot2::geom_line() +
     ggplot2::scale_linetype_identity() +
-    ggplot2::scale_color_manual(values = scenario_colors, guide = ggplot2::guide_legend(nrow = 2)) +
+    ggplot2::scale_color_manual(values = scenario_colors, guide = ggplot2::guide_legend(nrow = ceiling(length(unique(daily$scenario_id)) / 3))) +
     ggplot2::scale_fill_manual(values = scenario_colors, guide = "none") +
     ggplot2::facet_wrap(ggplot2::vars(measure, resource),
                        ncol = length(unit_order), scales = "free_y",
                        labeller = ggplot2::labeller(resource = figure_unit_label)) +
     ggplot2::labs(x = "Days after surge onset (daily interval midpoint)", y = NULL,
-      color = "Scenario", fill = "Scenario",
-      caption = paste("Mean and 10th-90th percentile band of the daily means of occupancy across replications.")) +
-    ggplot2::theme_bw() + ggplot2::theme(legend.position = "top"))
+      color = "Scenario", fill = "Scenario"#,
+      #caption = paste("Mean and 10th-90th percentile band of the daily means of occupancy across replications.")
+      ) +
+    ggplot2::theme_bw(base_size = base_size) +
+      ggplot2::theme(legend.position = "top", legend.text = ggplot2::element_text(size = ggplot2::rel(0.8))))
   
   waits <- tables$wait_summary |>
     dplyr::filter(resource != "ED")
@@ -368,7 +371,7 @@ make_study_figures <- function(tables, mode = c("paper", "unlimited_demand")) {
                           labeller = ggplot2::labeller(resource = figure_unit_label)) +
       ggplot2::labs(x = NULL, y = "Mean resolved-request wait (days)", fill = "Population",
         caption = "Resolved requests only; consult pending-request counts in the accompanying table.") +
-      ggplot2::theme_bw() +
+      ggplot2::theme_bw(base_size = base_size) +
       ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 35, hjust = 1), legend.position = "top")
     figures$pending_requests <- ggplot2::ggplot(waits,
       ggplot2::aes(x = .data$scenario_id, y = .data$pending_requests, fill = .data$population)) +
@@ -376,7 +379,7 @@ make_study_figures <- function(tables, mode = c("paper", "unlimited_demand")) {
       ggplot2::facet_wrap(ggplot2::vars(resource, cohort), scales = "free_y",
                           labeller = ggplot2::labeller(resource = figure_unit_label)) +
       ggplot2::labs(x = NULL, y = "Pending requests (sum across replications)", fill = "Population") +
-      ggplot2::theme_bw() +
+      ggplot2::theme_bw(base_size = base_size) +
       ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 35, hjust = 1), legend.position = "top")
   }
   if (nrow(tables$expansion)) {
@@ -387,7 +390,7 @@ make_study_figures <- function(tables, mode = c("paper", "unlimited_demand")) {
       additions$scenario_id <- scenario_labels(additions$scenario_id, tables$design)
       figures$expansion <- ggplot2::ggplot(additions,
         ggplot2::aes(x = .data$scenario_id, y = .data$beds, fill = .data$unit)) +
-        ggplot2::geom_col(position = "dodge") + ggplot2::theme_bw() +
+        ggplot2::geom_col(position = "dodge") + ggplot2::theme_bw(base_size = base_size) +
         ggplot2::theme(legend.position = "top") +
         ggplot2::labs(x = NULL, y = "Additional beds", fill = "Unit",
           caption = "Candidates passing independent final evaluation; global optimality is not established.")
@@ -664,7 +667,7 @@ run_volume_and_concentration_study <- function(study, volume_duration = 10,
 # `capacity` must comfortably exceed peak simultaneous demand in every unit,
 # or this stops being effectively unconstrained -- inspect resource_summary's
 # peak utilization/time-at-capacity to confirm no unit ever saturates.
-run_unlimited_demand_study <- function(study, capacity = 500L, ed_capacity = 100000L,
+run_unlimited_demand_study <- function(study, capacity = 10000L, ed_capacity = 100000L,
                                        volume_duration = 10,
                                        volume_rates = c(10, 15, 20),
                                        concentration_total = 150,
