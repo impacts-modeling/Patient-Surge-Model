@@ -1,10 +1,9 @@
-.claude
+rsconnect/
 .Rproj.user
 .RDataTmp
 .Rhistory
 .RData
 .Ruserdata
-AGENTS.md
 Patient-Surge-Model.Rproj
 outputs
 paper_data
@@ -13,3 +12,5 @@ paper/warm_up.png
 PatientSurgeModel
 PACKAGE_CREATION_COMPLETE.md
 Rplots.pdf
+.claude
+AGENTS.md
