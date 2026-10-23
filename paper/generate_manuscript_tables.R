@@ -164,11 +164,13 @@ for (id in names(label_for3)) {
   e <- exp3[exp3$scenario_id == id, ]
   n_eval <- sum(hist3$scenario_id == id & hist3$stage == "search")
   j <- joint3[joint3$scenario_id == id, ]
-  cat(sprintf("%s & %d & %d  & Joint & %d/%d & %s & %s--%s \\\\\n",
-    label_for3[[id]], e$GenMed_added, e$ICU_added, n_eval,
-     j$replications, fmt(100 * j$probability, 1),
-    fmt(100 * j$lower_95, 1), fmt(100 * j$upper_95, 1)
-    ))
+  # Columns: scenario & GenMed added & ICU added & criterion & successes/replications
+  # & compliance (%) & 95% CI. The number of search evaluations is not a table
+  # column; it is printed on its own line below for the text.
+  cat(sprintf("%s & %d & %d & Joint & %d/%d & %s & %s--%s \\\\\n",
+    label_for3[[id]], e$GenMed_added, e$ICU_added,
+    j$successes, j$replications, fmt(100 * j$probability, 1),
+    fmt(100 * j$lower_95, 1), fmt(100 * j$upper_95, 1)))
   for (unit in c("GenMed", "ICU")) {
     m <- marg3[marg3$scenario_id == id & marg3$resource == unit, ]
     cat(sprintf("%s & %d & %d & %s & %d/%d & %s & %s--%s \\\\\n",
@@ -176,6 +178,7 @@ for (id in names(label_for3)) {
       m$successes, m$replications, fmt(100 * m$probability, 1),
       fmt(100 * m$lower_95, 1), fmt(100 * m$upper_95, 1)))
   }
+  cat(sprintf("%% %s: %d search evaluations\n", label_for3[[id]], n_eval))
 }
 
 # ---------------------------------------------------------------------------
