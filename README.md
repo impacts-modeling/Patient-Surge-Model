@@ -156,7 +156,6 @@ Patient-Surge-Model/
 |-- description.md                     # In-app user documentation
 |-- LICENSE                            # MIT license
 |-- manifest.json                      # Deployment dependency manifest (regenerate after moving files)
-|-- www/                               # Static assets for the app
 |-- data/
 |   |-- baseline_civilian_profiles_uc_davis.csv   # UC Davis civilian profiles (manuscript; not offered in the app)
 |   |-- baseline_civilian_profiles_regional.csv   # Civilian profiles for the Regional hospital
@@ -178,22 +177,26 @@ Patient-Surge-Model/
 |       |-- app_ui.R                   # Dashboard assembly
 |       |-- app_server.R               # Reactive orchestration and outputs
 |       |-- ui_sidebar.R               # Navigation and model inputs
-|       |-- ui_main.R                  # Results, documentation, and styling
+|       |-- ui_main.R                  # Results and User Guide pages, styling
 |       |-- mod_profiles.R             # Hospital setup, surge profiles and Excel exchange
 |       |-- mod_baseline.R             # Civilian configuration UI and server
 |       |-- mod_unlimited.R            # Unlimited-capacity (analytic) scenario
 |       `-- report_functions.R         # Result tables and PDF report generation
-|-- paper/                             # Manuscript scenarios and figures, no Shiny (see paper/README.md)
-|   |-- run_manuscript_scenarios.R     # Study orchestration; sources R/core, R/shared and R/analitic only
-|   |-- run_all_scenarios.R            # Runs the manuscript scenarios
-|   |-- make_unlimited_comparison.R    # Analytic vs simulated unlimited capacity; warm-up check
-|   |-- generate_manuscript_tables.R   # Manuscript table rows
-|   |-- generate_surge_profile_table.R # Surge-profile table
-|   |-- plot_raw_dynamics.R            # Raw-occupancy plots used to choose the warm-up
-|   `-- Cleaning.Rmd                   # UC Davis data calibration notebook (data not distributed)
-|-- outputs/                           # Generated study results (figures, tables, caches)
-`-- rsconnect/                         # Deployment metadata
+`-- paper/                             # Manuscript scenarios and figures, no Shiny
+    |-- README.md                      # How to run the manuscript studies
+    |-- run_manuscript_scenarios.R     # Study orchestration; sources R/core, R/shared and R/analitic only
+    |-- run_all_scenarios.R            # Runs the manuscript scenarios
+    |-- make_unlimited_comparison.R    # Analytic vs simulated unlimited capacity; warm-up check
+    |-- make_graphical_abstract.R      # Graphical abstract (reads the capacity-search outputs)
+    |-- generate_manuscript_tables.R   # Manuscript table rows
+    |-- generate_surge_profile_table.R # Surge-profile table
+    `-- plot_raw_dynamics.R            # Raw-occupancy plots used to choose the warm-up
 ```
+
+Created locally and not tracked in git (see `.gitignore`): `outputs/` (generated
+study results: figures, tables, caches), `paper/paper_data/` (UC Davis data, the
+calibration notebook `Cleaning.Rmd` and the manuscript sources; data not
+distributed), and `rsconnect/` (deployment metadata written by `rsconnect`).
 
 `app.R` loads the configuration, shared data/metrics, simulation engine, profile modules, and interface before launching Shiny. The profile module returns a reactive hospital configuration to `app_server.R`, which coordinates simulation runs, bed searches, and reporting. `paper/run_manuscript_scenarios.R` sources only `R/core/`, `R/shared/` and `R/analitic/`, never `R/app/`, so the same simulation engine drives both the dashboard and the manuscript scenarios without duplication.
 
