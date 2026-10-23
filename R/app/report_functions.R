@@ -287,14 +287,17 @@ add_resource_plot_page <- function(resources, var = "server") {
   print(plot_obj)
 }
 
-build_report_params <- function(input, profile_config) {
-  civilian_only <- identical(input$scenario_mode, "civilian_only")
-  if (identical(input$scenario_mode, "unlimited")) {
+# scenario: one of scenario_choices (ui_sidebar.R); unlimited: analytic
+# unlimited-capacity run; civilian_enabled: routine civilian arrivals enabled in
+# Hospital Setup, which decides whether entered beds are total or available.
+build_report_params <- function(input, profile_config, scenario,
+                                unlimited = FALSE, civilian_enabled = FALSE) {
+  civilian_only <- identical(scenario, "civilian_only")
+  if (isTRUE(unlimited)) {
     # Beds, replications, seed and wait limits do not apply to the analytic scenario.
-    include_surge <- !isFALSE(input$unlimited_include_surge)
+    include_surge <- !civilian_only
     return(c(list(
-      `Scenario` = if (include_surge) "Unlimited capacity (analytic)"
-                   else "Unlimited capacity (analytic), routine civilian operation only"),
+      `Scenario` = paste(scenario_label(scenario), "- unlimited capacity (analytic)")),
       if (include_surge) list(
         `Surge arrival process` = profile_config$arrival_process,
         `Surge Patients per Day` = input$n_patients,
@@ -309,11 +312,11 @@ build_report_params <- function(input, profile_config) {
   capacities <- profile_config$capacities
   capacity_params <- as.list(capacities[!names(capacities) %in% names(internal_hospital_units)])
   # Without civilian flow the entered beds are those available to the surge.
-  capacity_suffix <- if (isTRUE(profile_config$baseline$enabled)) "Total Beds" else "Total Available Beds"
+  capacity_suffix <- if (isTRUE(civilian_enabled)) "Total Beds" else "Total Available Beds"
   names(capacity_params) <- paste(unit_display_label(names(capacity_params)), capacity_suffix)
   c(
     list(
-      `Scenario` = if (civilian_only) "Routine civilian operation only" else "Surge event",
+      `Scenario` = scenario_label(scenario),
       `Surge arrival process` = profile_config$arrival_process,
       `Boarding time credited toward next stay` = !isFALSE(profile_config$credit_boarding_time),
       `Surge Patients per Day` = if (civilian_only) 0 else input$n_patients,

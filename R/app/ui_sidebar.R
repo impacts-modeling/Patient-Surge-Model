@@ -20,13 +20,32 @@ sidebar_info_text <- function(info_id, ...) {
              shiny::div(class = "help-block", ...))
 }
 
+# Patients to simulate. Offered only when routine civilian arrivals are
+# enabled; otherwise the run is always "surge_only" (see effective scenario in
+# app_server.R). Capacity (finite or unlimited) is chosen separately in
+# Hospital Information.
+scenario_choices <- c(
+  "Surge + routine civilian" = "surge_civilian",
+  "Routine civilian only (baseline)" = "civilian_only",
+  "Surge only (empty hospital)" = "surge_only"
+)
+
+scenario_label <- function(scenario) {
+  label <- names(scenario_choices)[scenario_choices %in% scenario]
+  if (length(label)) label else as.character(scenario)
+}
+
+# JavaScript conditions for conditionalPanel(); they mirror the server's
+# effective scenario: without civilian arrivals the scenario is surge only.
+civilian_enabled_js <- "input['baseline-enabled']"
+civilian_only_js <- sprintf("(%s && input.scenario_mode == 'civilian_only')", civilian_enabled_js)
+unlimited_js <- "input['profiles-unlimited_capacity']"
+
 build_sidebar <- function() {
   col1 <- 6
-  # Surge inputs apply to the surge event and to the unlimited-capacity scenario when
-  # surge arrivals are included.
-  surge_inputs_condition <- paste(
-    "input.scenario_mode == 'surge' ||",
-    "(input.scenario_mode == 'unlimited' && input.unlimited_include_surge)")
+  # Surge inputs apply to every scenario that includes surge arrivals.
+  surge_inputs_condition <- sprintf("!%s", civilian_only_js)
+  simulation_inputs_condition <- sprintf("!%s", unlimited_js)
   search_config <- bed_search_configs$development
   compliance_note <- sprintf(
     "In at least %.1f%% of replications, the mean wait for a first bed (days, while holding no bed) in GenMed and in ICU must both stay within their limits during the observation period.",
@@ -45,29 +64,34 @@ build_sidebar <- function() {
         data.intro = paste(
           "<strong>Welcome to the Patient Surge Model.</strong><br>",
           "This guided tour explains how to configure the hospital,",
-          "run a simulation, estimate bed expansion, and interpret the results. Choose routine civilian operation only for the baseline, or Surge event to add military arrivals. Keep the same observation horizon when comparing scenarios."
+          "run a simulation, estimate bed expansion, and interpret the results.",
+          "Use Next and Back to move between steps; the tour opens each page for you.",
+          "The i icons explain individual inputs, and User Guide (sidebar) has the full documentation."
         ),
         data.position = "right"
       )
     ),
-    shiny::div(style = "padding: 0 10px;",
-      shiny::selectInput("scenario_mode", with_info("Scenario to run", "info_scenario_mode"),
-        choices = c("Surge event" = "surge", "Routine civilian operation only" = "civilian_only",
-                    "Unlimited capacity (analytic)" = "unlimited"),
-        selected = "surge"),
-      shiny::conditionalPanel("input.scenario_mode == 'unlimited'",
-        shiny::checkboxInput("unlimited_include_surge", "Include surge arrivals", value = TRUE)),
-      sidebar_info_text("info_scenario_mode",
-        shiny::conditionalPanel("input.scenario_mode == 'surge'",
-          "Surge arrivals, plus routine civilian flow if it is enabled in Hospital Setup."),
-        shiny::conditionalPanel("input.scenario_mode == 'civilian_only'",
-          "Enable Routine Civilian Flow and save civilian profiles in Hospital Setup. Surge profiles are not required."),
-        shiny::conditionalPanel("input.scenario_mode == 'unlimited'",
-          "Occupancy under unlimited capacity is computed analytically (no simulation). Bed counts, replications and seed are not used. Untick Include surge arrivals to compute routine civilian operation only (it requires Routine Civilian Flow to be enabled in Hospital Setup)."))
-    ),
     sidebarMenu(
       id = "sidebarid",
       shinydashboard::menuItem("Hospital Setup", tabName = "HospitalSetup", icon = shiny::icon("hospital")),
+      # Shown only with routine civilian arrivals; without them every run is
+      # surge only on an empty hospital.
+      shiny::conditionalPanel(
+        civilian_enabled_js,
+        shiny::div(
+          style = "padding: 6px 10px 0;",
+          shiny::selectInput("scenario_mode", with_info("Patients to simulate", "info_scenario_mode"),
+                             choices = scenario_choices, selected = "surge_civilian"),
+          sidebar_info_text("info_scenario_mode",
+            shiny::conditionalPanel("input.scenario_mode == 'surge_civilian'",
+              "Surge arrivals on top of routine civilian flow; the hospital is filled by the civilian warm-up before day 0."),
+            shiny::conditionalPanel("input.scenario_mode == 'civilian_only'",
+              "Routine civilian flow only (baseline for comparisons). Surge profiles are not required."),
+            shiny::conditionalPanel("input.scenario_mode == 'surge_only'",
+              "Surge arrivals only, on an empty hospital with the total beds entered (no civilian warm-up). Compare with Surge + routine civilian to see the effect of civilian occupancy."),
+            "Unlimited capacity, if selected in Hospital Information, applies to any of these.")
+        )
+      ),
       shinydashboard::menuItem("Model Parameters", tabName = "InitCondition", icon = shiny::icon("sliders-h")),
       shiny::conditionalPanel(
         'input.sidebarid == "InitCondition"',
@@ -91,7 +115,7 @@ build_sidebar <- function() {
                 width = col1,
                 shiny::conditionalPanel(surge_inputs_condition,
                   shiny::numericInput("duration", "Surge Arrival Period (days)", min = 1, max = 30, value = 10)),
-                shiny::conditionalPanel("input.scenario_mode != 'unlimited'",
+                shiny::conditionalPanel(simulation_inputs_condition,
                   shiny::numericInput("num_sims",
                                       shiny::tagList("Number of ", shiny::span(class = "text-nowrap",
                                         with_info("simulations", "info_num_sims"))),
@@ -102,7 +126,7 @@ build_sidebar <- function() {
             sidebar_info_text("info_sim_days",
               "Day 0 starts observation and surge arrivals. With civilian flow enabled, warm-up occurs before day 0."),
             sidebar_info_text("info_num_sims", sprintf(
-              "At most %d simulations with routine civilian arrivals enabled (every replication includes a warm-up) and %d without, to keep run times manageable.",
+              "At most %d simulations when the scenario includes routine civilian patients (every replication includes a warm-up) and %d for surge only, to keep run times manageable.",
               max_num_sims_for(TRUE), max_num_sims_for(FALSE))),
             shiny::fluidRow(
               shiny::column(
@@ -116,7 +140,7 @@ build_sidebar <- function() {
               ),
               shiny::column(
                 width = col1,
-                shiny::conditionalPanel("input.scenario_mode != 'unlimited'",
+                shiny::conditionalPanel(simulation_inputs_condition,
                   shiny::numericInput("simulation_seed", "Simulation seed", value = app_development_config$simulation_seed, min = 1, step = 1))
               )
             ),
@@ -125,11 +149,14 @@ build_sidebar <- function() {
                 "For Poisson arrivals, patients/day is the mean rate; the actual count varies. The observation duration must cover the full arrival period."))
           ),
           id = "tour_simulation_parameters",
-          data.step = 8,
+          data.step = 11,
           data.intro = paste(
             "<strong>Simulation parameters</strong><br>",
-            "Choose evenly spaced or Poisson surge arrivals. For Poisson, patients/day is a mean rate and the total varies. Set the arrival period and a common observation horizon extending beyond it,",
-            "then set independent replications and a reproducible seed. Day zero follows warm-up; the hospital is not emptied."
+            "Set surge patients per day and the arrival period (Even or Poisson arrivals; for Poisson,",
+            "patients/day is a mean rate and the total varies), and an observation horizon extending beyond it.",
+            "Then set the number of independent simulations (at most 30 with routine civilian patients, 60 for surge only)",
+            "and a reproducible seed. Day 0 follows the civilian warm-up; the hospital is not emptied.",
+            "Keep the same observation horizon when comparing scenarios."
           ),
           data.position = "right"
         ),
@@ -144,16 +171,17 @@ build_sidebar <- function() {
               "$('#run_N').text('Simulation is already running...');"
             )
           ),
-          data.step = 9,
+          data.step = 12,
           data.intro = paste(
             "<strong>Run the selected scenario.</strong><br>",
             "The current hospital configuration is simulated and the plots",
-            "and tables are refreshed. While it runs, both calculation buttons",
-            "are disabled so another calculation cannot start."
+            "and tables on this page are refreshed. With unlimited capacity selected in Hospital",
+            "Information, it instead computes the expected occupancy analytically (no simulation).",
+            "While it runs, both calculation buttons are disabled so another calculation cannot start."
           ),
           data.position = "right"
         ),
-        shiny::conditionalPanel("input.scenario_mode != 'unlimited'",
+        shiny::conditionalPanel(simulation_inputs_condition,
         rintrojs::introBox(
           shiny::tags$details(
             class = "sidebar-section", open = NA,
@@ -166,7 +194,7 @@ build_sidebar <- function() {
               shiny::column(width = 6, shiny::numericInput("congestion_index", "GenMed", min = 0.01, max = 30, value = 1, step = 0.5)),
               shiny::column(width = 6, shiny::numericInput("congestion_index_icu", "ICU", min = 0.01, max = 30, value = 1, step = 0.5))
             ),
-            shiny::conditionalPanel("input.scenario_mode != 'civilian_only'",
+            shiny::conditionalPanel(sprintf("!%s", civilian_only_js),
               shiny::actionButton("run_N", "Estimate Bed Expansion", class = "btn-primary")),
             shiny::h4(with_info("Additional Bed Capacity:", "info_hxs")),
             sidebar_info_text("info_hxs",
@@ -177,19 +205,19 @@ build_sidebar <- function() {
             )
           ),
           id = "tour_bed_expansion",
-          data.step = 10,
+          data.step = 13,
           data.intro = paste(
             "<strong>Estimate additional capacity.</strong><br>",
-            "Enter acceptable GenMed and ICU mean-wait limits (days). The optimizer first checks current capacity",
-            "and, if needed, starts from the analytic unlimited-capacity occupancy (no simulation).",
-            "It then grows only failing resources exponentially; this can exceed primary",
-            "demand when fallbacks route patients into GenMed or ICU.", compliance_note,
-            "Confirm before starting; only one",
-            "calculation can run at a time."
+            "Enter acceptable GenMed and ICU mean-wait limits (days) and click Estimate Bed Expansion.",
+            "The optimizer searches for the fewest extra beds that meet both limits jointly in at least",
+            sprintf("%.0f%% of replications.", 100 * search_config$reliability_level),
+            "Apply Recommended Expansion copies the result to the HxS fields; then run the simulation again.",
+            "Not available for routine civilian only or with unlimited capacity. Details: User Guide, section 5."
           ),
           data.position = "right"
         ))
-      )
+      ),
+      shinydashboard::menuItem("User Guide", tabName = "UserGuide", icon = shiny::icon("book"))
     )
   )
 }

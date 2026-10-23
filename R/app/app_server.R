@@ -2,23 +2,28 @@
 app_server <- function(input, output, session) {
     simulation_data <- shiny::reactiveVal(NULL)
     analytic_data <- shiny::reactiveVal(NULL)
-    civilian_only <- shiny::reactive(identical(input$scenario_mode, "civilian_only"))
-    unlimited_mode <- shiny::reactive(identical(input$scenario_mode, "unlimited"))
-    # Unlimited capacity can exclude surge arrivals (routine civilian operation only).
-    unlimited_civilian_only <- shiny::reactive(unlimited_mode() && !isTRUE(input$unlimited_include_surge))
-    # The civilian checkbox lives in the baseline module, which itself depends
-    # on surge_config, so its state is read here by its namespaced input ID.
+    # The civilian checkbox and the unlimited-capacity state live in modules
+    # (the baseline module itself depends on surge_config), so they are read
+    # here by their namespaced input IDs.
+    civilian_enabled <- shiny::reactive(isTRUE(input[["baseline-enabled"]]))
+    unlimited_mode <- shiny::reactive(isTRUE(input[["profiles-unlimited_capacity"]]))
+    # Effective scenario (see scenario_choices): the "Patients to simulate"
+    # selector applies only with routine civilian arrivals; without them every
+    # run is surge only.
+    scenario <- shiny::reactive({
+      if (!civilian_enabled() || is.null(input$scenario_mode)) "surge_only" else input$scenario_mode
+    })
+    civilian_only <- shiny::reactive(identical(scenario(), "civilian_only"))
     surge_config <- hospital_profiles_server("profiles",
-      require_surge_profiles = shiny::reactive(!(civilian_only() || unlimited_civilian_only())),
-      civilian_enabled = shiny::reactive(isTRUE(input[["baseline-enabled"]])),
-      unlimited_selected = unlimited_mode)
+      require_surge_profiles = shiny::reactive(!civilian_only()),
+      civilian_enabled = civilian_enabled)
     mod_unlimited_server("unlimited", analytic_data)
     baseline_config <- mod_baseline_server("baseline", surge_config)
     # Number of simulations is capped lower when every replication includes a
-    # civilian warm-up (civilian-only runs always do). The input's max only
-    # limits the spinner, so run_sim also checks the typed value.
+    # civilian warm-up. The input's max only limits the spinner, so run_sim
+    # also checks the typed value.
     max_num_sims <- shiny::reactive({
-      max_num_sims_for(isTRUE(input[["baseline-enabled"]]) || civilian_only())
+      max_num_sims_for(!identical(scenario(), "surge_only"))
     })
     shiny::observeEvent(max_num_sims(), {
       limit <- max_num_sims()
@@ -36,7 +41,9 @@ app_server <- function(input, output, session) {
     profile_config <- shiny::reactive({
       config <- surge_config()
       if (is.null(config)) return(NULL)
-      config$baseline <- baseline_config()
+      # "Surge only (empty hospital)" ignores the civilian flow even when it is
+      # enabled: no warm-up, and the entered (total) beds start empty.
+      config$baseline <- if (identical(scenario(), "surge_only")) baseline_defaults() else baseline_config()
       config$arrival_process <- if (is.null(input$surge_arrival_process)) "even" else input$surge_arrival_process
       config
     })
@@ -45,9 +52,6 @@ app_server <- function(input, output, session) {
       return_to_simulation_results <- base::I(paste(
         "var modelLink = document.querySelector(\"a[data-value='InitCondition']\");",
         "if (modelLink) modelLink.click();",
-        "var resultTab = Array.from(document.querySelectorAll('.nav-tabs a'))",
-        "  .find(function(tab) { return tab.textContent.trim() === 'Simulation Results'; });",
-        "if (resultTab) resultTab.click();",
         "window.scrollTo(0, 0);"
       ))
   
@@ -67,16 +71,32 @@ app_server <- function(input, output, session) {
           overlayOpacity = 0.55
         ),
         events = list(
+          # Open the sidebar page that holds the next step (forward or back):
+          # a step inside a page (#shiny-tab-<name>) opens that page; the
+          # sidebar's simulation and bed-expansion steps need Model Parameters.
+          # The link is clicked only when that page is not already open:
+          # re-clicking the active page's link resets the scroll position after
+          # intro.js has scrolled to the step, leaving the tooltip off screen.
           onbeforechange = base::I(paste(
-            "if (targetElement && targetElement.id === 'tour_simulation_parameters') {",
-            "  var modelLink = document.querySelector(\"a[data-value='InitCondition']\");",
-            "  if (modelLink) modelLink.click();",
-            "}",
-            "if (targetElement && /tour_routine_flow$/.test(targetElement.id)) {",
-            "  var setupLink = document.querySelector(\"a[data-value='HospitalSetup']\");",
-            "  if (setupLink) setupLink.click();",
-            "}",
-            "rintrojs.callback.switchTabs(targetElement);"
+            "if (targetElement) {",
+            "  var page = targetElement.closest('.tab-pane[id^=\"shiny-tab-\"]');",
+            "  var tabName = page ? page.id.replace('shiny-tab-', '') : null;",
+            "  if (/^tour_(simulation_parameters|bed_expansion)$/.test(targetElement.id)) tabName = 'InitCondition';",
+            "  var pane = tabName && document.getElementById('shiny-tab-' + tabName);",
+            "  var link = tabName && document.querySelector(\"a[data-value='\" + tabName + \"']\");",
+            "  if (link && !(pane && pane.classList.contains('active'))) {",
+            "    link.click();",
+            "    window.scrollTo(0, 0);",
+            "  }",
+            # Position the step before intro.js measures it (its own scrolling
+            # is unreliable in this layout): centre it below the 50px header if
+            # it fits, so the tooltip has room above or below; otherwise align
+            # its top just below the header.
+            "  var rect = targetElement.getBoundingClientRect();",
+            "  var room = window.innerHeight - 60;",
+            "  var offset = rect.height < room ? (room - rect.height) / 2 : 0;",
+            "  window.scrollBy(0, rect.top - 60 - offset);",
+            "}"
           )),
           oncomplete = return_to_simulation_results,
           onexit = return_to_simulation_results
@@ -110,7 +130,7 @@ app_server <- function(input, output, session) {
         evaluated_capacities[["GenMed"]] <- evaluated_capacities[["GenMed"]] + input$genmed_msf
       }
       list(
-        scenario_mode = input$scenario_mode,
+        scenario_mode = scenario(),
         profile_config = config,
         evaluated_capacities = evaluated_capacities,
         n_patients = input$n_patients,
@@ -174,8 +194,9 @@ app_server <- function(input, output, session) {
       if (unlimited_mode()) {
         tryCatch(shiny::withProgress(message = "Computing analytic occupancy...", value = 0, {
           results <- run_unlimited_analytic(config, input$n_patients, input$duration, input$sim_days,
-                                           include_surge = !unlimited_civilian_only())
-          results$report_params <- build_report_params(input, config)
+                                           include_surge = !civilian_only())
+          results$report_params <- build_report_params(input, config, scenario(), unlimited = TRUE,
+                                                       civilian_enabled = civilian_enabled())
           analytic_data(results)
         }), error = function(error) {
           shiny::showNotification(conditionMessage(error), type = "error", duration = NULL)
@@ -201,7 +222,8 @@ app_server <- function(input, output, session) {
                                          scenario_id = scenario_id, scenario_mode = mode)
         results$profile_config <- config
         results$capacities <- capacities
-        results$report_params <- build_report_params(input, config)
+        results$report_params <- build_report_params(input, config, scenario(),
+                                                     civilian_enabled = civilian_enabled())
         results$scenario_id <- scenario_id
         simulation_data(results)
       }), error = function(error) {
@@ -212,7 +234,9 @@ app_server <- function(input, output, session) {
   
     shiny::observeEvent(input$run_N, {
       if (civilian_only() || unlimited_mode()) {
-        shiny::showNotification("Select Surge event to estimate surge bed expansion.", type = "message")
+        shiny::showNotification(
+          "Bed expansion needs surge patients and finite capacity: choose a scenario with surge patients and deselect unlimited capacity.",
+          type = "message")
         return(invisible(NULL))
       }
       if (isTRUE(simulation_running())) {
@@ -261,7 +285,7 @@ app_server <- function(input, output, session) {
     find_result <- shiny::reactiveVal(NULL)
     last_patient_profile_signature <- shiny::reactiveVal(NULL)
 
-    shiny::observeEvent(list(input$scenario_mode, input$unlimited_include_surge), {
+    shiny::observeEvent(list(scenario(), unlimited_mode()), {
       simulation_data(NULL)
       analytic_data(NULL)
       find_result(NULL)
@@ -642,12 +666,13 @@ app_server <- function(input, output, session) {
       data <- simulation_data()
       shiny::req(data)
       mode_description <- if (identical(data$scenario_mode, "civilian_only")) {
-        "Routine civilian operation only: no surge arrivals. Day 0 is the start of observation after warm-up. Bed waits are reported separately for civilian and surge requests."
+        "Routine civilian only (baseline): no surge arrivals. Day 0 is the start of observation after warm-up. Bed waits are reported separately for civilian and surge requests."
       } else {
-        "Surge event: bed waits include both populations. Day 0 marks surge onset when civilian flow is enabled."
+        "Surge + routine civilian: bed waits include both populations. Day 0 marks surge onset."
       }
       if (!isTRUE(data$profile_config$baseline$enabled)) {
-        return(shiny::div(class = "alert alert-info", "Surge-only run; routine civilian flow was disabled."))
+        return(shiny::div(class = "alert alert-info",
+                          "Surge only (empty hospital): no routine civilian patients; the hospital starts empty."))
       }
       shiny::div(class = "alert alert-info",
         mode_description, shiny::tags$br(),

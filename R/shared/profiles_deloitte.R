@@ -9,8 +9,8 @@ default_cv_for_unit <- function(unit) {
   ifelse(unit == "ICU", 1, 0.24)
 }
 
-# Example 1: the original Deloitte 3-unit test profiles, shown in the app as
-# "UC Davis calibrated profiles" (the configuration used in the manuscript).
+# UC Davis calibrated profiles: the original Deloitte 3-unit test profiles
+# used in the manuscript (paper/ scripts only; not offered in the app).
 # The internal source ID stays "deloitte_test" so saved runs remain comparable.
 # Only the GenMed<->Surge fallback
 # link changes; no patient_profiles step uses this unit directly.
@@ -80,10 +80,10 @@ deloitte_test_profile_config <- function() {
 # Deloitte's granular Wounded-In-Action / Disease-and-Non-Battle-Injury (WIA/
 # DNBI) pathway data: one entry per injury/illness subtype, each an ordered
 # unit sequence with a mean length of stay per step (NULL unit = ambulatory,
-# no bed at all). Shared, read-only source data for every
-# deloitte_injury_path_profile_config() variant below -- individual hospital
-# examples only change which units these subtypes are routed through
-# (unit_map) and which fallback network applies, never these proportions.
+# no bed at all). Shared, read-only source data for
+# deloitte_injury_path_profile_config(): a hospital only changes which
+# subtypes are kept (those whose units it has) and which fallbacks apply,
+# never these pathways or proportions.
 deloitte_injury_paths <- list(
   Amputation1 = list(unit = c("ICU", "GenMed"), los = c(3, 7)),
   Amputation2 = list(unit = c("ICU", "GenMed"), los = c(5, 7)),
@@ -195,49 +195,28 @@ deloitte_abbreviate_units <- function(units) {
   paste(codes, collapse = "_")
 }
 
-# Regional and Tertiary UC Davis hospitals share the same specialty units as
-# the original Deloitte data (the Deloitte cardiac unit is now named
-# Cardiology everywhere); the Regional hospital additionally has no BurnBed or
-# Psychiatric unit at all.
-tertiary_hospital_fallbacks <- list(
+# Master fallback network; deloitte_profiles_for_hospital() keeps only the
+# rules and units a given hospital has.
+fallbacks_list <- list(
   BurnBed = c("ICU"),
   Cardiology = c("ICU"),
-  GenMed = c("PhysicalMed", "TransitionalCare"),
+  GenMed = c("Surge","PhysicalMed", "TransitionalCare"),
   ICU = c("Cardiology"),
   PhysicalMed = c("GenMed", "TransitionalCare"),
   Psychiatric = c("GenMed", "PhysicalMed", "TransitionalCare"),
   TransitionalCare = c("GenMed", "PhysicalMed")
 )
 
-regional_hospital_fallbacks <- list(
-  Cardiology = c("ICU"),
-  GenMed = c("PhysicalMed", "TransitionalCare"),
-  ICU = c("Cardiology"),
-  PhysicalMed = c("GenMed", "TransitionalCare"),
-  TransitionalCare = c("GenMed", "PhysicalMed")
-)
-
-# Community acute-care hospital: only GenMed, ICU and TransitionalCare (plus
-# the always-present ED). ICU has no fallback because no other critical-care
-# unit exists.
-community_hospital_fallbacks <- list(
-  GenMed = c("TransitionalCare"),
-  TransitionalCare = c("GenMed")
-)
-
-# Shared builder behind the
-# hospital-specific examples below. Reuses the same Deloitte WIA/DNBI
-# proportions (deloitte_injury_paths/deloitte_*_type_probabilities) for all of
-# them; unit_map only renames or reroutes pathway units to match a target
-# hospital's actual unit set (e.g. rerouting BurnBed patients to ICU for a
-# hospital with no dedicated burn unit). A step's length of stay travels
-# unchanged with a reroute -- a simplifying modeling assumption to adapt the
-# Deloitte proportions to a different unit set, not a clinically validated
-# adjustment; treat rerouted-unit examples as illustrative, not calibrated.
+# Builds grouped surge profiles from the Deloitte WIA/DNBI subtypes
+# (deloitte_injury_paths / deloitte_*_type_probabilities): subtypes with the
+# same pathway are merged, with probability-weighted mean stays.
+# available_units (optional): subtypes whose pathway uses any other unit are
+# dropped -- never rerouted -- and profile_prob is renormalized over what
+# remains; excluded_subtypes / excluded_share record what was removed.
 deloitte_injury_path_profile_config <- function(source, source_label, fallbacks,
-                                                 unit_map = character(0),
                                                  capacities = NULL,
-                                                 wia_prob = 0.67) {
+                                                 wia_prob = 0.67,
+                                                 available_units = NULL) {
   stopifnot(
     length(wia_prob) == 1,
     is.finite(wia_prob),
@@ -245,22 +224,28 @@ deloitte_injury_path_profile_config <- function(source, source_label, fallbacks,
     wia_prob <= 1
   )
 
-  remap_units <- function(units) {
-    if (is.null(units)) return(NULL)
-    matched <- units %in% names(unit_map)
-    units[matched] <- unname(unit_map[units[matched]])
-    units
-  }
-  injury_paths <- lapply(deloitte_injury_paths, function(path) {
-    path$unit <- remap_units(path$unit)
-    path
-  })
+  injury_paths <- deloitte_injury_paths
 
   subtype_probability <- c(
     deloitte_expand_probabilities(deloitte_wia_type_probabilities, wia_prob),
     deloitte_expand_probabilities(deloitte_dnbi_type_probabilities, 1 - wia_prob)
   )
   subtype_probability <- subtype_probability / sum(subtype_probability)
+
+  excluded_subtypes <- character()
+  excluded_share <- 0
+  if (!is.null(available_units)) {
+    inpatient <- names(injury_paths)[!vapply(injury_paths, function(path) is.null(path$unit), logical(1))]
+    fits <- vapply(injury_paths[inpatient], function(path) all(path$unit %in% available_units), logical(1))
+    excluded_subtypes <- inpatient[!fits]
+    # Share of bed-occupying surge patients whose pathway cannot be served.
+    excluded_share <- sum(subtype_probability[excluded_subtypes]) / sum(subtype_probability[inpatient])
+    if (!any(fits)) {
+      stop("No Deloitte pathway uses only the available units: ",
+           paste(available_units, collapse = ", "), call. = FALSE)
+    }
+    injury_paths <- injury_paths[setdiff(names(injury_paths), excluded_subtypes)]
+  }
 
   path_signature <- vapply(injury_paths, function(path) {
     if (is.null(path$unit)) "ambulatory" else paste(path$unit, collapse = "__")
@@ -280,9 +265,8 @@ deloitte_injury_path_profile_config <- function(source, source_label, fallbacks,
     members <- grouped_subtypes[[signature]]
     representative_path <- injury_paths[[members[[1]]]]
     profile_name <- deloitte_abbreviate_units(representative_path$unit)
-    # Two different original signatures can remap to the same unit sequence
-    # (e.g. BurnBed rerouted to ICU merges with paths already routed through
-    # ICU); make the merged group's name unique by appending a counter.
+    # Safety net: if two pathways ever abbreviate to the same name (units
+    # sharing a short code), keep names unique by appending a counter.
     if (profile_name %in% names(patient_profiles)) {
       suffix <- 2L
       while (paste0(profile_name, "_", suffix) %in% names(patient_profiles)) suffix <- suffix + 1L
@@ -326,56 +310,41 @@ deloitte_injury_path_profile_config <- function(source, source_label, fallbacks,
     fallbacks = fallbacks,
     capacities = capacities,
     profile_members = profile_members,
-    wia_prob = wia_prob
+    wia_prob = wia_prob,
+    excluded_subtypes = excluded_subtypes,
+    excluded_share = excluded_share
   )
 }
 
-# Example 2: UC Davis Tertiary hospital -- same specialty units as the
-# original Deloitte data, with the cardiac unit named Cardiology. Bed counts
-# are UC Davis's own published Tertiary capacities, not derived from Deloitte.
-tertiary_hospital_test_profile_config <- function(wia_prob = 0.67) {
-  deloitte_injury_path_profile_config(
-    source = "tertiary_hospital_test",
-    source_label = "Tertiary hospital test profiles (Deloitte-derived; UC Davis Tertiary unit set)",
-    fallbacks = tertiary_hospital_fallbacks,
+# Deloitte (NDMS-based) surge profiles for an arbitrary hospital.
+# capacities: named bed counts, e.g. c(GenMed = 80, ICU = 12, TransitionalCare = 12).
+# Units with zero beds count as absent; ED, which no Deloitte pathway uses, is
+# ignored. Assumptions:
+# - A subtype is kept only if every unit of its pathway is available; pathways
+#   are never truncated or rerouted. Excluded patients are not modeled: arrival
+#   probabilities are renormalized over the kept profiles, so the surge
+#   patients/day are spread over the pathways the hospital can serve (see
+#   excluded_share for the removed fraction).
+# - Fallbacks keep each rule of `fallbacks` whose primary unit is available,
+#   with only its available fallback units (order preserved); rules left
+#   empty are dropped.
+deloitte_profiles_for_hospital <- function(capacities, fallbacks = fallbacks_list,
+                                           wia_prob = 0.67,
+                                           source = "deloitte_for_hospital",
+                                           source_label = "NDMS-based profiles for the selected hospital units") {
+  stopifnot(is.numeric(capacities), length(capacities) > 0, !is.null(names(capacities)),
+            all(is.finite(capacities)), all(capacities >= 0))
+  available_units <- setdiff(names(capacities)[capacities > 0], "ED")
+  hospital_fallbacks <- lapply(fallbacks[intersect(names(fallbacks), available_units)],
+                               function(units) intersect(units, available_units))
+  hospital_fallbacks <- Filter(length, hospital_fallbacks)
 
-    capacities = c(GenMed = 400, ICU = 72, BurnBed = 12, Cardiology = 18,
-                   PhysicalMed = 24, Psychiatric = 20, TransitionalCare = 24),
-    wia_prob = wia_prob
+  config <- deloitte_injury_path_profile_config(
+    source = source, source_label = source_label, fallbacks = hospital_fallbacks,
+    capacities = capacities, wia_prob = wia_prob, available_units = available_units
   )
-}
-
-# Example 3: UC Davis Regional hospital -- no BurnBed or Psychiatric unit, so
-# those Deloitte pathways are rerouted to the nearest unit the hospital does
-# have (BurnBed -> ICU, Psychiatric -> GenMed); cardiac unit named
-# Cardiology as in the Tertiary example. Bed counts are UC Davis's own
-# published Regional capacities, not derived from Deloitte.
-regional_hospital_test_profile_config <- function(wia_prob = 0.67) {
-  deloitte_injury_path_profile_config(
-    source = "regional_hospital_test",
-    source_label = "Regional hospital test profiles (Deloitte-derived; UC Davis Regional unit set)",
-    fallbacks = regional_hospital_fallbacks,
-    unit_map = c(BurnBed = "ICU", Psychiatric = "GenMed"),
-    capacities = c(GenMed = 240, ICU = 20, Cardiology = 12,
-                   PhysicalMed = 12, TransitionalCare = 20),
-    wia_prob = wia_prob
-  )
-}
-
-# Example 4: Community acute-care hospital -- GenMed, ICU and TransitionalCare
-# only. Deloitte pathways through missing units are rerouted to the nearest
-# available unit (BurnBed and Cardiology -> ICU, PhysicalMed ->
-# TransitionalCare, Psychiatric -> GenMed); as in the Regional example this is
-# an illustrative adaptation, not a calibrated one. Bed counts are the
-# scenario's assumed capacities, not derived from Deloitte.
-community_hospital_test_profile_config <- function(wia_prob = 0.67) {
-  deloitte_injury_path_profile_config(
-    source = "community_hospital_test",
-    source_label = "Community acute-care hospital test profiles (Deloitte-derived; GenMed/ICU/TransitionalCare)",
-    fallbacks = community_hospital_fallbacks,
-    unit_map = c(BurnBed = "ICU", Cardiology = "ICU",
-                 PhysicalMed = "TransitionalCare", Psychiatric = "GenMed"),
-    capacities = c(GenMed = 80, ICU = 12, TransitionalCare = 12),
-    wia_prob = wia_prob
-  )
+  # The hospital's own units, including ones no kept pathway uses (e.g. Surge,
+  # reachable only as a fallback).
+  config$units <- available_units
+  config
 }

@@ -117,18 +117,8 @@ mod_baseline_ui <- function(id) {
         shiny::checkboxInput(ns("enabled"), "Enable routine civilian arrivals", FALSE),
         shiny::helpText("Civilian and surge patients share the selected hospital beds and fallback rules. Civilian profiles are stored separately for each hospital source and unit selection."),
         shiny::conditionalPanel(sprintf("input['%s']", ns("enabled")),
-          shiny::actionButton(
-            ns("use_predefined_profiles"),
-            "Use predefined civilian profiles",
-            class = "btn-primary"
-          ),
-          shiny::helpText(paste(
-            "Loads the UC Davis-based civilian profiles that match the predefined hospital selected",
-            "above (Regional, Tertiary, or Community acute-care hospital) and replaces the currently",
-            "saved civilian profiles. Any other source uses data/baseline_civilian_profiles_uc_davis.csv",
-            "(ED, General Medicine, IP Surge, and ICU). Every unit in those pathways must be",
-            "selected (ED is always included). Review rates and stays for your hospital."
-          )),
+          # Shown only for predefined hospitals that ship civilian profiles.
+          shiny::uiOutput(ns("predefined_profiles_ui")),
           shiny::tags$hr(),
           shiny::fluidRow(
             shiny::column(
@@ -174,14 +164,16 @@ mod_baseline_ui <- function(id) {
           shiny::downloadButton(ns("download_csv"), "Download saved profiles"),
           shiny::uiOutput(ns("import_status"))
         )
-      ), id = ns("tour_routine_flow"), data.step = 7,
+      ), id = ns("tour_routine_flow"), data.step = 10,
         data.intro = paste(
-          "<strong>Routine civilian operation and warm-up.</strong><br>",
-          "Enable this flow for a populated hospital before the surge. Civilian arrivals continue during the event.",
-          "Predefined civilian profiles follow the selected predefined hospital (Regional, Tertiary or Community); other sources use the ED, General Medicine, IP Surge and ICU set.",
-          "Enter a rate and build the ordered pathway unit by unit, with a mean stay and SD (days) for each unit.",
-          "Arrival process and the fixed warm-up duration are under Advanced Flow Settings.",
-          "Patients and queues remain at day zero. Additional beds activate then. Review baseline stability before comparing surge effects."
+          "<strong>Routine Civilian Flow.</strong><br>",
+          "Tick <em>Enable routine civilian arrivals</em> to fill the hospital with routine patients",
+          "(warm-up) before the surge; they keep arriving during the event. Then add civilian profiles:",
+          "<em>Use predefined civilian profiles</em> (Regional, Tertiary or Community hospital), import a CSV,",
+          "or type a name and arrival rate (patients/day), build the pathway unit by unit (typically starting in ED)",
+          "with a mean stay and SD, and click <em>Save civilian profile</em>.",
+          "Warm-up duration and arrival process are under Advanced Flow Settings. Finally choose",
+          "<em>Patients to simulate</em> in the sidebar: surge + routine civilian, routine civilian only, or surge only."
         ), data.position = "top")
     ),
     shiny::fluidRow(
@@ -206,6 +198,27 @@ mod_baseline_ui <- function(id) {
 
 mod_baseline_server <- function(id, hospital_config) {
   shiny::moduleServer(id, function(input, output, session) {
+    # hospital_config()$source is the predefined hospital ID when one is in use
+    # (civilian profile files exist only for some of them). It is NULL until
+    # the hospital configuration is valid, which loading profiles needs anyway.
+    civilian_file <- shiny::reactive({
+      hospital <- hospital_config()
+      if (is.null(hospital)) NULL else civilian_profile_file(hospital$source)
+    })
+    output$predefined_profiles_ui <- shiny::renderUI({
+      file <- civilian_file()
+      if (is.null(file)) return(NULL)
+      shiny::tagList(
+        shiny::actionButton(session$ns("use_predefined_profiles"), "Use predefined civilian profiles",
+                            class = "btn-primary"),
+        shiny::helpText(paste(
+          "Loads the civilian profiles for the selected predefined hospital",
+          sprintf("(%s) and replaces the currently saved civilian profiles.", file),
+          "Every unit in those pathways must be selected (ED is always included).",
+          "Review rates and stays for your hospital."
+        ))
+      )
+    })
     saved <- shiny::reactiveVal(list())
     import_status <- shiny::reactiveVal(NULL)
     step_count <- shiny::reactiveVal(1L)
@@ -240,7 +253,8 @@ mod_baseline_server <- function(id, hospital_config) {
       hospital <- hospital_config()
       result <- tryCatch({
         if (is.null(hospital)) stop("Complete the hospital configuration before loading profiles.")
-        predefined_file <- civilian_profile_file(hospital$source)
+        predefined_file <- civilian_file()
+        if (is.null(predefined_file)) stop("Select a predefined hospital with civilian profiles first.")
         if (!file.exists(predefined_file)) {
           stop("The predefined baseline profile file is unavailable.")
         }

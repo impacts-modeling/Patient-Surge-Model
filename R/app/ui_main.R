@@ -24,8 +24,8 @@ build_body <- function() {
             width: calc(100% - 6px) !important;
           }
           .introjs-tooltip {
-            min-width: 240px;
-            max-width: 280px;
+            min-width: 300px;
+            max-width: 400px;
           }
           .introjs-tooltiptext {
             font-size: 14px;
@@ -98,6 +98,18 @@ build_body <- function() {
             color: #ffffff;
             text-decoration: none;
           }
+          /* Content of the selected option (e.g. hospital unit checkboxes),
+             set apart from the option buttons above it. */
+          .option-detail-panel {
+            background-color: #f4f6f9;
+            border-left: 3px solid #00c0ef;
+            border-radius: 3px;
+            margin-top: 4px;
+            padding: 8px 10px 2px;
+          }
+          .option-detail-panel .form-group {
+            margin-bottom: 6px;
+          }
           /* Keep the selected value of narrow sidebar selects on one line. */
           .main-sidebar .selectize-input > .item {
             max-width: calc(100% - 16px);
@@ -147,12 +159,10 @@ build_body <- function() {
       ),
       shinydashboard::tabItem(
         tabName = "InitCondition",
-        shiny::tabsetPanel(
-          shiny::tabPanel(
-            "Simulation Results",
-            shiny::conditionalPanel("input.scenario_mode == 'unlimited'",
+          shiny::tagList(
+            shiny::conditionalPanel(unlimited_js,
               mod_unlimited_ui("unlimited")),
-            shiny::conditionalPanel("input.scenario_mode != 'unlimited'",
+            shiny::conditionalPanel(sprintf("!%s", unlimited_js),
             shiny::uiOutput("baseline_run_status"),
             shiny::textOutput("patient_cohort_note"),
             shiny::fluidRow(
@@ -161,13 +171,14 @@ build_body <- function() {
                 collapsible = TRUE,
                 rintrojs::introBox(
                   plotly::plotlyOutput("resource_plot"),
-                  data.step = 11,
+                  data.step = 14,
                   data.intro = paste(
                     "<strong>Occupancy and queues over time</strong><br>",
                     "Use the interactive plots to compare occupied beds and",
                     "patients waiting across hospital units and days. Each line shows the mean",
                     "of the replication-specific daily means across replications; the shaded band shows the",
-                    "10th–90th percentiles. The ED (fixed at 10,000 beds) is not shown."
+                    "10th–90th percentiles. The ED (fixed at 10,000 beds) is not shown.",
+                    "With unlimited capacity, this page shows the analytic expected occupancy instead."
                   ),
                   data.position = "left"
                 )
@@ -184,11 +195,12 @@ build_body <- function() {
                 collapsible = TRUE,
                 rintrojs::introBox(
                   shiny::tableOutput("utilization_table"),
-                  data.step = 12,
+                  data.step = 15,
                   data.intro = paste(
-                    "<strong>Interpret the summary tables.</strong><br>",
-                    "Review utilization, occupied beds, time at full capacity,",
-                    "queue lengths, congestion, and waiting burden by resource."
+                    "<strong>Average Utilization of Hospital Resources.</strong><br>",
+                    "One row per unit: average and peak bed utilization (%), average and maximum",
+                    "occupied beds, and how long (days and % of the observation period) every bed",
+                    "was occupied. Values are averaged over the simulations."
                   ),
                   data.position = "right"
                 ),
@@ -197,7 +209,18 @@ build_body <- function() {
               shinydashboard::box(
                 title = "Bottlenecks in Hospital Resource Usage", status = "success", solidHeader = TRUE, width = 6,
                 collapsible = TRUE,
-                shiny::tableOutput("queue_analysis"), style = "overflow-x: auto;"
+                rintrojs::introBox(
+                  shiny::tableOutput("queue_analysis"),
+                  data.step = 16,
+                  data.intro = paste(
+                    "<strong>Bottlenecks in Hospital Resource Usage.</strong><br>",
+                    "Queues by unit: average queue length, mean of each simulation's longest queue,",
+                    "share of time with at least one patient waiting, and the queued share of all",
+                    "patient-time (a congestion ratio, not a waiting time in days)."
+                  ),
+                  data.position = "left"
+                ),
+                style = "overflow-x: auto;"
               )
             ),
             shiny::fluidRow(
@@ -205,12 +228,23 @@ build_body <- function() {
                 title = "Boarding Times", status = "success", solidHeader = TRUE, width = 6,
                 collapsible = TRUE,
                 collapsed = FALSE,
-                shiny::tableOutput("boarding_time_table"),
-                shiny::helpText(
-                  "Time a patient held a bed elsewhere while waiting to reach the listed unit -- ",
-                  "either boarding between pathway steps or occupying a fallback while watching ",
-                  "to transfer back to it. \"Mean of replication maxima\" averages each replication's ",
-                  "longest boarding episode; \"Mean boarding time\" averages every episode. Both are in days."
+                rintrojs::introBox(
+                  shiny::tableOutput("boarding_time_table"),
+                  shiny::helpText(
+                    "Time a patient held a bed (from the previous pathway step) while waiting to reach ",
+                    "the listed unit. \"Mean of replication maxima\" averages each replication's ",
+                    "longest boarding episode; \"Mean boarding time\" averages every episode. Both are in days."
+                  ),
+                  data.step = 17,
+                  data.intro = paste(
+                    "<strong>Boarding Times.</strong><br>",
+                    "How long patients kept a bed (for example in the ED) while waiting for the next",
+                    "unit of their pathway, by unit and population: the mean of each simulation's",
+                    "longest episode, the mean episode, the share of patients who boarded and their",
+                    "mean boarding time, the number of episodes, and those still waiting at the end",
+                    "of the observation period."
+                  ),
+                  data.position = "right"
                 ),
                 style = "overflow-x: auto;"
               ),
@@ -221,11 +255,12 @@ build_body <- function() {
                 collapsed = FALSE,
                 rintrojs::introBox(
                   shiny::tableOutput("bed_wait_table"),
-                  data.step = 13,
+                  data.step = 18,
                   data.intro = paste(
-                    "<strong>Bed waiting times: requests with a resolved wait.</strong><br>",
-                    "Mean wait includes zero waits and is averaged across replications; a patient still receiving care at the simulation horizon is still included as long as their bed request itself was already resolved. The 95% CI describes uncertainty in that mean, not the range containing 95% of patient waits; at least two contributing replications are needed.",
-                    "Observed waiting (%) is the percentage of bed requests with a positive wait. Rows distinguish unit, population and cohort."
+                    "<strong>Bed waiting times.</strong><br>",
+                    "Waits for a first bed (no bed held), for every request that found a bed. The mean includes",
+                    "zero waits; the 95% CI is the uncertainty of that mean, not the spread of individual waits.",
+                    "Observed waiting (%) is the share of requests that waited at all."
                   ),
                   data.position = "top"
                 ),
@@ -241,7 +276,7 @@ build_body <- function() {
                 rintrojs::introBox(
                   shiny::downloadButton("download_report", "Download PDF Report", class = "btn-primary"),
                   shiny::helpText("Run the simulation first. If you also ran Estimate Bed Expansion, the recommendation will be included."),
-                  data.step = 14,
+                  data.step = 19,
                   data.intro = paste(
                     "<strong>Export the scenario.</strong><br>",
                     "Download a PDF report with the configuration, seed, result tables and plots. If bed",
@@ -254,20 +289,28 @@ build_body <- function() {
             shiny::fluidRow(
               shiny::uiOutput("N_tex")
             )
-          ),
-          
-          shiny::tabPanel(
-            "Documentation",
+          )
+      ),
+      # User guide: its own sidebar page (below Model Parameters) so it is easy to find.
+      shinydashboard::tabItem(
+        tabName = "UserGuide",
+        shiny::fluidRow(
+          shinydashboard::box(
+            width = 12, status = "primary",
+            # The tour highlights this short note, not the whole (very tall) guide.
             rintrojs::introBox(
-              shiny::includeMarkdown("description.md"),
-              data.step = 15,
+              shiny::div(class = "alert alert-info",
+                         "New here? Start with the Quick start below, or use Start Guided Tour in the sidebar."),
+              id = "tour_user_guide",
+              data.step = 20,
               data.intro = paste(
-                "<strong>Detailed documentation</strong><br>",
-                "Return to this tab for definitions, model assumptions, the",
-                "recommended workflow, result interpretation, and troubleshooting."
+                "<strong>User Guide</strong><br>",
+                "Open User Guide in the sidebar at any time for the quick start,",
+                "definitions, model assumptions, result interpretation, and troubleshooting."
               ),
-              data.position = "top"
-            )
+              data.position = "bottom"
+            ),
+            shiny::includeMarkdown("description.md")
           )
         )
       )

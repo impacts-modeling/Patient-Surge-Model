@@ -48,32 +48,58 @@ capacity_label <- function(civilian_enabled) {
   if (isTRUE(civilian_enabled)) "Total beds" else "Total available beds"
 }
 
-# Predefined surge profile sets; all use the NDMS-Based Classification. Values
-# are the stable internal source IDs used by the profile builders and saved
-# configs ("deloitte_test" is kept for the UC Davis set used in the manuscript).
-ndms_profile_sources <- c(
-  "UC Davis calibrated profiles" = "deloitte_test",
+# Predefined hospitals ("Use predefined hospital" in Hospital units). Selecting
+# one loads its units, beds and fallbacks plus its NDMS-based surge profiles and
+# arrival percentages. Values are the stable internal source IDs used by saved
+# configs and the civilian profile files.
+predefined_hospitals <- c(
   "Regional hospital" = "regional_hospital_test",
   "Tertiary hospital" = "tertiary_hospital_test",
   "Community acute-care hospital" = "community_hospital_test"
 )
 
-# Predefined civilian profiles (data/) matching each hospital source; any other
-# source (manual, Excel) uses the default UC Davis-based file.
+# Total beds of each predefined hospital (assumed scenario capacities).
+predefined_hospital_beds <- list(
+  regional_hospital_test = c(GenMed = 240, ICU = 20, Cardiology = 12,
+                             PhysicalMed = 12, TransitionalCare = 20),
+  tertiary_hospital_test = c(GenMed = 400, ICU = 72, BurnBed = 12, Cardiology = 18,
+                             PhysicalMed = 24, Psychiatric = 20, TransitionalCare = 24),
+  community_hospital_test = c(GenMed = 80, ICU = 12, TransitionalCare = 12)
+)
+
+# Initial manual hospital, also restored when leaving a predefined hospital.
+# Capacities are total beds (shown as available beds without civilian flow).
+manual_hospital_defaults <- list(
+  units = c("GenMed", "ICU"),
+  capacities = c(GenMed = 15, ICU = 7),
+  patient_profiles = list(),
+  profile_prob = numeric(),
+  fallbacks = list()
+)
+
+# NDMS-based profiles are selected by deloitte_profiles_for_hospital(): pathways
+# using a unit the hospital lacks are excluded (not rerouted).
+ndms_wia_prob <- 0.67
+
+predefined_hospital_config <- function(hospital_id) {
+  if (length(hospital_id) != 1L || !hospital_id %in% names(predefined_hospital_beds)) return(NULL)
+  deloitte_profiles_for_hospital(
+    predefined_hospital_beds[[hospital_id]], wia_prob = ndms_wia_prob, source = hospital_id,
+    source_label = names(predefined_hospitals)[predefined_hospitals == hospital_id]
+  )
+}
+
+# Predefined civilian profiles (data/) for each predefined hospital. Other
+# hospitals have none, so the civilian "Use predefined" option is not offered.
 civilian_profile_files <- c(
-  deloitte_test = "baseline_civilian_profiles_uc_davis.csv",
   regional_hospital_test = "baseline_civilian_profiles_regional.csv",
   tertiary_hospital_test = "baseline_civilian_profiles_tertiary.csv",
   community_hospital_test = "baseline_civilian_profiles_community.csv"
 )
 
-civilian_profile_file <- function(source) {
-  file_name <- if (length(source) == 1L && source %in% names(civilian_profile_files)) {
-    civilian_profile_files[[source]]
-  } else {
-    civilian_profile_files[["deloitte_test"]]
-  }
-  file.path("data", file_name)
+civilian_profile_file <- function(hospital_id) {
+  if (length(hospital_id) != 1L || !hospital_id %in% names(civilian_profile_files)) return(NULL)
+  file.path("data", civilian_profile_files[[hospital_id]])
 }
 
 # LOS variability -------------------------------------------------------------
@@ -443,9 +469,11 @@ read_profile_config_xlsx <- function(file) {
 }
 hospital_profiles_ui <- function(id) {
   ns <- shiny::NS(id)
-  test_condition <- sprintf("input['%s'] != 'manual'", ns("profile_source"))
+  # TRUE when profiles were loaded rather than typed: an Excel upload or a
+  # predefined hospital.
+  test_condition <- sprintf("input['%s'] != 'manual' || input['%s'] == 'predefined'",
+                            ns("profile_source"), ns("hospital_source"))
   excel_condition <- sprintf("input['%s'] == 'excel_upload'", ns("profile_source"))
-  predefined_condition <- sprintf("input['%s'] == 'predefined'", ns("profile_source"))
   not_predefined_condition <- sprintf("input['%s'] != 'predefined'", ns("profile_source"))
 
   shiny::tagList(
@@ -458,18 +486,106 @@ hospital_profiles_ui <- function(id) {
         collapsible = TRUE,
         rintrojs::introBox(
           shiny::fluidRow(
-            shiny::column(
+            shinydashboard::box(
+              title = "Hospital units",
+              status = "info",
+              solidHeader = TRUE,
               width = 3,
-              shiny::checkboxGroupInput(
-                ns("hospital_units"),
-                "Hospital units",
-                choices = editable_hospital_units,
-                selected = c("GenMed", "ICU")
+              rintrojs::introBox(
+              shiny::radioButtons(
+                ns("hospital_source"),
+                label = NULL,
+                choices = c(
+                  "Add hospital units manually" = "manual",
+                  "Use predefined hospital" = "predefined"
+                ),
+                selected = "manual"
+              ),
+              shiny::conditionalPanel(
+                condition = sprintf("input['%s'] == 'manual'", ns("hospital_source")),
+                # Shaded panel (CSS in ui_main.R) sets the option's content apart
+                # from the two option buttons above.
+                class = "option-detail-panel",
+                shiny::checkboxGroupInput(
+                  ns("hospital_units"),
+                  label = NULL,
+                  choices = editable_hospital_units,
+                  selected = manual_hospital_defaults$units
+                )
+              ),
+              shiny::conditionalPanel(
+                condition = sprintf("input['%s'] == 'predefined'", ns("hospital_source")),
+                class = "option-detail-panel",
+                shiny::selectInput(ns("predefined_hospital"), "Predefined hospital",
+                                   choices = predefined_hospitals),
+                shiny::helpText(
+                  "Loads the hospital's units, beds, fallbacks and NDMS-based surge profiles.",
+                  "Profiles you created are kept. Switching back to 'Add hospital units manually'",
+                  "clears everything this hospital loaded."
+                )
+              ),
+              data.step = 3,
+              data.intro = paste(
+                "<strong>Hospital units.</strong><br>",
+                "Choose <em>Use predefined hospital</em> (Regional, Tertiary or Community) to load",
+                "its units, beds, fallbacks and NDMS-based surge profiles in one step, or",
+                "<em>Add hospital units manually</em> and tick the units your hospital has.",
+                "Only the selected units can be used in pathways and fallbacks."
+              ),
+              data.position = "right"
               )
             ),
-            shiny::column(
-              width = 9,
-              shiny::uiOutput(ns("capacity_ui"))
+            shinydashboard::box(
+              title = "Fallbacks",
+              status = "info",
+              solidHeader = TRUE,
+              width = 3,
+              rintrojs::introBox(
+                shiny::tagList(
+                  shiny::selectInput(ns("fallback_unit"), "Primary unit", choices = NULL),
+                  shiny::selectizeInput(
+                    ns("fallback_options"), "Fallback units", choices = NULL, multiple = TRUE
+                  ),
+                  shiny::actionButton(ns("add_fallback"), "Save fallback", class = "btn-primary"),
+                  shiny::actionButton(ns("remove_fallback"), "Remove fallback"),
+                  shiny::helpText("Select a primary unit to edit its existing alternatives. Alternatives are tried in the displayed order."),
+                  shiny::tableOutput(ns("fallbacks_summary"))
+                ),
+                data.step = 4,
+                data.intro = paste(
+                  "<strong>Fallbacks.</strong><br>",
+                  "When a primary unit is full, the model tries these alternatives",
+                  "in the displayed order. If none is available, the patient is",
+                  "counted in the primary-unit queue. When a bed is released, patients",
+                  "already holding a bed elsewhere (boarding) go first, then the oldest request.",
+                  "A predefined hospital or Use predefined profiles fills these rules for you."
+                ),
+                data.position = "top"
+              )
+            ),
+            shinydashboard::box(
+              # "Total available beds" or "Total beds", depending on civilian flow.
+              title = shiny::textOutput(ns("capacity_title"), inline = TRUE),
+              status = "info",
+              solidHeader = TRUE,
+              width = 6,
+              # State behind the "Select unlimited capacity" button (hidden).
+              shiny::div(style = "display: none;",
+                         shiny::checkboxInput(ns("unlimited_capacity"), NULL, FALSE)),
+              rintrojs::introBox(
+                shiny::uiOutput(ns("capacity_ui")),
+                data.step = 5,
+                data.intro = paste(
+                  "<strong>Beds.</strong><br>",
+                  "Enter the beds of each selected unit. Without routine civilian arrivals the",
+                  "box is <em>Total available beds</em>: the beds free for the surge on an empty",
+                  "hospital. With them it becomes <em>Total beds</em>, because the civilian warm-up",
+                  "fills the hospital first.<br>",
+                  "<em>Select unlimited capacity</em> instead computes the expected occupancy with no",
+                  "bed limit (analytic, no simulation); click it again to use the bed counts."
+                ),
+                data.position = "left"
+              )
             )
           ),
           shiny::helpText(
@@ -480,11 +596,10 @@ hospital_profiles_ui <- function(id) {
           data.step = 2,
           data.intro = paste(
             "<strong>Describe the hospital.</strong><br>",
-            "Select the hospital units and enter their beds. Without routine civilian",
-            "arrivals the values are the beds available to the surge (defaults assume",
-            "95% occupancy in GenMed and ICU and 50% elsewhere); with civilian arrivals",
-            "they are total beds. The ED is always included with practically unlimited",
-            "capacity (10,000 beds) and is not editable. Civilian pathways start there; surge trajectories and fallbacks do not use it."
+            "Hospital Information has three boxes: the hospital units, the fallback rules,",
+            "and the beds of each unit. The next steps explain each one.",
+            "The ED is always included with practically unlimited capacity (10,000 beds) and",
+            "is not editable; civilian pathways start there."
           ),
           data.position = "bottom"
         )
@@ -502,7 +617,7 @@ hospital_profiles_ui <- function(id) {
             title = "Patient profile source",
             status = "info",
             solidHeader = TRUE,
-            width = 2,
+            width = 3,
             rintrojs::introBox(
               shiny::radioButtons(
                 ns("profile_source"),
@@ -515,11 +630,16 @@ hospital_profiles_ui <- function(id) {
                 selected = "manual"
               ),
               shiny::conditionalPanel(
-                condition = predefined_condition,
-                shiny::selectInput(ns("ndms_profile"), "NDMS-based profile set",
-                                   choices = ndms_profile_sources)
+                condition = sprintf("input['%s'] == 'predefined'", ns("profile_source")),
+                class = "option-detail-panel",
+                shiny::helpText(
+                  "NDMS-Based Classification profiles selected for the units in Hospital Information:",
+                  "pathways that use a unit the hospital lacks are excluded, and the fallbacks are set",
+                  "for the hospital's units. Profiles update when the units change; profiles you created are kept."
+                ),
+                shiny::uiOutput(ns("ndms_profiles_note"))
               ),
-              shiny::helpText("Selecting a source loads its starting configuration. All loaded values can be edited for the current scenario. Switching sources replaces the current edits."),
+              shiny::helpText("Uploading an Excel workbook replaces the hospital units, beds, fallbacks and surge profiles with the workbook's. All values can be edited for the current scenario."),
               shiny::conditionalPanel(
                 condition = excel_condition,
                 shiny::downloadButton(
@@ -543,13 +663,13 @@ hospital_profiles_ui <- function(id) {
                   "It must contain Profiles, Trajectories, Fallbacks, and Hospital sheets."
                 )
               ),
-              data.step = 3,
+              data.step = 6,
               data.intro = paste(
-                "<strong>Choose the patient profile source.</strong><br>",
-                "Create profiles manually, load predefined profiles (NDMS-Based",
-                "Classification), or upload an Excel configuration.",
-                "Use the trajectory editor below to define the ordered units visited",
-                "by each profile, with a mean stay and standard deviation (SD) per unit."
+                "<strong>Choose the surge patient profiles.</strong><br>",
+                "A predefined hospital already loads its NDMS-based profiles. Otherwise use",
+                "predefined profiles (NDMS-based, selected for your units), upload an Excel",
+                "configuration, or create profiles manually with the trajectory editor below:",
+                "ordered units with a mean stay and standard deviation (SD) per unit."
               ),
               data.position = "bottom"
             )
@@ -558,7 +678,7 @@ hospital_profiles_ui <- function(id) {
             title = "Profile arrival percentages",
             status = "info",
             solidHeader = TRUE,
-            width = 3,
+            width = 4,
             rintrojs::introBox(
               shiny::tagList(
                 shiny::div(
@@ -576,38 +696,11 @@ hospital_profiles_ui <- function(id) {
                 condition = test_condition,
                 shiny::helpText("Loaded percentages are already confirmed. After changing percentages or adding/removing profiles, confirm a total of 100%.")
               ),
-              data.step = 5,
+              data.step = 7,
               data.intro = paste(
                 "<strong>Set the patient mix.</strong><br>",
                 "Assign the percentage of arrivals belonging to each profile.",
-                "For a valid configuration, all percentages must sum to 100%."
-              ),
-              data.position = "top"
-            )
-          ),
-          shinydashboard::box(
-            title = "Fallbacks",
-            status = "info",
-            solidHeader = TRUE,
-            width = 3,
-            rintrojs::introBox(
-              shiny::tagList(
-                shiny::selectInput(ns("fallback_unit"), "Primary unit", choices = NULL),
-                shiny::selectizeInput(
-                  ns("fallback_options"), "Fallback units", choices = NULL, multiple = TRUE
-                ),
-                shiny::actionButton(ns("add_fallback"), "Save fallback", class = "btn-primary"),
-                shiny::actionButton(ns("remove_fallback"), "Remove fallback"),
-                shiny::helpText("Select a primary unit to edit its existing alternatives. Alternatives are tried in the displayed order."),
-                shiny::tableOutput(ns("fallbacks_summary"))
-              ),
-              data.step = 4,
-              data.intro = paste(
-                "<strong>Configure fallback beds.</strong><br>",
-                "When a primary unit is full, the model tries these alternatives",
-                "in the displayed order. If none is available, the patient is",
-                "counted in the primary-unit queue. When a bed is released, the oldest",
-                "compatible request receives it, respecting the ordered fallbacks."
+                "Percentages must total 100%; after editing them, click Set arrival percentages."
               ),
               data.position = "top"
             )
@@ -616,7 +709,7 @@ hospital_profiles_ui <- function(id) {
             title = "Configuration status",
             status = "success",
             solidHeader = TRUE,
-            width = 4,
+            width = 5,
             style = "overflow-x: auto;",
             rintrojs::introBox(
               shiny::uiOutput(ns("configuration_status")),
@@ -630,11 +723,12 @@ hospital_profiles_ui <- function(id) {
                 class = "btn-primary"
               ),
               shiny::helpText("Excel saves hospital beds and surge profiles. Save civilian profiles with Download saved profiles in Routine Civilian Flow."),
-              data.step = 6,
+              data.step = 8,
               data.intro = paste(
                 "<strong>Confirm that the setup is ready.</strong><br>",
-                "This panel lists configuration problems, summarizes all profiles,",
-                "and lets you download the complete setup for future simulations."
+                "This panel turns green when the setup is ready; otherwise it lists what is",
+                "missing. It also summarizes all profiles and lets you download the surge",
+                "setup as an Excel workbook for future simulations."
               ),
               data.position = "left"
             )
@@ -649,6 +743,7 @@ hospital_profiles_ui <- function(id) {
             solidHeader = TRUE,
             width = 12,
             collapsible = TRUE,
+            rintrojs::introBox(
             shiny::fluidRow(
               shiny::column(
                 width = 4,
@@ -677,6 +772,18 @@ hospital_profiles_ui <- function(id) {
                 shiny::actionButton(ns("add_profile"), "Save patient profile", class = "btn-primary")
               )
             ),
+            data.step = 9,
+            data.intro = paste(
+              "<strong>Surge patient trajectory editor.</strong><br>",
+              "To create a profile: type a name, choose Unit 1 and its mean stay (days), and",
+              "optionally its SD (blank uses a default). Use <em>Add unit</em> for each further",
+              "unit the patient visits, in order, then click <em>Save patient profile</em>.",
+              "To change a profile, select it under Saved profile and click <em>Load profile",
+              "for editing</em>. Tick Ambulatory for patients who need no inpatient bed.",
+              "Remember to set the arrival percentages again after adding profiles."
+            ),
+            data.position = "top"
+            ),
             shiny::conditionalPanel(
               condition = test_condition,
               shiny::div(
@@ -695,22 +802,19 @@ hospital_profiles_ui <- function(id) {
 
 # civilian_enabled: reactive TRUE when routine civilian arrivals are enabled;
 # it switches the bed inputs between total beds and beds available to the surge.
+# Unlimited capacity is stored in the hidden input "unlimited_capacity" (read by
+# the app server and the sidebar's conditional panels as
+# input['profiles-unlimited_capacity']); the visible button toggles it.
 hospital_profiles_server <- function(id, require_surge_profiles = function() TRUE,
-                                     civilian_enabled = function() FALSE,
-                                     unlimited_selected = function() FALSE) {
+                                     civilian_enabled = function() FALSE) {
   shiny::moduleServer(id, function(input, output, session) {
-    # The scenario selector lives in the sidebar (root scope), outside this module.
     shiny::observeEvent(input$select_unlimited_capacity, {
-      shiny::updateSelectInput(session$rootScope(), "scenario_mode",
-        selected = if (isTRUE(unlimited_selected())) "surge" else "unlimited")
+      shiny::updateCheckboxInput(session, "unlimited_capacity",
+                                 value = !isTRUE(input$unlimited_capacity))
     })
     patient_profiles <- shiny::reactiveVal(list())
     fallbacks <- shiny::reactiveVal(list())
     confirmed_profile_probabilities <- shiny::reactiveVal(NULL)
-    deloitte_config <- deloitte_test_profile_config()
-    regional_hospital_config <- regional_hospital_test_profile_config(wia_prob = 0.67)
-    tertiary_hospital_config <- tertiary_hospital_test_profile_config(wia_prob = 0.67)
-    community_hospital_config <- community_hospital_test_profile_config(wia_prob = 0.67)
     trajectory_unit_count <- shiny::reactiveVal(1L)
     trajectory_form_version <- shiny::reactiveVal(1L)
     pending_profile_replacement <- shiny::reactiveVal(NULL)
@@ -718,39 +822,43 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
     uploaded_config <- shiny::reactiveVal(NULL)
     configuration_version <- shiny::reactiveVal(0L)
     loaded_probabilities <- shiny::reactiveVal(numeric())
-    loaded_capacities <- shiny::reactiveVal(c(GenMed = 15, ICU = 7))
+    loaded_capacities <- shiny::reactiveVal(manual_hospital_defaults$capacities)
     pending_loaded_units <- shiny::reactiveVal(NULL)
     empty_trajectory_draft <- list(unit = character(), los = numeric(), sd = numeric())
     trajectory_draft <- shiny::reactiveVal(empty_trajectory_draft)
+    # Names of the surge profiles loaded from the current predefined hospital.
+    # They are replaced when another hospital is selected; every other profile
+    # was created or imported by the user and is kept.
+    hospital_profile_names <- shiny::reactiveVal(character())
 
     configuration_input_id <- function(prefix, name) {
       paste(prefix, configuration_version(), name, sep = "_")
     }
 
-    # "Use predefined profiles" resolves to the selected NDMS-based source ID.
-    profile_source_id <- shiny::reactive({
-      source <- input$profile_source
-      if (identical(source, "predefined")) input$ndms_profile else source
+    # Percentage inputs get their own version so loading profiles can refresh
+    # them without resetting the bed inputs the user may have edited.
+    percentage_version <- shiny::reactiveVal(0L)
+    percentage_input_id <- function(name) {
+      paste("prob", configuration_version(), percentage_version(), name, sep = "_")
+    }
+
+    # Identifies the configuration for labels, civilian profile files and the
+    # civilian profile store: the predefined hospital ID when one is in use,
+    # otherwise the profile source ("manual" or "excel_upload").
+    configuration_source <- shiny::reactive({
+      if (identical(input$hospital_source, "predefined") && !is.null(input$predefined_hospital)) {
+        input$predefined_hospital
+      } else if (is.null(input$profile_source)) {
+        "manual"
+      } else {
+        input$profile_source
+      }
     })
 
     predefined_source_label <- function(source) {
-      ndms_name <- names(ndms_profile_sources)[ndms_profile_sources %in% source]
-      if (length(ndms_name)) paste0("NDMS-Based Classification (", ndms_name, ")") else NULL
+      hospital_name <- names(predefined_hospitals)[predefined_hospitals %in% source]
+      if (length(hospital_name)) paste0("NDMS-Based Classification (", hospital_name, ")") else NULL
     }
-
-    selected_test_config <- shiny::reactive({
-      source <- profile_source_id()
-      if (is.null(source)) return(NULL)
-      switch(
-        source,
-        deloitte_test = deloitte_config,
-        regional_hospital_test = regional_hospital_config,
-        tertiary_hospital_test = tertiary_hospital_config,
-        community_hospital_test = community_hospital_config,
-        excel_upload = uploaded_config(),
-        NULL
-      )
-    })
 
     shiny::observeEvent(input$profile_excel_file, {
       uploaded_file <- input$profile_excel_file
@@ -777,23 +885,23 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
     })
 
     # Templates seed mutable state once; simulation/export read only that state.
-    # Versioned input IDs prevent stale browser values from a previous source.
-    shiny::observeEvent(list(profile_source_id(), selected_test_config()), {
-      shiny::req(profile_source_id())
-      test_config <- selected_test_config()
-      if (is.null(test_config)) {
-        test_config <- list(units = c("ED","GenMed", "ICU"),
-                            capacities = c(ED = unlimited_capacity_placeholder, GenMed = 15, ICU = 7),
-                            patient_profiles = list(), profile_prob = numeric(), fallbacks = list())
-      }
+    # Bumping configuration_version gives the bed and percentage inputs new IDs,
+    # so stale browser values from the previous configuration are discarded.
+    apply_hospital <- function(config) {
       # ED is always part of the hospital, whether or not the source lists it.
-      pending_loaded_units(union(names(internal_hospital_units), test_config$units))
-      loaded_capacities(test_config$capacities)
-      loaded_probabilities(test_config$profile_prob)
+      units <- union(names(internal_hospital_units), config$units)
+      pending_loaded_units(units)
+      loaded_capacities(config$capacities)
       configuration_version(configuration_version() + 1L)
-      patient_profiles(test_config$patient_profiles)
-      fallbacks(test_config$fallbacks)
-      confirmed_profile_probabilities(if (length(test_config$profile_prob)) test_config$profile_prob else NULL)
+      fallbacks(config$fallbacks)
+      shiny::updateCheckboxGroupInput(session, "hospital_units",
+                                      selected = setdiff(units, names(internal_hospital_units)))
+      shiny::updateSelectInput(session, "fallback_unit", selected = "")
+      shiny::updateSelectizeInput(session, "fallback_options", choices = unit_choices(units),
+                                  selected = character(), server = TRUE)
+    }
+
+    reset_profile_form <- function() {
       pending_profile_replacement(NULL)
       pending_profile_removal(NULL)
       trajectory_draft(empty_trajectory_draft)
@@ -802,12 +910,117 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       shiny::removeModal()
       shiny::updateTextInput(session, "profile_name", value = "profile_1")
       shiny::updateCheckboxInput(session, "ambulatory_profile", value = FALSE)
-      shiny::updateCheckboxGroupInput(session, "hospital_units",
-                                      selected = setdiff(test_config$units, names(internal_hospital_units)))
-      shiny::updateSelectInput(session, "fallback_unit", selected = "")
-      shiny::updateSelectizeInput(session, "fallback_options", choices = unit_choices(test_config$units),
-                                  selected = character(), server = TRUE)
-    }, ignoreInit = FALSE, priority = 100)
+    }
+
+    # Loads a hospital's units, beds, fallbacks and profiles. Profiles of the
+    # previously loaded predefined hospital are replaced; the user's own
+    # profiles are kept with their entered percentages. Percentages count as
+    # confirmed only if they still total 100%; otherwise Configuration status
+    # asks the user to confirm them again.
+    load_profiles <- function(config) {
+      current <- patient_profiles()
+      user_names <- setdiff(names(current), c(hospital_profile_names(), names(config$patient_profiles)))
+      entered <- shiny::isolate(entered_profile_percentages()) / 100
+      user_probabilities <- stats::setNames(
+        vapply(user_names, function(name) {
+          value <- unname(entered[name])
+          if (length(value) == 1L && is.finite(value)) value else 0
+        }, numeric(1)),
+        user_names
+      )
+      profiles <- c(config$patient_profiles, current[user_names])
+      probabilities <- c(config$profile_prob[names(config$patient_profiles)], user_probabilities)
+      loaded_probabilities(probabilities)
+      patient_profiles(profiles)
+      hospital_profile_names(names(config$patient_profiles))
+      confirmed_profile_probabilities(
+        if (isTRUE(abs(sum(probabilities) - 1) < 1e-8)) probabilities else NULL
+      )
+      percentage_version(percentage_version() + 1L)
+      reset_profile_form()
+    }
+
+    load_hospital <- function(config) {
+      load_profiles(config)
+      apply_hospital(config)
+    }
+
+    # TRUE while the current configuration comes from a predefined hospital.
+    predefined_hospital_loaded <- shiny::reactiveVal(FALSE)
+
+    # Selecting a predefined hospital loads it. Going back to "Add hospital
+    # units manually" clears everything that hospital loaded (units, beds,
+    # fallbacks and its NDMS-based profiles) and restores the initial manual
+    # units; profiles created by the user are kept.
+    shiny::observeEvent(list(input$hospital_source, input$predefined_hospital), {
+      if (identical(input$hospital_source, "predefined")) {
+        config <- predefined_hospital_config(input$predefined_hospital)
+        shiny::req(config)
+        load_hospital(config)
+        predefined_hospital_loaded(TRUE)
+      } else if (isTRUE(predefined_hospital_loaded())) {
+        load_hospital(manual_hospital_defaults)
+        predefined_hospital_loaded(FALSE)
+      }
+    }, ignoreInit = TRUE, priority = 100)
+
+    # Units available for NDMS-based profile selection: selected units, except
+    # those with 0 beds. A reactiveVal only signals when the set changes, so
+    # typing bed counts does not regenerate the profiles.
+    ndms_units <- shiny::reactiveVal(NULL)
+    shiny::observe({
+      caps <- capacities()
+      ndms_units(sort(names(caps)[is.na(caps) | caps > 0]))
+    })
+    ndms_profiles_config <- shiny::reactiveVal(NULL)
+
+    # "Use predefined profiles": NDMS-based profiles for the hospital's current
+    # units, regenerated whenever that set changes. Pathways through missing
+    # units are excluded (not rerouted) and percentages renormalized; the
+    # fallback network is fallbacks_list restricted to the hospital's units.
+    # Profiles of the previous selection are replaced; the user's own
+    # profiles are kept.
+    shiny::observeEvent(list(input$profile_source, ndms_units()), {
+      shiny::req(identical(input$profile_source, "predefined"), length(ndms_units()) > 0)
+      units <- ndms_units()
+      config <- tryCatch(
+        deloitte_profiles_for_hospital(stats::setNames(rep(1, length(units)), units),
+                                       wia_prob = ndms_wia_prob),
+        error = function(error) NULL
+      )
+      ndms_profiles_config(config)
+      shiny::req(config)
+      load_profiles(config)
+      fallbacks(config$fallbacks)
+    }, ignoreInit = TRUE)
+
+    output$ndms_profiles_note <- shiny::renderUI({
+      shiny::req(identical(input$profile_source, "predefined"))
+      config <- ndms_profiles_config()
+      if (is.null(config)) {
+        return(shiny::div(class = "alert alert-warning",
+                          "No NDMS-based pathway uses only this hospital's units."))
+      }
+      n_profiles <- length(config$patient_profiles)
+      shiny::helpText(sprintf("%d NDMS-based %s loaded.", n_profiles,
+                              ngettext(n_profiles, "profile", "profiles")))
+    })
+
+    # Excel upload: the workbook replaces the hospital and every surge profile.
+    shiny::observeEvent(list(input$profile_source, uploaded_config()), {
+      config <- uploaded_config()
+      shiny::req(identical(input$profile_source, "excel_upload"), config)
+      # The workbook's hospital is manual; switching the radio button below must
+      # not clear it as if a predefined hospital were being left.
+      predefined_hospital_loaded(FALSE)
+      shiny::updateRadioButtons(session, "hospital_source", selected = "manual")
+      loaded_probabilities(config$profile_prob)
+      patient_profiles(config$patient_profiles)
+      hospital_profile_names(character())
+      confirmed_profile_probabilities(if (length(config$profile_prob)) config$profile_prob else NULL)
+      apply_hospital(config)
+      reset_profile_form()
+    }, ignoreInit = TRUE, priority = 100)
 
     # Internal units (ED) come first, matching the previous checkbox order.
     selected_units <- shiny::reactive({
@@ -819,16 +1032,17 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
     # toggle changes the defaults; untouched inputs follow the new default.
     shown_capacity_defaults <- list()
 
+    output$capacity_title <- shiny::renderText(capacity_label(civilian_enabled()))
+
     output$capacity_ui <- shiny::renderUI({
       units <- setdiff(selected_units(), names(internal_hospital_units))
       shiny::req(length(units) > 0)
       civilian <- isTRUE(civilian_enabled())
-      unlimited <- isTRUE(unlimited_selected())
+      unlimited <- isTRUE(input$unlimited_capacity)
       shiny::tagList(
-        shiny::h4(capacity_label(civilian)),
         shiny::actionButton(
           session$ns("select_unlimited_capacity"),
-          if (unlimited) "Unlimited capacity selected (click to return to Surge event)"
+          if (unlimited) "Unlimited capacity selected (click to use the bed counts)"
           else "Select unlimited capacity",
           icon = shiny::icon("infinity"),
           class = if (unlimited) "btn-success" else "btn-default"
@@ -1099,7 +1313,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
         return(shiny::helpText("Create at least one patient profile."))
       }
       shiny::tagList(lapply(names(profiles), function(profile_name) {
-        input_id <- configuration_input_id("prob", profile_name)
+        input_id <- percentage_input_id(profile_name)
         percentage <- shiny::isolate(input[[input_id]])
         if (is.null(percentage)) percentage <- default_profile_percentage(profile_name)
         shiny::numericInput(
@@ -1117,7 +1331,7 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
       profiles <- patient_profiles()
       if (length(profiles) == 0) return(numeric())
       stats::setNames(vapply(names(profiles), function(profile_name) {
-        value <- input[[configuration_input_id("prob", profile_name)]]
+        value <- input[[percentage_input_id(profile_name)]]
         exact <- default_profile_percentage(profile_name)
         # Inputs display 1 decimal; an untouched field keeps its exact loaded value.
         if (is.null(value) || isTRUE(abs(value - round(exact, 1)) < 1e-9)) exact else value
@@ -1248,14 +1462,16 @@ hospital_profiles_server <- function(id, require_surge_profiles = function() TRU
     })
 
     effective_profile_data <- shiny::reactive({
-      test_config <- selected_test_config()
-      source <- profile_source_id()
+      source <- configuration_source()
       display_label <- predefined_source_label(source)
-      source_label <- if (!is.null(test_config)) {
-        paste(if (is.null(display_label)) test_config$source_label else display_label,
-              "(editable scenario)")
+      source_label <- if (!is.null(display_label)) {
+        paste(display_label, "(editable scenario)")
       } else if (identical(source, "excel_upload")) {
-        "Uploaded Excel: select a valid .xlsx file"
+        uploaded <- uploaded_config()
+        if (is.null(uploaded)) "Uploaded Excel: select a valid .xlsx file"
+        else paste(uploaded$source_label, "(editable scenario)")
+      } else if (identical(source, "predefined")) {
+        "NDMS-Based Classification profiles for the selected hospital units (editable scenario)"
       } else "Manually entered profiles"
       list(
         source = source,

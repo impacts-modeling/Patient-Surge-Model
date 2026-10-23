@@ -1,4 +1,4 @@
-# Patient Surge Model Documentation
+# Patient Surge Model: User Guide
 
 > This application is a decision-support tool for exploring hospital bed demand
 > during surge events. It uses discrete-event simulation (DES) to represent
@@ -7,20 +7,42 @@
 
 ## Quick start
 
-1. Open **Hospital Setup** and select a patient profile source.
-2. Confirm the hospital units, total beds, patient profiles, arrival
-   percentages, and fallback rules.
-3. Open **Model Parameters** and enter the demand and simulation settings.
-4. Click **Run Simulation** to evaluate the current hospital configuration.
-5. If needed, enter the maximum mean-wait limits (days) for Med/Surg and ICU,
-   click **Estimate Bed Expansion**, and confirm that you want to start the
-   calculation.
-6. Review the recommendation and click **Apply Recommended Expansion**.
-7. Click **Run Simulation** once more to evaluate the expanded configuration.
+**1. Describe the hospital** (*Hospital Setup -> Hospital Information*)
 
-> After applying a recommendation, do not run the optimizer a second time unless
-> the hospital configuration, demand, simulation settings, or mean-wait limits
-> have changed.
+- Choose **Use predefined hospital** (Regional, Tertiary or Community) to load a
+  ready-made hospital, or **Add hospital units manually** and tick its units.
+- Check the beds of each unit and the fallback rules.
+
+**2. Define the surge patients** (*Hospital Setup -> Create or edit surge patient trajectory*)
+
+- A predefined hospital already loads its surge profiles. Otherwise choose
+  **Use predefined profiles** (selected for your units), **Create profiles
+  manually**, or **Upload profiles from Excel**.
+- When **Configuration status** turns green, the setup is ready.
+
+**3. Optional: add routine civilian patients** (*Hospital Setup -> Routine Civilian Flow*)
+
+- Tick **Enable routine civilian arrivals** and load or create civilian profiles.
+- Then choose **Patients to simulate** in the sidebar: surge + routine civilian,
+  routine civilian only, or surge only.
+
+**4. Run** (*Model Parameters*)
+
+- Set surge patients per day, arrival period, observation duration and number of
+  simulations, then click **Run Simulation**. Results appear on the same page.
+
+**5. Optional: estimate extra beds** (*Model Parameters -> Calculate HxS Expansion*)
+
+- Enter mean-wait limits for GenMed and ICU, click **Estimate Bed Expansion**,
+  then **Apply Recommended Expansion** and **Run Simulation** again.
+
+**6. Save** with **Download PDF Report**.
+
+> **Tips.** Click **Start Guided Tour** (top of the sidebar) for an interactive
+> walk-through, and the **i** icons next to inputs for short explanations.
+> Without routine civilian arrivals the bed inputs are the beds **available** to
+> the surge; with them, they are the **total** beds. After applying a
+> recommendation, run the optimizer again only if an input has changed.
 
 ## 1. Model purpose
 
@@ -44,32 +66,55 @@ decision tool.
 ## 2. Hospital Setup
 
 Hospital Setup is organized into four collapsible sections: **Hospital
-Information**, **Create or edit surge patient trajectory**, **Routine Civilian
-Flow**, and **Advanced Flow Settings** (collapsed by default).
+Information** (Hospital units, Fallbacks and bed boxes), **Create or edit surge
+patient trajectory**, **Routine Civilian Flow**, and **Advanced Flow Settings**
+(collapsed by default).
+
+### Hospital units: manual or predefined hospital
+
+The **Hospital units** box offers two options:
+
+| Option | Intended use |
+|---|---|
+| **Add hospital units manually** | Tick the units that exist in the scenario. |
+| **Use predefined hospital** | Select a built-in hospital. Its units, beds, fallback rules and NDMS-Based Classification surge profiles (with arrival percentages) are loaded and remain editable. |
+
+| Predefined hospital | Units and beds | NDMS-based profiles |
+|---|---|---|
+| **Regional hospital** | GenMed 240, ICU 20, Cardiology 12, PhysicalMed 12, TransitionalCare 20 | 8 profiles; burn and psychiatric pathways excluded. |
+| **Tertiary hospital** | GenMed 400, ICU 72, BurnBed 12, Cardiology 18, PhysicalMed 24, Psychiatric 20, TransitionalCare 24 | All 11 profiles. |
+| **Community acute-care hospital** | GenMed 80, ICU 12, TransitionalCare 12 | 3 profiles; pathways through BurnBed, Cardiology, PhysicalMed or Psychiatric excluded. Fallbacks: GenMed and TransitionalCare back each other up; ICU has none. |
+
+**How NDMS-based profiles are selected for a hospital.** Each NDMS injury or
+illness subtype has an ordered pathway of units. A subtype is kept only if the
+hospital has every unit of its pathway (a unit with 0 beds counts as absent);
+otherwise it is excluded -- never rerouted to another unit. Subtypes with the
+same pathway are merged into one profile with probability-weighted mean stays,
+and the arrival percentages are rescaled to 100% over the kept profiles. The
+surge patients/day therefore stay the same, spread over the pathways the
+hospital can serve. Fallbacks come from
+a master fallback network restricted to the hospital's units. This is an
+illustrative adaptation of the NDMS proportions, not a calibration.
+
+Selecting another predefined hospital replaces the previous hospital's units,
+beds, fallbacks and NDMS-based profiles. Surge profiles you created or imported
+are kept with their entered percentages; if the percentages no longer total
+100%, Configuration status asks you to confirm them again, and any of your
+profiles that uses a unit the new hospital lacks is flagged there.
+
+Switching back to **Add hospital units manually** clears everything the
+predefined hospital loaded (its units, beds, fallbacks and NDMS-based profiles
+with their percentages) and restores the initial manual units (GenMed and ICU
+with default beds). Surge profiles you created are kept. An Excel upload is not
+cleared this way.
 
 ### Patient profile sources
 
 | Option | Intended use |
 |---|---|
-| **Create profiles manually** | Build a custom hospital configuration and custom patient trajectories. |
-| **Use predefined profiles** | Load a built-in NDMS-Based Classification profile set: UC Davis calibrated profiles, Regional hospital, Tertiary hospital, or Community acute-care hospital. |
-| **Upload profiles from Excel** | Complete the empty Excel template or restore a configuration previously downloaded from the application. |
-
-All predefined sets use the NDMS-Based Classification:
-
-| Set | Units and beds |
-|---|---|
-| **UC Davis calibrated profiles** | IP Surge, GenMed and ICU (the configuration used in the manuscript). |
-| **Regional hospital** | GenMed 240, ICU 20, Cardiology 12, PhysicalMed 12, TransitionalCare 20; BurnBed pathways rerouted to ICU and Psychiatric to GenMed. |
-| **Tertiary hospital** | GenMed 400, ICU 72, BurnBed 12, Cardiology 18, PhysicalMed 24, Psychiatric 20, TransitionalCare 24. |
-| **Community acute-care hospital** | GenMed 80, ICU 12, TransitionalCare 12; BurnBed and Cardiology pathways rerouted to ICU, PhysicalMed to TransitionalCare, and Psychiatric to GenMed. Fallbacks: GenMed and TransitionalCare back each other up; ICU has none. |
-
-Rerouting keeps each step's mean LOS unchanged; it is an illustrative
-adaptation of the NDMS proportions to a smaller unit set, not a calibration.
-
-Selecting a built-in or uploaded example automatically populates the hospital
-units, capacities, profiles, probabilities, and fallback rules associated with
-that configuration.
+| **Create profiles manually** | Build custom patient trajectories with the trajectory editor. |
+| **Use predefined profiles** | Load the NDMS-Based Classification profiles that fit the units in Hospital Information, selected as described above, and set the fallbacks for those units. The profiles are regenerated whenever the set of units (or units with 0 beds) changes; profiles you created are kept. |
+| **Upload profiles from Excel** | Complete the empty Excel template or restore a configuration previously downloaded from the application. The workbook replaces the hospital units, beds, fallback rules and surge profiles. |
 
 ### Hospital units and beds
 
@@ -89,8 +134,9 @@ to the new default. The PDF report labels the beds "Total Available Beds" or
 "Total Beds" accordingly.
 
 The **ED** is always part of the hospital with a fixed capacity of 10,000 beds
-(practically unlimited, so it never fills); it is not listed or editable and
-is used by civilian pathways (every civilian pathway starts there), but it is not offered as a unit in surge trajectories or fallback rules. Selectable units are:
+(practically unlimited, so it never fills). It is not listed or editable; every
+civilian pathway starts there, but it is not offered in surge trajectories or
+fallback rules. Selectable units are:
 
 - **IP Surge**
 - **GenMed**
@@ -102,7 +148,7 @@ is used by civilian pathways (every civilian pathway starts there), but it is no
 - **TransitionalCare**
 
 Only selected hospital units can be used in patient trajectories or fallback
-rules, and the ED is excluded from surge trajectories and fallbacks. The bed-expansion optimizer requires both **GenMed** and **ICU**.
+rules. The bed-expansion optimizer requires both **GenMed** and **ICU**.
 
 ### Creating patient trajectories
 
@@ -148,8 +194,10 @@ while waiting and can occupy no more than one bed at a time. A patient who
 already holds a bed (boarding between pathway steps) is dispatched ahead of a
 patient with no bed making a fresh request for that same unit.
 
-The fallback list shown in the application always corresponds to the currently
-selected profile source. A unit cannot be its own fallback.
+Fallbacks are edited in the **Fallbacks** box of Hospital Information. A
+predefined hospital and **Use predefined profiles** fill them from a master
+fallback network restricted to the hospital's units; an Excel upload uses the
+workbook's rules. A unit cannot be its own fallback.
 
 ### Saving and loading configurations
 
@@ -188,13 +236,14 @@ Settings**. These profiles share hospital beds and fallback
 rules with surge patients. Fractional rates are supported. Profile lists are
 retained for each hospital source and unit selection during the current session. Unchecking **Enable routine civilian arrivals** clears all saved civilian profiles, so manual entry starts empty after re-enabling.
 
-**Use predefined civilian profiles** loads the UC Davis-based civilian file that
-matches the selected predefined hospital:
-`data/baseline_civilian_profiles_regional.csv`, `_tertiary.csv`, or
-`_community.csv`. Every other source (manual or Excel) uses `data/baseline_civilian_profiles_uc_davis.csv`
-(ED, GenMed, IP Surge and ICU pathways); the pathway units must be selected in the hospital. In the Regional, Tertiary and Community
-files every pathway is ED -> unit, and arrival rates are set so that expected
-occupancy (rate x 6-day mean stay) is 85% of that unit's beds.
+**Use predefined civilian profiles** appears only when a predefined hospital
+with civilian trajectories is in use (Regional, Tertiary or Community acute-care
+hospital) and the hospital configuration is complete. It loads the matching
+file: `data/baseline_civilian_profiles_regional.csv`,
+`_tertiary.csv`, or `_community.csv`. For manual units or Excel uploads, create
+or import civilian profiles instead. In these files every pathway is ED -> unit,
+and arrival rates are set so that expected occupancy (rate x 6-day mean stay)
+is 85% of that unit's beds.
 
 Before the surge, the model runs civilian arrivals alone (warm-up). The warm-up
 is a fixed duration set in **Advanced Flow Settings** (30 days by default).
@@ -225,15 +274,15 @@ profiles** in Routine Civilian Flow.
 
 | Parameter | Meaning |
 |---|---|
-| **Scenario to run** | **Surge event** (surge arrivals, plus civilian flow if enabled), **Routine civilian operation only**, or **Unlimited capacity (analytic)** (see section 6). The **Select unlimited capacity** button next to the bed inputs in Hospital Setup selects the last one. |
+| **Patients to simulate** | Sidebar, below Hospital Setup; shown only when **Enable routine civilian arrivals** is checked. **Surge + routine civilian** (default): surge arrivals on top of the civilian flow after its warm-up. **Routine civilian only (baseline)**: no surge arrivals. **Surge only (empty hospital)**: surge arrivals on an empty hospital with the total beds entered, ignoring the civilian flow; compare it with Surge + routine civilian to see the effect of civilian occupancy. Without routine civilian arrivals every run is surge only, with the available beds entered. Capacity is chosen separately: the **Select unlimited capacity** button in Hospital Information applies to any of these (see section 6). |
 | **Surge Patients per Day** | Surge arrival rate. With Poisson arrivals it is the mean rate and the realized count varies. |
 | **Surge Arrival Period (days)** | Number of consecutive days during which surge patients arrive. |
-| **Surge arrival process** | **Evenly spaced** (default) or **Poisson (random arrivals)**. Civilian arrivals default to Poisson (Advanced Flow Settings). |
+| **Surge arrival process** | **Even** (evenly spaced; default) or **Poisson** (random arrivals). Civilian arrivals default to Poisson (Advanced Flow Settings). |
 | **Observation Duration (days)** | Observation horizon; excludes warm-up when civilian flow is enabled. |
-| **Number of simulations** | Number of independent replications used to summarize stochastic variation. |
+| **Number of simulations** | Number of independent replications used to summarize stochastic variation. At most 30 when the scenario includes routine civilian patients (each replication includes a warm-up) and 60 for surge only, to keep run times manageable. |
 | **Simulation seed** | Master seed that makes a run reproducible. |
-| **Med/Surg (days)**, **ICU (days)** | Maximum mean wait for a first bed used by the expansion optimizer. |
-| **HxS Med/Surg** | Additional GenMed beds added to the baseline capacity. |
+| **GenMed (days)**, **ICU (days)** | Maximum mean wait for a first bed used by the expansion optimizer. |
+| **HxS GenMed** | Additional GenMed beds added to the baseline capacity. |
 | **HxS ICU** | Additional ICU beds added to the baseline capacity. |
 
 The simulation duration should be long enough to observe the consequences of the
@@ -297,6 +346,7 @@ considered served without a bed and the patient continues with the next step of 
 pathway, keeping the bed currently held. The credit is never applied to ED boarding.
 Boarding episodes therefore end either when the bed is obtained or when the stay is
 served while waiting. Care received while boarding is not otherwise modeled.
+
 ## 5. Estimating bed expansion
 
 The optimizer estimates additional **GenMed** and **ICU** beds. Its acceptance
@@ -325,7 +375,7 @@ percentile** of this distribution, set by the editable parameter
 flow is enabled and 0.5 (the median, close to the expected occupancy) when it is
 not (`app_analytic_start_level`); the manuscript runs use 0.75. Starting somewhat
 above the final capacity costs fewer evaluations than starting below it. The
-**Unlimited capacity (analytic)** scenario shows the same occupancy (expected value
+unlimited-capacity calculation shows the same occupancy (expected value
 and 5th-95th percentile band) in the dashboard.
 
 Unlimited-capacity demand is a **primary-demand reference**, not a hard safety
@@ -461,13 +511,12 @@ the 95% CI describes Monte Carlo uncertainty in the mean. Both tables also show 
 
 ### Unlimited capacity (analytic)
 
-Selecting **Unlimited capacity (analytic)** (sidebar, or the **Select unlimited
-capacity** button next to the bed inputs in Hospital Setup) and clicking **Run
-Simulation** computes the expected occupancy of every unit with no bed limit,
-without simulation. The surge and civilian settings are used as in the other
-scenarios. Untick **Include surge arrivals** (sidebar, when this scenario is
-selected) to compute routine civilian operation only; this requires routine civilian
-flow to be enabled, and the surge inputs and surge profiles are then not needed. The
+Clicking **Select unlimited capacity** (next to the bed inputs in Hospital
+Information) and then **Run Simulation** computes the expected occupancy of every
+unit with no bed limit, without simulation; click the button again to return to
+the bed counts. The patients included follow **Patients to simulate**: surge plus
+routine civilian, routine civilian only (surge inputs and surge profiles are then
+not needed), or surge only. The
 bed counts, number of simulations and seed are not used, and queues,
 bed waits and boarding do not apply (nobody waits). The results are:
 
@@ -544,6 +593,16 @@ sheet, and numeric fields contain valid non-negative values.
 One calculation is already running. Wait for it to finish; the buttons will be
 enabled automatically. Only one simulation or bed-expansion calculation can run
 at a time.
+
+**Run Simulation reports that the Hospital Setup is incomplete.**  
+Open Hospital Setup and read **Configuration status**: it lists what is missing,
+for example arrival percentages that do not total 100% (click **Set arrival
+percentages**) or a profile that uses a unit the hospital does not have.
+
+**Patients to simulate or Estimate Bed Expansion is not shown.**  
+**Patients to simulate** appears only when **Enable routine civilian arrivals**
+is checked. **Estimate Bed Expansion** is hidden for **Routine civilian only**
+and when unlimited capacity is selected.
 
 **A mean wait still exceeds its limit in some simulations.**  
 The optimizer requires GenMed and ICU to comply jointly in at least 75% of

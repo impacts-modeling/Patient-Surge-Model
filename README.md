@@ -7,11 +7,12 @@ The project supports hospital capacity planning and scenario analysis. Users can
 ## Main features
 
 - **Hospital configuration:** select units and enter beds: total beds with routine civilian flow, or beds available to the surge without it (defaults assume 95% occupancy in GenMed and ICU and 50% elsewhere, rounded up). The ED is always included with a fixed capacity of 10,000 beds, is not shown in results, and is used only by civilian pathways: it is not offered in surge trajectories or fallback rules.
-- **Patient profiles:** define arrival percentages and ordered care pathways with a mean length of stay and SD per unit, or load a predefined NDMS-Based Classification set (UC Davis calibrated profiles, Regional hospital, Tertiary hospital, Community acute-care hospital).
-- **Routine civilian flow:** configure civilian profiles and constant arrival rates, with a warm-up before the surge. Predefined civilian profiles match the selected predefined hospital. Disabling **Enable routine civilian arrivals** clears all saved civilian profiles.
+- **Predefined hospitals:** select Regional, Tertiary or Community acute-care hospital to load its units, beds, fallbacks and NDMS-Based Classification surge profiles; profiles you created are kept.
+- **Patient profiles:** define arrival percentages and ordered care pathways with a mean length of stay and SD per unit, use predefined NDMS-based profiles selected for the hospital's units, or upload them from Excel.
+- **Routine civilian flow:** configure civilian profiles and constant arrival rates, with a warm-up before the surge. Predefined civilian profiles are offered for the Regional, Tertiary and Community hospitals. Disabling **Enable routine civilian arrivals** clears all saved civilian profiles.
 - **Fallback placement:** specify ordered alternative units when the preferred unit has no available bed.
 - **Repeated simulations:** explore occupancy, queues, bottlenecks, boarding, and bed waits across replications.
-- **Unlimited-capacity scenario:** compute expected occupancy (with a 5th-95th percentile band) without bed limits and without simulation, using an exact analytic calculation; it also provides the starting point of the capacity search.
+- **Unlimited capacity:** selected with a button in Hospital Information and combinable with any patient scenario; computes expected occupancy (with a 5th-95th percentile band) without bed limits and without simulation, using an exact analytic calculation; it also provides the starting point of the capacity search.
 - **Bed-expansion estimates:** search for additional GenMed and ICU beds and simulate the expanded scenario.
 - **Import and export:** exchange surge configurations through Excel, civilian profiles through CSV, and download simulation reports as PDF.
 
@@ -19,15 +20,15 @@ Selectable units are Surge, GenMed, ICU, BurnBed, Cardiology, PhysicalMed, Psych
 
 ## Typical workflow
 
-1. Open **Hospital Setup**. In **Hospital Information**, select units and total beds; in **Create or edit surge patient trajectory**, create profiles manually, use predefined profiles, or upload an Excel workbook.
+1. Open **Hospital Setup**. In **Hospital Information**, add hospital units manually or select a predefined hospital, and review beds and fallbacks; in **Create or edit surge patient trajectory**, create profiles manually or upload an Excel workbook.
 2. Review pathways, mean stays and SDs, arrival percentages, and fallback rules. Manual percentages must total 100% and be confirmed with **Set arrival percentages**.
-3. Optionally enable **Routine Civilian Flow**, save civilian profiles, and review the arrival process and warm-up in **Advanced Flow Settings**. Open **Model Parameters** and set the scenario, surge patients per day, arrival process and period, observation duration, replications, and simulation seed.
+3. Optionally enable **Routine Civilian Flow**, save civilian profiles, review the arrival process and warm-up in **Advanced Flow Settings**, and choose **Patients to simulate** in the sidebar (Surge + routine civilian, Routine civilian only (baseline), or Surge only (empty hospital)). Open **Model Parameters** and set surge patients per day, arrival process and period, observation duration, replications, and simulation seed.
 4. Click **Run Simulation** and inspect the plots and summary tables.
 5. To explore expansion, enter the maximum mean-wait limits (days) for Med/Surg and ICU and click **Estimate Bed Expansion**. Both GenMed and ICU must be configured.
 6. Review the recommendation, click **Apply Recommended Expansion**, and then click **Run Simulation** to refresh results for the expanded capacity.
 7. Download the PDF report or export the hospital configuration for reuse.
 
-The application includes a guided tour and a **Documentation** tab. See [description.md](description.md) for the detailed user guide.
+The application includes a guided tour and a **User Guide** page (sidebar, below Model Parameters) that renders [description.md](description.md).
 
 ## How the model works
 
@@ -157,7 +158,7 @@ Patient-Surge-Model/
 |-- manifest.json                      # Deployment dependency manifest (regenerate after moving files)
 |-- www/                               # Static assets for the app
 |-- data/
-|   |-- baseline_civilian_profiles_uc_davis.csv   # Default civilian profiles (UC Davis units)
+|   |-- baseline_civilian_profiles_uc_davis.csv   # UC Davis civilian profiles (manuscript; not offered in the app)
 |   |-- baseline_civilian_profiles_regional.csv   # Civilian profiles for the Regional hospital
 |   |-- baseline_civilian_profiles_tertiary.csv   # Civilian profiles for the Tertiary hospital
 |   `-- baseline_civilian_profiles_community.csv  # Civilian profiles for the Community hospital
@@ -210,7 +211,7 @@ Then call the study functions described in `paper/README.md` (for example `run_m
 
 ## Interpretation and limitations
 
-This is a simplified bed-capacity model. It does not explicitly model staffing, equipment constraints, mortality, or clinical outcomes. Fallback rules are user-specified assumptions rather than evidence that units are clinically interchangeable. Built-in profiles are example configurations and do not establish validation for a particular hospital; rerouted units in the Regional, Tertiary and Community examples keep their original mean stays.
+This is a simplified bed-capacity model. It does not explicitly model staffing, equipment constraints, mortality, or clinical outcomes. Fallback rules are user-specified assumptions rather than evidence that units are clinically interchangeable. Built-in profiles are example configurations and do not establish validation for a particular hospital; NDMS-based pathways that use a unit the hospital lacks are excluded and the remaining percentages rescaled.
 
 The expansion criterion is a mean wait, so individual patients can wait longer than the limit. The queue summary's queued patient-time fraction is a dimensionless ratio, not a duration in days. Patients remaining at the simulation horizon also affect the interpretation of patient-level summaries.
 
