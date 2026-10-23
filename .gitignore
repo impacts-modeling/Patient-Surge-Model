@@ -6,7 +6,7 @@ rsconnect/
 .Ruserdata
 Patient-Surge-Model.Rproj
 outputs
-paper_data
+paper_data/
 paper/warm_up.png
 .rscignore
 PatientSurgeModel
