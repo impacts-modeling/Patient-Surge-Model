@@ -162,7 +162,9 @@ make_unlimited_comparison <- function(unlimited_dir = "outputs/unlimited_demand_
         color = NULL, fill = NULL#,
         #caption = "Unlimited capacity. DES band: empirical 5-95% across replications; analytic band: 5-95% of the exact distribution."
         ) +
-      ggplot2::theme_bw() + ggplot2::theme(legend.position = "top"),
+      ggplot2::theme_bw() + ggplot2::theme(
+        text = ggplot2::element_text(size = 14),
+        legend.position = "top"),
     warmup = ggplot2::ggplot(baseline_curve, ggplot2::aes(x = .data$day)) +
       ggplot2::geom_line(ggplot2::aes(y = .data$analytic_fraction, color = "Analytic")) +
       ggplot2::geom_line(ggplot2::aes(y = .data$des_fraction, color = "DES"), linetype = "dashed") +
