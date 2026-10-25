@@ -154,7 +154,7 @@ Patient-Surge-Model/
 |-- app.R                              # Entry point and source loading order
 |-- README.md                          # Project overview and setup
 |-- description.md                     # In-app user documentation
-|-- LICENSE                            # MIT license
+|-- LICENSE                            # BSD 3-Clause license
 |-- manifest.json                      # Deployment dependency manifest (regenerate after moving files)
 |-- data/
 |   |-- baseline_civilian_profiles_uc_davis.csv   # UC Davis civilian profiles (manuscript; not offered in the app)
@@ -222,4 +222,4 @@ The project also supports preparation of a scientific manuscript describing the 
 
 ## License
 
-Released under the [MIT License](LICENSE).
+Released under the [BSD 3-Clause License](LICENSE).
