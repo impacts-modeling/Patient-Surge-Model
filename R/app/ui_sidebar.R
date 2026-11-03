@@ -160,7 +160,8 @@ build_sidebar <- function() {
             "<strong>Simulation parameters</strong><br>",
             "Set surge patients per day and the arrival period (Even or Poisson arrivals; for Poisson,",
             "patients/day is a mean rate and the total varies), and an observation horizon extending beyond it.",
-            "Then set the number of independent simulations (at most 30 with routine civilian patients, 60 for surge only)",
+            sprintf("Then set the number of independent simulations (at most %d with routine civilian patients, %d for surge only)",
+                    max_num_sims_for(TRUE), max_num_sims_for(FALSE)),
             "and a reproducible seed. Day 0 follows the civilian warm-up; the hospital is not emptied.",
             "Keep the same observation horizon when comparing scenarios."
           ),

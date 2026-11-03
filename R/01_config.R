@@ -30,7 +30,7 @@ app_development_config <- list(num_sims = 10L,
 # the horizon limit bounds memory. The ranges stay workable if the app falls
 # back to simmer, which is about 10 times slower.
 app_input_limits <- list(
-  n_patients = list(label = "Surge patients per day", value = 15, min = 1, max = 100, whole = FALSE),
+  n_patients = list(label = "Surge patients per day", value = 10, min = 1, max = 100, whole = FALSE),
   duration = list(label = "Surge arrival period (days)", value = 10, min = 1, max = 60, whole = TRUE),
   sim_days = list(label = "Observation duration (days)", value = 50, min = 1, max = 120, whole = TRUE),
   simulation_seed = list(label = "Simulation seed", value = 2026, min = 1,
