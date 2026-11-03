@@ -7,7 +7,7 @@ The project supports hospital capacity planning and scenario analysis. Users can
 ## Main features
 
 - **Hospital configuration:** select units and enter beds: total beds with routine civilian flow, or beds available to the surge without it (defaults assume 95% occupancy in GenMed and ICU and 50% elsewhere, rounded up). The ED is always included with a fixed capacity of 10,000 beds, is not shown in results, and is used only by civilian pathways: it is not offered in surge trajectories or fallback rules.
-- **Predefined hospitals:** select Regional, Tertiary or Community acute-care hospital to load its units, beds, fallbacks and NDMS-Based Classification surge profiles; profiles you created are kept.
+- **Predefined hospitals:** select Community, Regional or Tertiary hospital to load its units, beds, fallbacks and NDMS-Based Classification surge profiles; profiles you created are kept.
 - **Patient profiles:** define arrival percentages and ordered care pathways with a mean length of stay and SD per unit, use predefined NDMS-based profiles selected for the hospital's units, or upload them from Excel.
 - **Routine civilian flow:** configure civilian profiles and constant arrival rates, with a warm-up before the surge. Predefined civilian profiles are offered for the Regional, Tertiary and Community hospitals. Disabling **Enable routine civilian arrivals** clears all saved civilian profiles.
 - **Fallback placement:** specify ordered alternative units when the preferred unit has no available bed.

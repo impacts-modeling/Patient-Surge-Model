@@ -9,7 +9,7 @@
 
 **1. Describe the hospital** (*Hospital Setup -> Hospital Information*)
 
-- Choose **Use predefined hospital** (Regional, Tertiary or Community) to load a
+- Choose **Use predefined hospital** (Community, Regional or Tertiary) to load a
   ready-made hospital, or **Add hospital units manually** and tick its units.
 - Check the beds of each unit and the fallback rules.
 
@@ -81,9 +81,9 @@ The **Hospital units** box offers two options:
 
 | Predefined hospital | Units and beds | NDMS-based profiles |
 |---|---|---|
+| **Community hospital** | GenMed 80, ICU 12, TransitionalCare 12 | 3 profiles; pathways through BurnBed, Cardiology, PhysicalMed or Psychiatric excluded. Fallbacks: GenMed and TransitionalCare back each other up; ICU has none. |
 | **Regional hospital** | GenMed 240, ICU 20, Cardiology 12, PhysicalMed 12, TransitionalCare 20 | 8 profiles; burn and psychiatric pathways excluded. |
 | **Tertiary hospital** | GenMed 400, ICU 72, BurnBed 12, Cardiology 18, PhysicalMed 24, Psychiatric 20, TransitionalCare 24 | All 11 profiles. |
-| **Community acute-care hospital** | GenMed 80, ICU 12, TransitionalCare 12 | 3 profiles; pathways through BurnBed, Cardiology, PhysicalMed or Psychiatric excluded. Fallbacks: GenMed and TransitionalCare back each other up; ICU has none. |
 
 **How NDMS-based profiles are selected for a hospital.** Each NDMS injury or
 illness subtype has an ordered pathway of units. A subtype is kept only if the
@@ -126,7 +126,7 @@ inputs mean depends on **Enable routine civilian arrivals**:
 | Disabled (default) | **Total available beds** | The hospital starts empty, so the value is the beds available to the surge. The default assumes a baseline occupancy of 95% in GenMed and ICU (5% of total beds shown) and 50% in every other unit (50% shown), rounded up to whole beds. |
 | Enabled | **Total beds** | The civilian warm-up fills the hospital, so the value is the unit's total beds (the source's value, unchanged). |
 
-For example, the Community acute-care hospital (GenMed 80, ICU 12,
+For example, the Community hospital (GenMed 80, ICU 12,
 TransitionalCare 12) shows GenMed 4, ICU 1 and TransitionalCare 6 when
 civilian arrivals are disabled. These are only starting values: a value typed
 by the user is kept when civilian arrivals are toggled; untouched values switch
@@ -237,7 +237,7 @@ rules with surge patients. Fractional rates are supported. Profile lists are
 retained for each hospital source and unit selection during the current session. Unchecking **Enable routine civilian arrivals** clears all saved civilian profiles, so manual entry starts empty after re-enabling.
 
 **Use predefined civilian profiles** appears only when a predefined hospital
-with civilian trajectories is in use (Regional, Tertiary or Community acute-care
+with civilian trajectories is in use (Community, Regional or Tertiary
 hospital) and the hospital configuration is complete. It loads the matching
 file: `data/baseline_civilian_profiles_regional.csv`,
 `_tertiary.csv`, or `_community.csv`. For manual units or Excel uploads, create
@@ -317,7 +317,7 @@ the arithmetic mean and CV to log-normal parameters:
 `meanlog = log(mean LOS) - sigma^2 / 2`
 
 Built-in surge profiles that carry no per-step variability (the
-Regional hospital, Tertiary hospital, and Community acute-care hospital
+Community hospital, Regional hospital, and Tertiary hospital
 NDMS-based sets) use the engine
 default **CV = 0.1** at every step, not the 1/0.24 defaults above; the
 trajectory editor and Excel download show the corresponding SD (0.1 x LOS).

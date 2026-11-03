@@ -762,8 +762,15 @@ waiting_state_summary <- function(simulation, units, sim_days) {
 }
 
 # Top-level worker avoids exporting the optimizer's cache and nested closures.
-capacity_replication <- function(replication_id, simulation_args, units) {
+# `engine` (from fast_engine_settings(), R/core/fast_engine.R) selects the
+# compiled engine, which draws the same patients and returns the same metrics;
+# NULL uses simmer.
+capacity_replication <- function(replication_id, simulation_args, units, engine = NULL) {
   replication_rng_state <- get(".Random.seed", envir = .GlobalEnv)
+  if (!is.null(engine)) {
+    return(fast_capacity_replication(replication_id, simulation_args, units, engine,
+                                     replication_rng_state))
+  }
   # mean_wait_days (the acceptance metric) is read from resource state history
   # alone (see waiting_state_summary()), so capacity selection needs no
   # individual arrival records, and only GenMed/ICU state, not ED's.
@@ -935,6 +942,10 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
   worker_dependencies <- future::getGlobalsAndPackages(
     quote(list(capacity_replication, unlimited_demand_replication)),
     envir = environment(find_n_needed))
+  # Compiled engine when the app loaded it (R/core/fast_engine.R); simmer otherwise.
+  replication_engine <- if (exists("fast_engine_settings", mode = "function")) {
+    fast_engine_settings()
+  }
   configured_capacities <- capacities
   initial_capacities <- as.integer(ceiling(capacities[c("GenMed", "ICU")]))
   names(initial_capacities) <- c("GenMed", "ICU")
@@ -1018,6 +1029,7 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
       future.apply::future_lapply(
         batch_ids, capacity_replication,
         simulation_args = simulation_args, units = c("GenMed", "ICU"),
+        engine = replication_engine,
         future.globals = worker_dependencies$globals,
         future.packages = worker_dependencies$packages,
         future.seed = batch_seed,

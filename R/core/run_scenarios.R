@@ -1,5 +1,28 @@
 # Source hospital_trajectory.R, baseline_flow.R and this file to run without Shiny.
 # Parameters and returned raw tables can be saved with saveRDS for paper figures.
+
+# Tables one simmer replication contributes to run_hospital_scenario(); the
+# compiled engine returns the same set from fast_scenario_tables().
+simmer_scenario_tables <- function(sim) {
+  activity <- simmer::get_mon_arrivals(sim, per_resource = TRUE, ongoing = TRUE) |>
+    dplyr::filter(.data$start_time >= 0)
+  # ongoing = TRUE re-emits every resource an still-active arrival has ever
+  # visited as an extra "in progress" row with end_time = NA, even one it
+  # already released earlier in its trajectory (its real, already-closed
+  # visit stays too). Left uncorrected, that phantom row double-counts the
+  # visit and misreports an already-resolved wait/boarding episode as still
+  # pending. Drop the NA duplicate whenever a finite-end_time row already
+  # covers the same (name, resource, start_time) visit; a single NA row
+  # with no such match is a genuine still-open visit and is kept as-is.
+  activity <- activity |>
+    dplyr::group_by(.data$name, .data$resource, .data$start_time) |>
+    dplyr::filter(!(is.na(.data$end_time) & any(is.finite(.data$end_time)))) |>
+    dplyr::ungroup()
+  # Consolidate the raw resource monitor only once; the caller slices the observation.
+  list(history = get_hospital_mon_resources(sim, include_warmup = TRUE),
+       arrivals = get_hospital_mon_arrivals(sim), activity = activity,
+       metadata = attr(sim, "civilian_metadata"))
+}
 run_hospital_scenario <- function(config, duration, n_patients, sim_days,
                                   num_sims = 1L, seed = 2026L, scenario_id = "scenario",
                                   scenario_mode = c("surge", "civilian_only")) {
@@ -28,18 +51,27 @@ run_hospital_scenario <- function(config, duration, n_patients, sim_days,
     stop("Enable Routine Civilian Flow and configure civilian profiles before running civilian-only operations.")
   }
   validate_baseline_config(baseline, config$capacities, config$fallbacks)
-  results <- future.apply::future_lapply(seq_len(num_sims), function(replication) {
-    sim <- run_simulation(config$capacities, duration, n_patients, sim_days,
-                          config$patient_profiles, config$profile_prob, config$fallbacks,
+  # Compiled engine when the app loaded it (R/core/fast_engine.R); simmer otherwise.
+  engine <- if (exists("fast_engine_settings", mode = "function")) fast_engine_settings()
+  simulation_args <- list(capacities = config$capacities, duration = duration,
+                          n_patients = n_patients, sim_days = sim_days,
+                          patient_profiles = config$patient_profiles,
+                          profile_prob = config$profile_prob, fallbacks = config$fallbacks,
                           baseline = baseline, warmup_capacities = warmup_capacities,
                           arrival_process = arrival_process,
                           credit_boarding_time = !isFALSE(config$credit_boarding_time))
-    metadata <- attr(sim, "civilian_metadata")
+  results <- future.apply::future_lapply(seq_len(num_sims), function(replication) {
+    raw <- if (!is.null(engine)) {
+      fast_scenario_tables(engine, simulation_args)
+    } else {
+      simmer_scenario_tables(do.call(run_simulation, simulation_args))
+    }
+    metadata <- raw$metadata
     decorate <- function(rows) {
       dplyr::mutate(rows, replication = .env$replication, scenario_id = .env$scenario_id,
                     scenario_mode = .env$scenario_mode)
     }
-    arrivals <- get_hospital_mon_arrivals(sim)
+    arrivals <- raw$arrivals
     if (!is.null(metadata)) {
       # Neutral name for comparisons; retain present_at_surge for existing scripts.
       arrivals$present_at_observation_start <- arrivals$present_at_surge
@@ -48,20 +80,7 @@ run_hospital_scenario <- function(config, duration, n_patients, sim_days,
       arrivals$population <- rep("surge", nrow(arrivals))
       arrivals$profile <- sub("_[0-9]+$", "", sub("^patient_", "", arrivals$name))
     }
-    activity <- simmer::get_mon_arrivals(sim, per_resource = TRUE, ongoing = TRUE) |>
-      dplyr::filter(.data$start_time >= 0)
-    # ongoing = TRUE re-emits every resource an still-active arrival has ever
-    # visited as an extra "in progress" row with end_time = NA, even one it
-    # already released earlier in its trajectory (its real, already-closed
-    # visit stays too). Left uncorrected, that phantom row double-counts the
-    # visit and misreports an already-resolved wait/boarding episode as still
-    # pending. Drop the NA duplicate whenever a finite-end_time row already
-    # covers the same (name, resource, start_time) visit; a single NA row
-    # with no such match is a genuine still-open visit and is kept as-is.
-    activity <- activity |>
-      dplyr::group_by(.data$name, .data$resource, .data$start_time) |>
-      dplyr::filter(!(is.na(.data$end_time) & any(is.finite(.data$end_time)))) |>
-      dplyr::ungroup()
+    activity <- raw$activity
     if (!is.null(metadata)) {
       activity <- activity |>
         dplyr::left_join(metadata$patients[c("name", "profile", "population")], by = "name") |>
@@ -74,8 +93,7 @@ run_hospital_scenario <- function(config, duration, n_patients, sim_days,
     activity$is_logical_wait <- startsWith(activity$resource, logical_queue_prefix)
     activity$is_boarding <- startsWith(activity$resource, boarding_prefix)
     activity <- dplyr::arrange(activity, .data$start_time, .data$name, .data$resource, .data$end_time)
-    # Consolidate the raw resource monitor only once, then slice the observation.
-    history <- get_hospital_mon_resources(sim, include_warmup = TRUE)
+    history <- raw$history
     observation <- if (is.null(metadata)) history else slice_resource_history(history, 0, sim_days)
     list(resources = decorate(observation),
          resource_history = decorate(history),

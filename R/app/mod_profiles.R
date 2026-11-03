@@ -53,9 +53,9 @@ capacity_label <- function(civilian_enabled) {
 # arrival percentages. Values are the stable internal source IDs used by saved
 # configs and the civilian profile files.
 predefined_hospitals <- c(
+  "Community hospital" = "community_hospital_test",
   "Regional hospital" = "regional_hospital_test",
-  "Tertiary hospital" = "tertiary_hospital_test",
-  "Community acute-care hospital" = "community_hospital_test"
+  "Tertiary hospital" = "tertiary_hospital_test"
 )
 
 # Total beds of each predefined hospital (assumed scenario capacities).
@@ -527,7 +527,7 @@ hospital_profiles_ui <- function(id) {
               data.step = 3,
               data.intro = paste(
                 "<strong>Hospital units.</strong><br>",
-                "Choose <em>Use predefined hospital</em> (Regional, Tertiary or Community) to load",
+                "Choose <em>Use predefined hospital</em> (Community, Regional or Tertiary) to load",
                 "its units, beds, fallbacks and NDMS-based surge profiles in one step, or",
                 "<em>Add hospital units manually</em> and tick the units your hospital has.",
                 "Only the selected units can be used in pathways and fallbacks."

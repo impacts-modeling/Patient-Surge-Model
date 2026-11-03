@@ -3190,11 +3190,14 @@
     ".claude/settings.local.json": {
       "checksum": "f109b9067a98d0759c4d965b298d0e37"
     },
+    ".RDataTmp": {
+      "checksum": "7dae7002f553bc32f9c4ab197fb1ca9d"
+    },
     "AGENTS.md": {
       "checksum": "74c3a2c68b47c0139f8bd527dc4cf0f7"
     },
     "app.R": {
-      "checksum": "b0c519b2506dbb1406155b4cb5e0fc93"
+      "checksum": "cae56172239fb9cb239f38b6c280d8b3"
     },
     "data/baseline_civilian_profiles_community.csv": {
       "checksum": "a237ec5fabe312443aa524ff4067bf01"
@@ -3209,7 +3212,7 @@
       "checksum": "dc23d12de7481e2771332ed076fff21a"
     },
     "description.md": {
-      "checksum": "6ca51e42fda4592721c19fbd25287ffa"
+      "checksum": "bfc2b07425197850810b4c3f04effc1e"
     },
     "LICENSE": {
       "checksum": "f2ee9eb7ffce6feedc599740547a8bad"
@@ -3503,10 +3506,10 @@
       "checksum": "09e4cc3f027218e355b2e48110b9342c"
     },
     "outputs/unlimited_comparison_01/trajectories.pdf": {
-      "checksum": "94a306b5a6363b8db4b8d698a757f4ac"
+      "checksum": "91cdecf1631108a082ee86032fb15bdd"
     },
-    "outputs/unlimited_comparison_01/trajectories.png": {
-      "checksum": "9ec53c182a46e17a93066db90415f723"
+    "outputs/unlimited_comparison_01/trajectories_unlimited.png": {
+      "checksum": "c29494368c956fbe12ef6cf864ddd8ac"
     },
     "outputs/unlimited_comparison_01/trajectory.csv": {
       "checksum": "fe3bad1355e94c1d366c87df3b9f75e0"
@@ -3515,12 +3518,39 @@
       "checksum": "b8139d132354ae1e0f20b5486c976a34"
     },
     "outputs/unlimited_comparison_01/warmup.pdf": {
-      "checksum": "82bd82b8cd9d201b77d1a89d5fc0a549"
+      "checksum": "cf50c61f0f4bf294dd290a30cf09091c"
     },
     "outputs/unlimited_comparison_01/warmup.png": {
       "checksum": "34ca6b5915d549dce75e061123892750"
     },
     "outputs/unlimited_comparison_01/warmup_reached.csv": {
+      "checksum": "44e262b30243b771fb1ab64dbaaf6b20"
+    },
+    "outputs/unlimited_comparison_02/fit.csv": {
+      "checksum": "191f7c95f92c5dd1b628eba7f8555aaf"
+    },
+    "outputs/unlimited_comparison_02/peak_table.csv": {
+      "checksum": "09e4cc3f027218e355b2e48110b9342c"
+    },
+    "outputs/unlimited_comparison_02/trajectories.pdf": {
+      "checksum": "d7df0b232ecf049bfce0ad6216276bf0"
+    },
+    "outputs/unlimited_comparison_02/trajectories.png": {
+      "checksum": "e1fc9f5069f7bdb36196953682d22f3c"
+    },
+    "outputs/unlimited_comparison_02/trajectory.csv": {
+      "checksum": "fe3bad1355e94c1d366c87df3b9f75e0"
+    },
+    "outputs/unlimited_comparison_02/warmup.csv": {
+      "checksum": "b8139d132354ae1e0f20b5486c976a34"
+    },
+    "outputs/unlimited_comparison_02/warmup.pdf": {
+      "checksum": "481ab8a7b6b82bd06d5d50a1bf4672f4"
+    },
+    "outputs/unlimited_comparison_02/warmup.png": {
+      "checksum": "34ca6b5915d549dce75e061123892750"
+    },
+    "outputs/unlimited_comparison_02/warmup_reached.csv": {
       "checksum": "44e262b30243b771fb1ab64dbaaf6b20"
     },
     "outputs/unlimited_demand_01/analytic_parameters.csv": {
@@ -3583,7 +3613,7 @@
     "outputs/unlimited_demand_01/trajectories.pdf": {
       "checksum": "06e1a5fc36e6f9c2c229ff379ed078c4"
     },
-    "outputs/unlimited_demand_01/trajectories.png": {
+    "outputs/unlimited_demand_01/trajectories_unlimited.png": {
       "checksum": "09890c02719541d068abdc9823e684f1"
     },
     "outputs/unlimited_demand_01/wait_replications.csv": {
@@ -4085,7 +4115,7 @@
       "checksum": "d210a4b7fde79d529286218381512d6e"
     },
     "paper/generate_manuscript_tables.R": {
-      "checksum": "856ea5124bdfba0f97fc35ab077a97c3"
+      "checksum": "c470af541110911210335b80ecb02f5d"
     },
     "paper/generate_surge_profile_table.R": {
       "checksum": "331519ea5b06e346873c03840a77c9a0"
@@ -4094,7 +4124,7 @@
       "checksum": "5f852c06062b4a90d1fcf0cdfcd0490a"
     },
     "paper/make_unlimited_comparison.R": {
-      "checksum": "22b7f65d7d12f53a446e9aeec77649b8"
+      "checksum": "98ee97aac0004eff72e56bbfa328bd14"
     },
     "paper/paper_data/Cleaning.Rmd": {
       "checksum": "8126a08e7a4c5f44b2d1fbdb3b7a76e2"
@@ -4117,6 +4147,12 @@
     "paper/paper_data/manuscript/booktabs.sty": {
       "checksum": "989ecfb545a13610facc71ae7e40ced1"
     },
+    "paper/paper_data/manuscript/cover_letter.pdf": {
+      "checksum": "d33de3e6e7e28503ed7b5bd358da7d39"
+    },
+    "paper/paper_data/manuscript/cover_letter.tex": {
+      "checksum": "4fd0f2085cfe0641a13102e82d6196c5"
+    },
     "paper/paper_data/manuscript/epsfig.sty": {
       "checksum": "a896e5fe135d4485f72ce6c9d8459d2e"
     },
@@ -4130,7 +4166,7 @@
       "checksum": "f2fa38df4f04c80bdc4a0f218f4bd771"
     },
     "paper/paper_data/manuscript/main.aux": {
-      "checksum": "111b028a4fa7bbd655c602abfdbced90"
+      "checksum": "92b0f5e869547c6e93f3eaa11ba38ba8"
     },
     "paper/paper_data/manuscript/main.bbl": {
       "checksum": "1f3fc77a2d2b9a36b59f9e922858b899"
@@ -4145,16 +4181,16 @@
       "checksum": "882278bb4dc848de6fa5345c76e5f5d3"
     },
     "paper/paper_data/manuscript/main.log": {
-      "checksum": "bbc41b210bee1f5fdcc7eeff003eed77"
+      "checksum": "15a23a435a701c06ab4836712081da13"
     },
     "paper/paper_data/manuscript/main.pdf": {
-      "checksum": "fe3e09e21f85040983a99217014c7035"
+      "checksum": "079b0ca07ee149277dcb04f3e9bbe6b3"
     },
     "paper/paper_data/manuscript/main.synctex.gz": {
-      "checksum": "4f1f26373559d359c0c9a223809922e4"
+      "checksum": "be8d75b0e27e27196e709ecb711f5f64"
     },
     "paper/paper_data/manuscript/main.tex": {
-      "checksum": "3bc3356a0ba3a86e197d5aa81e271a6e"
+      "checksum": "49aa466c9b9f8c22c07aa3669c852691"
     },
     "paper/paper_data/manuscript/main.tex.bak_before_10000beds": {
       "checksum": "be55f6df4e4697471bb7dab64323c2cc"
@@ -4185,6 +4221,9 @@
     },
     "paper/paper_data/manuscript/main.tex.bak_before_fig_restructure": {
       "checksum": "9ca0ee6ca0d86dac447431033be63f7e"
+    },
+    "paper/paper_data/manuscript/main.tex.bak_before_fixes4": {
+      "checksum": "46585e7699884b9a172580b636ae0bf7"
     },
     "paper/paper_data/manuscript/main.tex.bak_before_formula": {
       "checksum": "0b6681da5d7825cfde1badc7e32af011"
@@ -4220,7 +4259,7 @@
       "checksum": "5ba1f74861078b66392626b1d8d8519d"
     },
     "paper/paper_data/manuscript/references.bib": {
-      "checksum": "e29e27016af02440ccce6b90c0216d42"
+      "checksum": "8dadf680002b7d2d5d574bf47d3715d6"
     },
     "paper/paper_data/manuscript/references.bib.bak_before_curry": {
       "checksum": "e3425c99399a601e3af137aebdf4401c"
@@ -4376,7 +4415,7 @@
       "checksum": "30df3250328ebc7e5996c9081f21461d"
     },
     "R/01_config.R": {
-      "checksum": "99391e3a3b0ee470afa520fc8f43b922"
+      "checksum": "63d8d767d8a5665eace0f4d05dfd9ac7"
     },
     "R/analitic/occupancy_analytic.R": {
       "checksum": "af353def9b99605e3e95d3bf07c8651b"
@@ -4391,7 +4430,7 @@
       "checksum": "dd3cc8ff339c51c6c0e47d9f7e1ad61f"
     },
     "R/app/mod_profiles.R": {
-      "checksum": "7ad8f17ce960d1b0661f8c8934258982"
+      "checksum": "082909ef623c9c6d15e874e342459998"
     },
     "R/app/mod_unlimited.R": {
       "checksum": "1c0795cfe8b0a2c90665d14d4764463b"
@@ -4408,11 +4447,14 @@
     "R/core/baseline_flow.R": {
       "checksum": "62fc8bd9cf75f2d19a047d8018e65d6a"
     },
+    "R/core/fast_engine.R": {
+      "checksum": "dcebcc6405c4db41bf3d72ee22e8c2b3"
+    },
     "R/core/hospital_trajectory.R": {
-      "checksum": "6238d819f324d6abcd26e2b34c969b4c"
+      "checksum": "d2143751743d3a2f80db497cdf3bc1ae"
     },
     "R/core/run_scenarios.R": {
-      "checksum": "02acca3c6a13dd0ed51732e0cd32d579"
+      "checksum": "322d746999502cbec8a41a0e32438803"
     },
     "R/shared/profiles_deloitte.R": {
       "checksum": "1b1c70565c73b18845aa1fa6c6fedac7"
@@ -4421,10 +4463,10 @@
       "checksum": "1e1aaae387b67c885b88ae6acb13d136"
     },
     "README.md": {
-      "checksum": "92640671c0c0b70449205f69c1bff52e"
+      "checksum": "a2161ebbde3dd029b6f87e5d3f013b9e"
     },
-    "Rplots.pdf": {
-      "checksum": "447ca71c96f6b5314191ca2e77de1cd6"
+    "src/hospital_des.cpp": {
+      "checksum": "7956255df032b0377259ed65c92d2506"
     }
   },
   "users": null

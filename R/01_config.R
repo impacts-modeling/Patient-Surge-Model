@@ -59,6 +59,9 @@ max_num_sims_for <- function(civilian_enabled) {
 # Keep bed_search_configs as the LAST expression of this file (read in isolation by
 # paper/run_manuscript_scenarios.R).
 app_analytic_start_level <- c(with_civilian_flow = 0.75, without_civilian_flow = 0.5)
+# Bed search replications use the compiled engine (src/hospital_des.cpp via
+# R/core/fast_engine.R) when it compiles; FALSE, or a failed compile, uses simmer.
+use_fast_engine <- TRUE
 bed_search_configs <- list(
   development = list(
     num_sims = 20L, max_evaluations = 50L, final_num_sims = 20L,
