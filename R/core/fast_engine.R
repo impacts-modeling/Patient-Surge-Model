@@ -65,6 +65,7 @@ fast_engine_status <- local({
   } else {
     tryCatch({
       fast_engine_load(engine)
+      message("Compiled engine ready; simulations will use C++ (src/hospital_des.cpp).")
       "ready"
     }, error = function(error) {
       warning("Compiled engine unavailable; simulations will use simmer. ",
