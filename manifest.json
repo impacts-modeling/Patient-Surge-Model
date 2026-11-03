@@ -4415,13 +4415,13 @@
       "checksum": "30df3250328ebc7e5996c9081f21461d"
     },
     "R/01_config.R": {
-      "checksum": "63d8d767d8a5665eace0f4d05dfd9ac7"
+      "checksum": "517a1ab8b1f3d4845f38aeee013396c2"
     },
     "R/analitic/occupancy_analytic.R": {
       "checksum": "af353def9b99605e3e95d3bf07c8651b"
     },
     "R/app/app_server.R": {
-      "checksum": "1c5f05e4fc881f120d93a58d2e306a2d"
+      "checksum": "61514bcbc4e8761052b719676ffe9b53"
     },
     "R/app/app_ui.R": {
       "checksum": "be83e46045c4da5052750f819e3ad983"
@@ -4442,13 +4442,13 @@
       "checksum": "5d260f3b83b0f69517753fd3ae400e50"
     },
     "R/app/ui_sidebar.R": {
-      "checksum": "5894f05cc05e95eb24cfc118b95c8623"
+      "checksum": "f0f93c4f49f3bcfc89135f42590d45e4"
     },
     "R/core/baseline_flow.R": {
       "checksum": "62fc8bd9cf75f2d19a047d8018e65d6a"
     },
     "R/core/fast_engine.R": {
-      "checksum": "dcebcc6405c4db41bf3d72ee22e8c2b3"
+      "checksum": "bf08fb62c0b7dbb775884a431d4c5b61"
     },
     "R/core/hospital_trajectory.R": {
       "checksum": "d2143751743d3a2f80db497cdf3bc1ae"

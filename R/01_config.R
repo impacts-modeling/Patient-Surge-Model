@@ -5,7 +5,11 @@ options(shiny.maxRequestSize = 50 * 1024^2)
 options(dplyr.summarise.inform = FALSE)
 
 available_cores <- future::availableCores()
-workers <- max(1L, min(2L, available_cores))
+# One worker: with the compiled engine (R/core/fast_engine.R) a second parallel
+# worker saved only ~5% on 30 dashboard replications and ~24% on a bed search,
+# while adding an R process per Shiny session. Raise the cap to 2 if the engine
+# falls back to simmer, where parallel replications nearly halve run times.
+workers <- max(1L, min(1L, available_cores))
 
 if (workers > 1L) {
   future::plan(future::multisession, workers = workers)
