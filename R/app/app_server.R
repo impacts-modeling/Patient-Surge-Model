@@ -1,4 +1,30 @@
 # Application server ----------------------------------------------------
+
+# Checks the values of `fields` (input IDs) against app_input_limits
+# (R/01_config.R): a numericInput's min/max only bound its spinner, so a value
+# typed by hand reaches the server unchecked. Returns the first problem as a
+# message for the user, or NULL when every value is acceptable.
+input_limit_problem <- function(input, fields, arrival_process = "even") {
+  for (field in fields) {
+    rule <- app_input_limits[[field]]
+    value <- input[[field]]
+    if (is.null(value) || length(value) != 1L || !is.finite(value) ||
+        value < rule$min || value > rule$max || (isTRUE(rule$whole) && value != floor(value))) {
+      return(sprintf("%s must be %s from %s to %s.", rule$label,
+                     if (isTRUE(rule$whole)) "a whole number" else "a number",
+                     format(rule$min, big.mark = ","), format(rule$max, big.mark = ",")))
+    }
+  }
+  if ("n_patients" %in% fields && identical(arrival_process, "even") &&
+      input$n_patients != floor(input$n_patients)) {
+    return("With Even surge arrivals, surge patients per day must be a whole number.")
+  }
+  if (all(c("duration", "sim_days") %in% fields) && input$duration > input$sim_days) {
+    return("Observation duration must be at least the surge arrival period.")
+  }
+  NULL
+}
+
 app_server <- function(input, output, session) {
     simulation_data <- shiny::reactiveVal(NULL)
     analytic_data <- shiny::reactiveVal(NULL)
@@ -173,6 +199,18 @@ app_server <- function(input, output, session) {
         update_calculation_buttons()
         return(invisible(NULL))
       }
+      surge_fields <- if (civilian_only()) character() else c("n_patients", "duration")
+      fields <- if (unlimited_mode()) {
+        c(surge_fields, "sim_days")
+      } else {
+        c(surge_fields, "sim_days", "simulation_seed", "genmed_msf", "icu_msf")
+      }
+      problem <- input_limit_problem(input, fields, input$surge_arrival_process)
+      if (!is.null(problem)) {
+        shiny::showNotification(problem, type = "error", duration = 8)
+        update_calculation_buttons()
+        return(invisible(NULL))
+      }
 
       simulation_running(TRUE)
       update_calculation_buttons()
@@ -232,6 +270,10 @@ app_server <- function(input, output, session) {
     })
   
   
+    # Inputs the bed search reads (it uses its own replication counts and seed).
+    bed_search_fields <- c("n_patients", "duration", "sim_days", "congestion_index",
+                           "congestion_index_icu", "genmed_msf", "icu_msf")
+
     shiny::observeEvent(input$run_N, {
       if (civilian_only() || unlimited_mode()) {
         shiny::showNotification(
@@ -255,7 +297,12 @@ app_server <- function(input, output, session) {
         )
         return(invisible(NULL))
       }
-  
+      problem <- input_limit_problem(input, bed_search_fields, input$surge_arrival_process)
+      if (!is.null(problem)) {
+        shiny::showNotification(problem, type = "error", duration = 8)
+        return(invisible(NULL))
+      }
+
       shiny::showModal(shiny::modalDialog(
         title = "Confirm bed-expansion estimate",
         shiny::p(
@@ -362,7 +409,15 @@ app_server <- function(input, output, session) {
         )
         return(invisible(NULL))
       }
-  
+      # Values may have been edited while the confirmation dialog was open.
+      problem <- input_limit_problem(input, bed_search_fields, input$surge_arrival_process)
+      if (!is.null(problem)) {
+        shiny::removeModal()
+        shiny::showNotification(problem, type = "error", duration = 8)
+        update_calculation_buttons()
+        return(invisible(NULL))
+      }
+
       shiny::removeModal()
       bed_search_running(TRUE)
       find_result(NULL)

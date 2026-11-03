@@ -17,8 +17,29 @@ if (workers > 1L) {
 # max_num_sims_*: largest "Number of simulations" accepted by the dashboard, to
 # keep run times (and hosted sessions on Connect Cloud) manageable. Civilian
 # flow adds a warm-up to every replication, so its limit is lower.
-app_development_config <- list(sim_days = 50L, num_sims = 10L, simulation_seed = 2026L,
-                               max_num_sims_civilian = 30L, max_num_sims_surge_only = 60L)
+app_development_config <- list(num_sims = 10L,
+                               max_num_sims_civilian = 40L, max_num_sims_surge_only = 60L)
+
+# Dashboard inputs: initial value and accepted range, keyed by input ID. A
+# numericInput's min/max only bound its spinner, so input_limit_problem()
+# (app_server.R) also rejects typed values outside these ranges before any
+# calculation starts. `whole` requires a whole number.
+# Sizing (compiled engine, UC Davis civilian flow): 100 surge patients/day for
+# 50 days costs about 1 s per replication; the result grows with the
+# observation horizon (about 6 MB per replication at 50 days, 18 MB at 200), so
+# the horizon limit bounds memory. The ranges stay workable if the app falls
+# back to simmer, which is about 10 times slower.
+app_input_limits <- list(
+  n_patients = list(label = "Surge patients per day", value = 15, min = 1, max = 100, whole = FALSE),
+  duration = list(label = "Surge arrival period (days)", value = 10, min = 1, max = 60, whole = TRUE),
+  sim_days = list(label = "Observation duration (days)", value = 50, min = 1, max = 120, whole = TRUE),
+  simulation_seed = list(label = "Simulation seed", value = 2026, min = 1,
+                         max = .Machine$integer.max, whole = TRUE),
+  congestion_index = list(label = "GenMed wait limit (days)", value = 1, min = 0.01, max = 30, whole = FALSE),
+  congestion_index_icu = list(label = "ICU wait limit (days)", value = 1, min = 0.01, max = 30, whole = FALSE),
+  genmed_msf = list(label = "HxS GenMed", value = 0, min = 0, max = 1000, whole = TRUE),
+  icu_msf = list(label = "HxS ICU", value = 0, min = 0, max = 1000, whole = TRUE)
+)
 
 max_num_sims_for <- function(civilian_enabled) {
   if (isTRUE(civilian_enabled)) {
@@ -59,8 +80,9 @@ max_num_sims_for <- function(civilian_enabled) {
 # Keep bed_search_configs as the LAST expression of this file (read in isolation by
 # paper/run_manuscript_scenarios.R).
 app_analytic_start_level <- c(with_civilian_flow = 0.75, without_civilian_flow = 0.5)
-# Bed search replications use the compiled engine (src/hospital_des.cpp via
-# R/core/fast_engine.R) when it compiles; FALSE, or a failed compile, uses simmer.
+# Simulations (bed search and dashboard runs) use the compiled engine
+# (src/hospital_des.cpp via R/core/fast_engine.R) when it compiles; FALSE, or a
+# failed compile, uses simmer.
 use_fast_engine <- TRUE
 bed_search_configs <- list(
   development = list(

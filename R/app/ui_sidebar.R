@@ -14,6 +14,13 @@ with_info <- function(label, info_id) {
   )
 }
 
+# numericInput whose initial value and range come from app_input_limits
+# (R/01_config.R), the same ranges the server enforces.
+limited_numeric_input <- function(input_id, label, ...) {
+  rule <- app_input_limits[[input_id]]
+  shiny::numericInput(input_id, label, value = rule$value, min = rule$min, max = rule$max, ...)
+}
+
 # A div (not helpText's <p>) so it can also hold conditionalPanel()s.
 sidebar_info_text <- function(info_id, ...) {
   shiny::div(id = info_id, class = "collapse sidebar-info-text",
@@ -103,18 +110,17 @@ build_sidebar <- function() {
               shiny::column(
                 width = col1,
                 shiny::conditionalPanel(surge_inputs_condition,
-                  shiny::numericInput("n_patients", "Surge Patients per Day", min = 1, max = 20, value = 10, step = "any")),
+                  limited_numeric_input("n_patients", "Surge Patients per Day", step = "any")),
                 # Keep the icon on the label's second line so this label stays two
                 # lines tall, aligned with "Number of simulations" beside it.
-                shiny::numericInput("sim_days",
-                                    shiny::tagList("Observation ", shiny::span(class = "text-nowrap",
-                                      with_info("Duration (days)", "info_sim_days"))),
-                                    min = 1, max = 50, value = app_development_config$sim_days)
+                limited_numeric_input("sim_days",
+                                      shiny::tagList("Observation ", shiny::span(class = "text-nowrap",
+                                        with_info("Duration (days)", "info_sim_days"))))
               ),
               shiny::column(
                 width = col1,
                 shiny::conditionalPanel(surge_inputs_condition,
-                  shiny::numericInput("duration", "Surge Arrival Period (days)", min = 1, max = 30, value = 10)),
+                  limited_numeric_input("duration", "Surge Arrival Period (days)")),
                 shiny::conditionalPanel(simulation_inputs_condition,
                   shiny::numericInput("num_sims",
                                       shiny::tagList("Number of ", shiny::span(class = "text-nowrap",
@@ -141,7 +147,7 @@ build_sidebar <- function() {
               shiny::column(
                 width = col1,
                 shiny::conditionalPanel(simulation_inputs_condition,
-                  shiny::numericInput("simulation_seed", "Simulation seed", value = app_development_config$simulation_seed, min = 1, step = 1))
+                  limited_numeric_input("simulation_seed", "Simulation seed", step = 1))
               )
             ),
             shiny::conditionalPanel(surge_inputs_condition,
@@ -191,8 +197,8 @@ build_sidebar <- function() {
               "Bed search uses %d replications per candidate and %d independent final replications in development mode.",
               search_config$num_sims, search_config$final_num_sims))),
             shiny::fluidRow(
-              shiny::column(width = 6, shiny::numericInput("congestion_index", "GenMed", min = 0.01, max = 30, value = 1, step = 0.5)),
-              shiny::column(width = 6, shiny::numericInput("congestion_index_icu", "ICU", min = 0.01, max = 30, value = 1, step = 0.5))
+              shiny::column(width = 6, limited_numeric_input("congestion_index", "GenMed", step = 0.5)),
+              shiny::column(width = 6, limited_numeric_input("congestion_index_icu", "ICU", step = 0.5))
             ),
             shiny::conditionalPanel(sprintf("!%s", civilian_only_js),
               shiny::actionButton("run_N", "Estimate Bed Expansion", class = "btn-primary")),
@@ -200,8 +206,8 @@ build_sidebar <- function() {
             sidebar_info_text("info_hxs",
               "HxS additions apply to the selected scenario. Use zero additions to evaluate existing capacity."),
             shiny::fluidRow(
-              shiny::column(width = 6, shiny::numericInput("genmed_msf", "HxS GenMed", min = 0, max = 100, value = 0)),
-              shiny::column(width = 6, shiny::numericInput("icu_msf", "HxS ICU", min = 0, max = 100, value = 0))
+              shiny::column(width = 6, limited_numeric_input("genmed_msf", "HxS GenMed")),
+              shiny::column(width = 6, limited_numeric_input("icu_msf", "HxS ICU"))
             )
           ),
           id = "tour_bed_expansion",
