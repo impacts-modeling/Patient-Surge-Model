@@ -332,8 +332,11 @@ make_resource_plot <- function(data, var = "server") {
   p |>
     plotly::layout(
       title = "",
+      # Legend above the plot, as in the unlimited-capacity plot.
+      legend = list(orientation = "h", x = 0, y = 1.02, xanchor = "left", yanchor = "bottom"),
       xaxis = list(title = "Day — mean of daily means; band: P10–P90"),
-      yaxis = list(title = yaxis_label)
+      yaxis = list(title = yaxis_label),
+      margin = list(t = 60)
     )
 }
 
