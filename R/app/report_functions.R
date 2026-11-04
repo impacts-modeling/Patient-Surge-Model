@@ -27,9 +27,9 @@ make_expansion_table <- function(n_result) {
 
   data.frame(
     Metric = c(
-      "Additional Med/Surg beds",
-      "Additional ICU HxS beds",
-      "Validated total Med/Surg capacity",
+      "Additional GenMed beds",
+      "Additional ICU beds",
+      "Validated total GenMed capacity",
       "Validated total ICU capacity",
       "Unified search evaluations",
       "Independent final evaluations",
@@ -245,7 +245,7 @@ queue_results_table <- function(simulation_data) {
 
 bed_wait_results_table <- function(simulation_data) {
   table <- relabel_units(hide_internal_units(bed_wait_table(simulation_data), "Unit"), "Unit")
-  if (nrow(table)) table else data.frame(Status = "No bed requests with a resolved wait in the observation period.")
+  if (nrow(table)) table else data.frame(Status = "No bed requests in the observation period.")
 }
 
 boarding_results_table <- function(simulation_data) {
@@ -330,9 +330,9 @@ build_report_params <- function(input, profile_config, scenario,
          `Simulation seed` = input$simulation_seed),
     capacity_params,
     list(
-      `Maximum Allowed Med/Surg Mean Wait (days)` = input$congestion_index,
+      `Maximum Allowed GenMed Mean Wait (days)` = input$congestion_index,
       `Maximum Allowed ICU Mean Wait (days)` = input$congestion_index_icu,
-      `HxS Med/Surg Additional Beds Entered` = input$genmed_msf,
+      `HxS GenMed Additional Beds Entered` = input$genmed_msf,
       `HxS ICU Additional Beds Entered` = input$icu_msf
     )
   )

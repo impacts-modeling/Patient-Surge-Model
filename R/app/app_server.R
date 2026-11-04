@@ -162,7 +162,6 @@ app_server <- function(input, output, session) {
         n_patients = input$n_patients,
         duration = input$duration,
         sim_days = input$sim_days,
-        num_sims = input$num_sims,
         congestion_index = input$congestion_index,
         congestion_index_icu = input$congestion_index_icu,
         genmed_msf = input$genmed_msf,
@@ -528,7 +527,7 @@ app_server <- function(input, output, session) {
           shiny::tags$strong("Recommended expansion applied"),
           shiny::tags$br(),
           sprintf(
-            "HxS Med/Surg is now %d and HxS ICU is now %d. Click Run Simulation to update the plots and tables. Do not run Estimate Bed Expansion again unless another model input changes.",
+            "HxS GenMed is now %d and HxS ICU is now %d. Click Run Simulation to update the plots and tables. Do not run Estimate Bed Expansion again unless another model input changes.",
             applied$genmed_msf,
             applied$icu_msf
           )
@@ -542,7 +541,7 @@ app_server <- function(input, output, session) {
           class = "alert alert-warning",
           shiny::tags$strong("Outdated bed-expansion recommendation"),
           shiny::tags$br(),
-          "Hospital profiles, capacities, demand, mean-wait limits, HxS inputs, or the number of simulations changed after this recommendation was calculated. Click Estimate Bed Expansion again before applying it."
+          "Hospital profiles, capacities, demand, mean-wait limits or HxS inputs changed after this recommendation was calculated. Click Estimate Bed Expansion again before applying it."
         ))
       }
   
@@ -605,12 +604,12 @@ app_server <- function(input, output, session) {
   
         Recommended Expansion:<br>
         <span style='font-size:14px; font-weight:normal;'>Mode: %s. Recommendation is additional beds beyond current capacity and HxS inputs.</span><br>
-        <span style='font-size:14px; font-weight:normal;'>Evaluated scenario: GenMed %d beds; ICU %d beds; mean-wait limits %.2f and %.2f days; %.6g patients/day; %d scenario simulations.</span><br>
+        <span style='font-size:14px; font-weight:normal;'>Evaluated scenario: GenMed %d beds; ICU %d beds; mean-wait limits %.2f and %.2f days; %.6g patients/day.</span><br>
         <span style='font-size:14px; font-weight:normal;'>Both mean-wait limits met simultaneously in %.1f%% of final replications; target %.1f%%.</span><br>
         <span style='font-size:14px; font-weight:normal;'>%s</span><br>
   
-        Add <span style='color:%s;'>%d</span> beds to <b>Med/Surg</b> and
-        <span style='color:%s;'>%d</span> beds to <b>ICU HxS</b>.
+        Add <span style='color:%s;'>%d</span> beds to <b>HxS GenMed</b> and
+        <span style='color:%s;'>%d</span> beds to <b>HxS ICU</b>.
   
       </div>
       ",
@@ -621,7 +620,6 @@ app_server <- function(input, output, session) {
           evaluated$congestion_index,
           evaluated$congestion_index_icu,
           evaluated$n_patients,
-          evaluated$num_sims,
           100 * n_opt$joint_reliability,
           100 * n_opt$reliability_level,
           refinement_message,
@@ -737,7 +735,7 @@ app_server <- function(input, output, session) {
     output$patient_cohort_note <- shiny::renderText({
       data <- simulation_data()
       if (is.null(data)) return("Run the selected scenario to display its results.")
-      "Bed waits include every bed request that found a bed during observation (including zero waits), whether or not the patient had finished their trajectory. Rows are separated by requested unit and population; day-zero requests form a separate cohort."
+      "Bed waits include every bed request during observation (including zero waits; a request still waiting at the horizon counts the time waited so far), whether or not the patient had finished their trajectory. Rows are separated by requested unit and population; day-zero requests form a separate cohort."
     })
     output$download_report <- shiny::downloadHandler(
       filename = function() {

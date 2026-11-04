@@ -3212,7 +3212,7 @@
       "checksum": "dc23d12de7481e2771332ed076fff21a"
     },
     "description.md": {
-      "checksum": "bfc2b07425197850810b4c3f04effc1e"
+      "checksum": "50ee14bb3f6559324bca3cb1b708893c"
     },
     "LICENSE": {
       "checksum": "f2ee9eb7ffce6feedc599740547a8bad"
@@ -4415,13 +4415,13 @@
       "checksum": "30df3250328ebc7e5996c9081f21461d"
     },
     "R/01_config.R": {
-      "checksum": "517a1ab8b1f3d4845f38aeee013396c2"
+      "checksum": "5b580d4086008bc8449dfa099900d5e7"
     },
     "R/analitic/occupancy_analytic.R": {
       "checksum": "af353def9b99605e3e95d3bf07c8651b"
     },
     "R/app/app_server.R": {
-      "checksum": "61514bcbc4e8761052b719676ffe9b53"
+      "checksum": "77189dc61489f44147cc45f25f7e0ad9"
     },
     "R/app/app_ui.R": {
       "checksum": "be83e46045c4da5052750f819e3ad983"
@@ -4433,25 +4433,25 @@
       "checksum": "082909ef623c9c6d15e874e342459998"
     },
     "R/app/mod_unlimited.R": {
-      "checksum": "1c0795cfe8b0a2c90665d14d4764463b"
+      "checksum": "4a1feab184330055229e70828a7b8578"
     },
     "R/app/report_functions.R": {
-      "checksum": "d51093f289f20b8dfe87376ec9ceb71d"
+      "checksum": "9087de7d0508d8cb80234d38ae27156b"
     },
     "R/app/ui_main.R": {
-      "checksum": "5d260f3b83b0f69517753fd3ae400e50"
+      "checksum": "008566d2ccf1e23c5c8029765da11a79"
     },
     "R/app/ui_sidebar.R": {
       "checksum": "f0f93c4f49f3bcfc89135f42590d45e4"
     },
     "R/core/baseline_flow.R": {
-      "checksum": "62fc8bd9cf75f2d19a047d8018e65d6a"
+      "checksum": "ee3522ab46e0535eba4d705c866aed5d"
     },
     "R/core/fast_engine.R": {
-      "checksum": "bf08fb62c0b7dbb775884a431d4c5b61"
+      "checksum": "a4b23d0dd97933f3743754f34643f700"
     },
     "R/core/hospital_trajectory.R": {
-      "checksum": "d2143751743d3a2f80db497cdf3bc1ae"
+      "checksum": "b814117e47759446b7caa4711509f82b"
     },
     "R/core/run_scenarios.R": {
       "checksum": "322d746999502cbec8a41a0e32438803"
@@ -4460,10 +4460,10 @@
       "checksum": "1b1c70565c73b18845aa1fa6c6fedac7"
     },
     "R/shared/simulation_metrics.R": {
-      "checksum": "1e1aaae387b67c885b88ae6acb13d136"
+      "checksum": "07015ea894cffedcb427ec3f7987bd39"
     },
     "README.md": {
-      "checksum": "a2161ebbde3dd029b6f87e5d3f013b9e"
+      "checksum": "8759fd04bc8bb4f5008f8ba83f223541"
     },
     "src/hospital_des.cpp": {
       "checksum": "7956255df032b0377259ed65c92d2506"

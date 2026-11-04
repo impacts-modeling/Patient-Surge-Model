@@ -332,10 +332,9 @@ run_pathway_step <- function(env, profile_name, profile, fallbacks,
 }
 
 profile_trajectory <- function(env, profile_name, patient_profiles, fallbacks,
-                               recheck_interval_days = 1, service_times = NULL) {
+                               service_times = NULL) {
   # Freeze loop arguments before simmer calls the service closures later.
-  # recheck_interval_days is accepted for older callers' positional arguments
-  # but unused: bed acquisition is fully event-driven, never polled.
+  # Bed acquisition is fully event-driven, never polled.
   force(service_times)
   if (!profile_name %in% names(patient_profiles)) {
     stop("Unknown patient profile: ", profile_name)
@@ -367,7 +366,7 @@ should_monitor_resource <- function(unit, monitor_ed) {
 
 run_simulation <- function(capacities, duration, n_patients, sim_days,
                            patient_profiles, profile_prob, fallbacks = list(),
-                           recheck_interval_days = 1, baseline = NULL,
+                           baseline = NULL,
                            warmup_capacities = capacities, arrival_process = "even",
                            monitor_patients = TRUE, monitor_ed = TRUE,
                            credit_boarding_time = TRUE) {
@@ -390,11 +389,6 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
                                     monitor_ed, credit_boarding_time))
   }
   validate_patient_configuration(capacities, patient_profiles, profile_prob, fallbacks)
-  stopifnot(
-    length(recheck_interval_days) == 1,
-    is.finite(recheck_interval_days),
-    recheck_interval_days > 0
-  )
   hospital_sim <- simmer::simmer("hospital-simulation")
   attr(hospital_sim, "bed_dispatcher") <- new_bed_dispatcher(hospital_sim, names(capacities))
   attr(hospital_sim, "credit_boarding_time") <- credit_boarding_time
@@ -436,7 +430,6 @@ run_simulation <- function(capacities, duration, n_patients, sim_days,
         profile_name,
         patient_profiles,
         fallbacks,
-        recheck_interval_days = recheck_interval_days,
         service_times = make_service_times(sum(patient_data$profile == profile_name),
           patient_profiles[[profile_name]], service_seeds[[match(profile_name, names(patient_profiles))]])
       )
@@ -858,10 +851,11 @@ find_n_needed <- function(capacities, duration, n_patients, sim_days,
                           baseline = NULL, warmup_capacities = capacities,
                           arrival_process = "even", final_num_sims = 50L,
                           credit_boarding_time = TRUE,
-                          # incremental is the default and the only one used by the app and the
-                          # manuscript pipeline; analytical (a closed-form mean-stay approximation,
-                          # not simulation-based) remains available for comparison/benchmarking but
-                          # is not otherwise documented or exercised by either caller.
+                          # "analytic" (simulation-free unlimited-capacity occupancy, see
+                          # analytic_start_level below) is what the app and the manuscript pipeline
+                          # pass explicitly. "incremental" (simulated unlimited-capacity demand) is
+                          # this function's default; "analytical" (a closed-form mean-stay
+                          # approximation) remains available for comparison/benchmarking only.
                           initialization = c("incremental", "analytical", "analytic"),
                           # Only used with initialization = "analytic": the simulation-free
                           # unlimited-capacity occupancy (R/analitic/occupancy_analytic.R, which the

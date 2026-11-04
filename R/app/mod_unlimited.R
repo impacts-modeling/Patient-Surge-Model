@@ -12,7 +12,9 @@ unlimited_assumption_note <- paste(
   "log-normal stays discretised on a 0.05-day grid). The band is the 5th-95th percentile of the number",
   "of occupied beds at that instant (a prediction band for the random occupancy, not a confidence",
   "interval). Peaks are the peak over time of the expected occupancy and of the pointwise percentiles,",
-  "not the distribution of the maximum. Bed counts, queues, waits and boarding do not apply to this scenario."
+  "not the distribution of the maximum. With routine civilian flow, the increase vs. civilian baseline is the peak",
+  "expected occupancy with surge minus the civilian-only peak, per unit. Bed counts, queues, waits and boarding do",
+  "not apply to this scenario."
 )
 
 # config: surge configuration with $baseline and $arrival_process (profile_config()).
@@ -37,26 +39,50 @@ run_unlimited_analytic <- function(config, n_patients, duration, sim_days, inclu
       baseline = config$baseline, surge_process = config$arrival_process, units = units,
       step = unlimited_grid_step, output_step = unlimited_output_step, levels = unlimited_levels)
   )[["elapsed"]]
+  # Civilian-only peaks (same horizon and warm-up) give the baseline against which the
+  # surge increase is reported. Only available when civilian flow is enabled; if this
+  # extra calculation fails, the table is simply shown without the baseline columns.
+  civilian_peaks <- NULL
+  if (include_surge && isTRUE(config$baseline$enabled)) {
+    civilian_peaks <- tryCatch(
+      run_unlimited_analytic(config, n_patients, duration, sim_days, include_surge = FALSE)$peaks,
+      error = function(e) NULL)
+  }
   c(analytic, list(scenario_mode = "unlimited", scenario_id = "unlimited_analytic",
                    profile_config = config, include_surge = include_surge,
-                   elapsed_seconds = elapsed))
+                   civilian_peaks = civilian_peaks, elapsed_seconds = elapsed))
 }
 
-# One row per unit (ED hidden): peak of the expected occupancy and of two percentiles.
+# One row per unit (ED hidden): peak of the expected occupancy and of the 95th percentile.
+# With civilian flow, also the civilian-only peak of the expected occupancy and the
+# increase over it (surge + civilian peak minus civilian-only peak, per unit).
 unlimited_peak_table <- function(data) {
   peaks <- hide_internal_units(data$peaks, "resource")
-  value_of <- function(unit, statistic, column = "peak_value") {
-    peaks[[column]][peaks$resource == unit & peaks$statistic == statistic]
+  peak_of <- function(peak_table, unit, statistic, column = "peak_value") {
+    peak_table[[column]][peak_table$resource == unit & peak_table$statistic == statistic]
   }
   units <- unique(peaks$resource)
-  data.frame(
+  peak_mean <- vapply(units, function(unit) peak_of(peaks, unit, "peak_mean"), numeric(1))
+  # Column order: expected peak, [civilian-only peak, increase], 95th percentile, day of peak.
+  table <- data.frame(
     Resource = unit_display_label(units),
-    `Peak expected occupied beds` = round(vapply(units, value_of, numeric(1), "peak_mean"), 1),
-    `Day of peak (day 0 = start of observation)` = vapply(units, value_of, numeric(1), "peak_mean", "time_of_peak"),
-    `Peak 50th percentile (beds)` = vapply(units, value_of, numeric(1), "peak_q0.5"),
-    `Peak 95th percentile (beds)` = vapply(units, value_of, numeric(1), "peak_q0.95"),
+    `Peak expected occupied beds` = round(peak_mean, 1),
     check.names = FALSE
   )
+  if (!is.null(data$civilian_peaks)) {
+    civilian <- hide_internal_units(data$civilian_peaks, "resource")
+    civilian_mean <- vapply(units, function(unit) {
+      value <- peak_of(civilian, unit, "peak_mean")
+      if (length(value)) value else NA_real_
+    }, numeric(1))
+    table[["Civilian-only peak (beds)"]] <- round(civilian_mean, 1)
+    table[["Increase vs. civilian baseline (beds)"]] <- round(peak_mean - civilian_mean, 1)
+  }
+  table[["Peak 95th percentile (beds)"]] <- vapply(
+    units, function(unit) peak_of(peaks, unit, "peak_q0.95"), numeric(1))
+  table[["Day of peak"]] <- vapply(
+    units, function(unit) peak_of(peaks, unit, "peak_mean", "time_of_peak"), numeric(1))
+  table
 }
 
 make_unlimited_plot <- function(trajectory) {
@@ -80,8 +106,15 @@ make_unlimited_plot <- function(trajectory) {
   p |>
     plotly::layout(
       title = "",
-      xaxis = list(title = "Day (0 = start of observation; negative = civilian warm-up) - expected occupancy; band: P5-P95"),
-      yaxis = list(title = "Number of Beds Occupied")
+      # Legend above the plot; the note under the x axis is split in two shorter,
+      # smaller lines so it is not cut off.
+      legend = list(orientation = "h", x = 0, y = 1.02, xanchor = "left", yanchor = "bottom"),
+      xaxis = list(
+        title = list(
+          text = "Day (0 = start of observation; negative = civilian warm-up)<br>Expected occupancy; band: P5-P95",
+          font = list(size = 12))),
+      yaxis = list(title = "Number of Beds Occupied"),
+      margin = list(t = 60, b = 80)
     )
 }
 

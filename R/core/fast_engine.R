@@ -107,7 +107,7 @@ fast_engine_population <- function(profiles, arrivals, service_seed, units, popu
 # Engine arguments plus the patient register; arguments mirror run_simulation().
 fast_engine_inputs <- function(capacities, duration, n_patients, sim_days,
                                patient_profiles, profile_prob, fallbacks = list(),
-                               recheck_interval_days = 1, baseline = NULL,
+                               baseline = NULL,
                                warmup_capacities = capacities, arrival_process = "even",
                                monitor_patients = TRUE, monitor_ed = TRUE,
                                credit_boarding_time = TRUE) {

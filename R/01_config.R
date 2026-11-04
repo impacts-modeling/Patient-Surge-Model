@@ -75,12 +75,12 @@ max_num_sims_for <- function(civilian_enabled) {
 #   unlimited-capacity occupancy (R/analitic/occupancy_analytic.R, which the caller
 #   must source). analytic_start_level is the quantile whose peak over time is the
 #   starting capacity of each failing unit. The manuscript preset uses 0.75; the app
-#   picks the level from app_analytic_start_level below, so the development preset
-#   leaves it to find_n_needed()'s default (0.5).
+#   picks the level from app_analytic_start_level below (also 0.75), so the development
+#   preset does not set it.
 #   "incremental" remains available (simulated unlimited-capacity demand).
 # - app_analytic_start_level (app only): starting quantile with routine civilian flow
-#   (0.75: starting somewhat above the answer is cheaper than starting below it) and
-#   without it (0.5: the median, close to the expected occupancy).
+#   and without it. Both are 0.75: starting somewhat above the answer is cheaper than
+#   starting below it (0.5 would be the median, close to the expected occupancy).
 # Keep bed_search_configs as the LAST expression of this file (read in isolation by
 # paper/run_manuscript_scenarios.R).
 app_analytic_start_level <- c(with_civilian_flow = 0.75, without_civilian_flow = 0.75)
@@ -98,7 +98,7 @@ bed_search_configs <- list(
     initialization = "analytic", search_seed = 2026L
   ),
   paper = list(
-    num_sims = 40L, max_evaluations = 50L, final_num_sims = 50L,
+    num_sims = 40L, max_evaluations = 50L, final_num_sims = 40L,
     minimum_step = 1L, demand_safety_factor = 1,
     reliability_level = 0.75, refinement_margin = 0.1,
     acceptance_rule = "point_estimate", acceptance_confidence = 0.95,

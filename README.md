@@ -12,11 +12,11 @@ The project supports hospital capacity planning and scenario analysis. Users can
 - **Routine civilian flow:** configure civilian profiles and constant arrival rates, with a warm-up before the surge. Predefined civilian profiles are offered for the Regional, Tertiary and Community hospitals. Disabling **Enable routine civilian arrivals** clears all saved civilian profiles.
 - **Fallback placement:** specify ordered alternative units when the preferred unit has no available bed.
 - **Repeated simulations:** explore occupancy, queues, bottlenecks, boarding, and bed waits across replications.
-- **Unlimited capacity:** selected with a button in Hospital Information and combinable with any patient scenario; computes expected occupancy (with a 5th-95th percentile band) without bed limits and without simulation, using an exact analytic calculation; it also provides the starting point of the capacity search.
+- **Unlimited capacity:** selected with a button in Hospital Information and combinable with any patient scenario; computes expected occupancy (with a 5th-95th percentile band) and its peaks, including the increase over the civilian-only baseline when civilian flow is enabled, without bed limits and without simulation, using an exact analytic calculation; it also provides the starting point of the capacity search.
 - **Bed-expansion estimates:** search for additional GenMed and ICU beds and simulate the expanded scenario.
 - **Import and export:** exchange surge configurations through Excel, civilian profiles through CSV, and download simulation reports as PDF.
 
-Selectable units are Surge, GenMed, ICU, BurnBed, Cardiology, PhysicalMed, Psychiatric, and TransitionalCare (plus the always-present ED). Expansion controls display GenMed as Med/Surg.
+Selectable units are Surge, GenMed, ICU, BurnBed, Cardiology, PhysicalMed, Psychiatric, and TransitionalCare (plus the always-present ED).
 
 ## Typical workflow
 
@@ -24,7 +24,7 @@ Selectable units are Surge, GenMed, ICU, BurnBed, Cardiology, PhysicalMed, Psych
 2. Review pathways, mean stays and SDs, arrival percentages, and fallback rules. Manual percentages must total 100% and be confirmed with **Set arrival percentages**.
 3. Optionally enable **Routine Civilian Flow**, save civilian profiles, review the arrival process and warm-up in **Advanced Flow Settings**, and choose **Patients to simulate** in the sidebar (Surge + routine civilian, Routine civilian only (baseline), or Surge only (empty hospital)). Open **Model Parameters** and set surge patients per day, arrival process and period, observation duration, replications, and simulation seed.
 4. Click **Run Simulation** and inspect the plots and summary tables.
-5. To explore expansion, enter the maximum mean-wait limits (days) for Med/Surg and ICU and click **Estimate Bed Expansion**. Both GenMed and ICU must be configured.
+5. To explore expansion, enter the maximum mean-wait limits (days) for GenMed and ICU and click **Estimate Bed Expansion**. Both GenMed and ICU must be configured.
 6. Review the recommendation, click **Apply Recommended Expansion**, and then click **Run Simulation** to refresh results for the expanded capacity.
 7. Download the PDF report or export the hospital configuration for reuse.
 
@@ -50,7 +50,7 @@ For each replication, the search computes the mean wait for a first bed (days, w
 
 The search first evaluates current capacity, including additional beds already entered in the HxS fields. If expansion is needed, it computes the simulation-free unlimited-capacity occupancy (see `R/analitic/occupancy_analytic.R`), raises failing units to a starting capacity taken from a percentile of its peak (never lowering them), grows units that still fail by doubling increments, and refines GenMed/ICU combinations within an evaluation budget. The starting capacity is only where the search begins; every candidate is evaluated with the full simulation.
 
-The active configuration (`bed_search_configs$development` in `R/01_config.R`) requires joint compliance (GenMed and ICU within their limits in the same replication) in at least **75%** of 20 replications per candidate, using the observed proportion. Candidates that pass are then checked once on an independent 20-replication bank, and that holdout result is what the app reports. The manuscript preset (`bed_search_configs$paper`) uses 40 search and 50 holdout replications. This empirical criterion is not a statistical confidence level or a guarantee of real-world performance, and recommendations are not proven global minima. Applying a recommendation updates the HxS fields; running the simulation again refreshes the plots and tables.
+The active configuration (`bed_search_configs$development` in `R/01_config.R`) requires joint compliance (GenMed and ICU within their limits in the same replication) in at least **75%** of 25 replications per candidate, using the observed proportion. Candidates that pass are then checked once on an independent 30-replication bank, and that holdout result is what the app reports. The manuscript preset (`bed_search_configs$paper`) uses 40 search and 40 holdout replications. This empirical criterion is not a statistical confidence level or a guarantee of real-world performance, and recommendations are not proven global minima. Applying a recommendation updates the HxS fields; running the simulation again refreshes the plots and tables.
 
 When civilian flow is enabled, candidates include both populations. Warm-up uses existing beds; added beds are activated at surge onset. This implementation does not estimate emergency activation delays or automatically separate an existing civilian capacity deficit from surge-related expansion.
 
@@ -132,7 +132,7 @@ Open the repository as your working directory and run:
 shiny::runApp(".")
 ```
 
-Run from the repository root because source files and documentation use relative paths. `R/01_config.R` configures up to two workers, with sequential execution when only one core is available. It also contains the bed-search settings.
+Run from the repository root because source files and documentation use relative paths. `R/01_config.R` uses a single worker (sequential execution): with the compiled engine a second worker saves little. It also contains the bed-search settings.
 
 ## Configuration files and reports
 

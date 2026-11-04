@@ -1,8 +1,7 @@
 # Civilian flow functions have no Shiny dependency. Rates are patients/day.
 baseline_defaults <- function() {
   list(enabled = FALSE, profiles = list(), arrival_rates = numeric(),
-       arrival_process = "poisson", warmup_days = 30,
-       recheck_interval_days = 1)
+       arrival_process = "poisson", warmup_days = 30)
 }
 
 validate_baseline_config <- function(config, capacities, fallbacks = list()) {
@@ -22,9 +21,9 @@ validate_baseline_config <- function(config, capacities, fallbacks = list()) {
       stop("Each civilian profile needs an ordered pathway and positive mean stays.")
     }
   }
-  settings <- unlist(config[c("warmup_days", "recheck_interval_days")])
-  if (length(settings) != 2L || any(!is.finite(settings)) || any(settings <= 0)) {
-    stop("Warm-up duration and recheck interval must be positive finite numbers.")
+  warmup_days <- config$warmup_days
+  if (length(warmup_days) != 1L || !is.finite(warmup_days) || warmup_days <= 0) {
+    stop("Warm-up duration must be a positive finite number.")
   }
   invisible(TRUE)
 }
@@ -123,8 +122,7 @@ run_baseline_simulation <- function(capacities, duration, n_patients, sim_days,
       if (!length(times)) next
       prefix <- paste0(population, "_", index, "_")
       trajectory <- profile_trajectory(env, profile, profiles, fallbacks,
-                                        baseline$recheck_interval_days,
-                                        make_service_times(length(times), profiles[[profile]], service_seeds[[index]]))
+                                        service_times = make_service_times(length(times), profiles[[profile]], service_seeds[[index]]))
       # simmer::at supplies delays relative to generator creation, not absolute time.
       env <<- simmer::add_generator(env, prefix, trajectory,
         simmer::at(times - simmer::now(env)), mon = monitor_patients)

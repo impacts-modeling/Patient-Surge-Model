@@ -104,28 +104,28 @@ bed_wait_summary <- function(run, confidence_level = 0.95, completed_only = TRUE
   list(requests = requests, replications = replications, summary = summary)
 }
 
-# Uses every request that itself resolved (found a bed), whether or not the
-# patient's whole hospital trajectory had finished by the simulation horizon
-# -- completed_only = FALSE, unlike the strict mean_wait_days field above,
-# which blanks an entire replication whenever any one request in it is still
-# unresolved. This resolved-only mean is the closer match to the per-
-# replication mean_wait_days find_n_needed() computes from the .waiting_for__
-# resource's state history (see waiting_state_summary()), since that reads
-# every episode touching the observation window regardless of whether the
-# patient's trajectory had finished.
+# Uses every request, whether or not the patient's whole hospital trajectory had
+# finished by the simulation horizon (completed_only = FALSE). The mean is the
+# observed-time mean, the same one the manuscript tables and the optimizer's
+# per-replication mean_wait_days (see waiting_state_summary()) report: a resolved
+# request contributes its wait and a request still pending at the horizon the time
+# waited so far. With pending requests it is a lower bound of the true mean.
 bed_wait_table <- function(run) {
   data <- bed_wait_summary(run, completed_only = FALSE)$summary
   # A group with zero requests has nothing to estimate a mean/CI from --
   # "Not estimable" there is correct but reads like missing data, so it is
   # dropped rather than shown as a row.
   data <- data[data$total_requests > 0, , drop = FALSE]
-  if (!nrow(data)) return(data.frame(Status = "No bed requests with a resolved wait in the observation period."))
+  if (!nrow(data)) return(data.frame(Status = "No bed requests in the observation period."))
   data |>
     dplyr::transmute(Unit = .data$resource, Population = .data$population, Cohort = .data$cohort,
-      `Mean wait (days)` = round(.data$mean_resolved_wait_days, 3),
-      `95% CI` = ifelse(is.finite(.data$lower_resolved), sprintf("%.3f to %.3f", .data$lower_resolved, .data$upper_resolved),
-                        "Requires at least 2 replications with a resolved request"),
-      `Observed waiting (%)` = round(.data$percent_observed_waiting, 1))
+      `Mean wait (days)` = round(.data$mean_observed_wait_days, 3),
+      # A wait cannot be negative, so the lower bound of the t interval is cut at 0.
+      `95% CI` = ifelse(is.finite(.data$lower_observed),
+                        sprintf("%.3f to %.3f", pmax(0, .data$lower_observed), .data$upper_observed),
+                        "Requires at least 2 replications with a request"),
+      `Observed waiting (%)` = round(.data$percent_observed_waiting, 1),
+      `Pending at horizon` = .data$pending_requests)
 }
 
 # One boarding episode = one visit to a .boarding_for__<unit> logical

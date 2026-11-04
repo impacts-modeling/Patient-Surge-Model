@@ -258,13 +258,14 @@ build_body <- function() {
                   data.step = 18,
                   data.intro = paste(
                     "<strong>Bed waiting times.</strong><br>",
-                    "Waits for a first bed (no bed held), for every request that found a bed. The mean includes",
-                    "zero waits; the 95% CI is the uncertainty of that mean, not the spread of individual waits.",
+                    "Waits for a first bed (no bed held), for every request. The mean includes zero waits and",
+                    "counts a request still waiting at the horizon with the time waited so far (a lower bound).",
+                    "The 95% CI is the uncertainty of that mean, not the spread of individual waits.",
                     "Observed waiting (%) is the share of requests that waited at all."
                   ),
                   data.position = "top"
                 ),
-                shiny::helpText("Includes every bed request that itself found a bed (resolved), whether or not the patient had been discharged by the end of the simulation. Means include zero waits and average replication-specific bed-request means; 95% CIs require at least two replications with a resolved request. Day-zero waits include waiting before observation."),
+                shiny::helpText("Includes every bed request, whether or not the patient had been discharged by the end of the simulation. A request still waiting at the horizon counts the time waited so far, so with pending requests the mean is a lower bound of the true mean (see Pending at horizon). Means include zero waits and average replication-specific bed-request means; 95% CIs require at least two replications with a request and are cut at 0. Day-zero waits include waiting before observation."),
                 shiny::helpText("This table only covers bed-less waits at a pathway's first step (no bed held yet); the ED is not shown. Patients whose pathway starts in the ED hold an ED bed while waiting for their next unit, so that wait appears under \"Boarding Times\" instead. This table is most informative for patients who do not pass through the ED first (e.g. surge patients requesting their first bed directly)."),
                 style = "overflow-x: auto;"
               )

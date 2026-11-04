@@ -279,7 +279,7 @@ profiles** in Routine Civilian Flow.
 | **Surge Arrival Period (days)** | Number of consecutive days during which surge patients arrive. |
 | **Surge arrival process** | **Even** (evenly spaced; default) or **Poisson** (random arrivals). Civilian arrivals default to Poisson (Advanced Flow Settings). |
 | **Observation Duration (days)** | Observation horizon; excludes warm-up when civilian flow is enabled. |
-| **Number of simulations** | Number of independent replications used to summarize stochastic variation. At most 30 when the scenario includes routine civilian patients (each replication includes a warm-up) and 60 for surge only, to keep run times manageable. |
+| **Number of simulations** | Number of independent replications used to summarize stochastic variation. At most 40 when the scenario includes routine civilian patients (each replication includes a warm-up) and 60 for surge only, to keep run times manageable. |
 | **Simulation seed** | Master seed that makes a run reproducible. |
 | **GenMed (days)**, **ICU (days)** | Maximum mean wait for a first bed used by the expansion optimizer. |
 | **HxS GenMed** | Additional GenMed beds added to the baseline capacity. |
@@ -371,10 +371,9 @@ independent. Log-normal stays are discretised on a 0.05-day grid. The calculatio
 covers the whole horizon, civilian warm-up included, and takes under a second.
 For each unit, the starting capacity is the **peak over time of a chosen
 percentile** of this distribution, set by the editable parameter
-`analytic_start_level` (`R/01_config.R`). The app uses 0.75 when routine civilian
-flow is enabled and 0.5 (the median, close to the expected occupancy) when it is
-not (`app_analytic_start_level`); the manuscript runs use 0.75. Starting somewhat
-above the final capacity costs fewer evaluations than starting below it. The
+`analytic_start_level` (`R/01_config.R`). Both the app (`app_analytic_start_level`,
+with or without routine civilian flow) and the manuscript runs use 0.75. Starting
+somewhat above the final capacity costs fewer evaluations than starting below it. The
 unlimited-capacity calculation shows the same occupancy (expected value
 and 5th-95th percentile band) in the dashboard.
 
@@ -396,8 +395,8 @@ target units: a replication only counts as compliant when the GenMed mean wait
 and the ICU mean wait are *both* at or below their limits in that same
 replication. With the dashboard's current search settings
 (`bed_search_configs$development` in `R/01_config.R`), a candidate must clear
-this joint check in at least **75%** of **20** replications per candidate (15
-of 20) to pass. Each unit's own compliance rate is still reported next to the
+this joint check in at least **75%** of **25** replications per candidate (19
+of 25) to pass. Each unit's own compliance rate is still reported next to the
 joint result, but it is a diagnostic only: a unit can clear 100% of
 replications on its own while the candidate still fails overall, because its
 failures and the other unit's failures do not have to land on the same
@@ -409,9 +408,9 @@ All candidate capacities use common seeds and replications, and previously
 evaluated combinations are read from a cache. Growth first targets a looser
 margin above the reliability target (so growth does not stop right at the
 boundary); once a candidate clears the stricter joint criterion above,
-coordinate-wise binary searches reduce ICU and GenMed, and a trade-off search
-then checks whether shifting beds between GenMed and ICU lowers the total
-weighted bed count further, without testing every possible combination. The
+coordinate-wise binary searches reduce ICU and GenMed (a GenMed/ICU trade-off
+search, which would check whether shifting beds between the two lowers the total
+weighted bed count further, exists in the code but is off by default). The
 search stops after at most **50 candidate evaluations** (`max_evaluations`). If
 that optional minimum-bed refinement reaches its budget after a validated
 solution has already been found, the app still returns the solution and labels
@@ -419,7 +418,7 @@ it as potentially conservative instead of reporting non-convergence.
 
 Once a candidate clears the joint criterion during the search, it is evaluated
 exactly once more on an independent replication bank that was never used to
-tune the capacity (**20** replications by default, `final_num_sims`). This
+tune the capacity (**30** replications in the dashboard's settings, `final_num_sims`). This
 holdout result -- not the search-stage estimate -- is what the dashboard
 reports and what "Apply Recommended Expansion" copies into the HxS fields.
 Because the holdout bank is independent, a candidate that looked strong while
@@ -506,8 +505,14 @@ the average number of days a patient waited.
 **Boarding Times** reports the time patients held a bed elsewhere while waiting
 for the listed unit (mean of each replication's longest episode, and mean
 episode duration). **Bed Waiting Times** reports waits with no bed held,
-including zero waits, for every request that obtained a bed during observation;
-the 95% CI describes Monte Carlo uncertainty in the mean. Both tables also show the share of requests that waited and, for Boarding Times, the mean boarding time among boarded patients (Bed Waiting Times shows the share that waited), since the means include zero-length episodes.
+including zero waits, for every bed request during observation. A request still
+waiting at the horizon counts the time waited so far, so with pending requests
+(column **Pending at horizon**) the mean is a lower bound of the true mean. This is
+the same observed-time mean the optimizer and the manuscript tables use. The 95% CI
+describes Monte Carlo uncertainty in the mean (its lower bound is cut at 0). Both
+tables also show the share of requests that waited and, for Boarding Times, the mean
+boarding time among boarded patients (Bed Waiting Times shows the share that waited),
+since the means include zero-length episodes.
 
 ### Unlimited capacity (analytic)
 
@@ -526,9 +531,14 @@ bed waits and boarding do not apply (nobody waits). The results are:
   prediction band for the random occupancy, not a confidence interval: it has no
   Monte Carlo error, and it does not include uncertainty in the inputs (stays,
   arrival rates, profile percentages).
-- **Peak Occupancy**: the peak over time of the expected occupancy, with the day
-  it occurs, and the peak over time of the 50th and 95th percentiles. These are
-  peaks of pointwise statistics, not the distribution of the maximum occupancy.
+- **Peak Occupancy**: one row per unit with the peak over time of the expected
+  occupancy (**Peak expected occupied beds**); with routine civilian flow, the
+  **Civilian-only peak (beds)** (the same peak when only civilian patients
+  arrive, same horizon and warm-up) and the **Increase vs. civilian baseline
+  (beds)** (the difference between the two); the peak over time of the 95th
+  percentile; and the **Day of peak** of the expected occupancy (day 0 = surge
+  onset). Surge-only runs show no civilian columns. These are peaks of pointwise
+  statistics, not the distribution of the maximum occupancy.
 
 The PDF report contains the same plot and table. The calculation is exact for the
 model's arrival processes up to the 0.05-day discretisation of the log-normal
